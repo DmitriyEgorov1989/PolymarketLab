@@ -1,6 +1,28 @@
 <Solution>
-  <Folder Name="/src/" />
+  <Folder Name="/src/">
+    <File Path="AGENTS.md" />
+  </Folder>
   <Folder Name="/src/BuildingBlocks/" />
-  <Folder Name="/src/Host/" />
+  <Folder Name="/src/Host/">
+    <Project Path="PolymarketLab.Api/PolymarketLab.Api.csproj" Id="1bb84e9e-0cfa-4b1c-85a7-c70dda6f4313" />
+  </Folder>
   <Folder Name="/src/Modules/" />
+  <Folder Name="/src/Modules/DataCollection/">
+    <Project Path="PolymarketLab.DataCollection.Core/PolymarketLab.DataCollection.Core.csproj" Id="102f4a71-ecb7-4c05-8eb9-c03add405493" />
+    <Project Path="PolymarketLab.DataCollection.Infrastructure/PolymarketLab.DataCollection.Infrastructure.csproj" Id="31246497-ede7-46de-8632-e44b093467b1" />
+    <Project Path="PolymarketLab.DataCollection.Presentation/PolymarketLab.DataCollection.Presentation.csproj" Id="389f68ca-3e9c-45d4-b79a-83e784fa02d8" />
+  </Folder>
+  <Folder Name="/src/Modules/Markets/">
+    <Project Path="PolymarketLab.Markets.Domain/PolymarketLab.Markets.Core.csproj" Id="bc4c3703-5145-4e07-bf80-bd8c6319fd8c" />
+    <Project Path="PolymarketLab.Markets.Infrastructure/PolymarketLab.Markets.Infrastructure.csproj" Id="4e891248-a3dc-464b-8ceb-d4bc7f39394f" />
+    <Project Path="PolymarketLab.Markets.Presentation/PolymarketLab.Markets.Presentation.csproj" Id="1ff470cd-39a8-4450-b571-d882c70b5139" />
+  </Folder>
+  <Folder Name="/src/Shared/">
+    <Project Path="PolymarketLab.Core/PolymarketLab.Core.csproj" Id="d02d6110-dd79-4586-9ae7-7b9d49b2c2ec" />
+    <Project Path="PolymarketLab.Framework/PolymarketLab.Framework.csproj" Id="d261fdf9-56f1-42bf-b1a7-67d896a8cf88" />
+    <Project Path="PolymarketLab.SharedKernel/PolymarketLab.SharedKernel.csproj" Id="c77d5717-83ef-4e7a-9aa2-0994cfeedefc" />
+  </Folder>
+  <Folder Name="/src/Tests/">
+    <Project Path="PolymarketLab.Markets.Domain.Tests/PolymarketLab.Markets.Domain.Tests.csproj" Id="fe941d8f-21f4-4f29-bfbd-d48c210a9ea1" />
+  </Folder>
 </Solution>

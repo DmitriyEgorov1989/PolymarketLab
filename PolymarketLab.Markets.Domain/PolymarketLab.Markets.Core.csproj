@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Folder Include="Application\" />
+    <Folder Include="Domain\Models\ValueObjects\" />
+    <Folder Include="Ports\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CSharpFunctionalExtensions" Version="3.7.0" />
+    <ProjectReference Include="..\PolymarketLab.SharedKernel\PolymarketLab.SharedKernel.csproj" />
+  </ItemGroup>
+
+</Project>
