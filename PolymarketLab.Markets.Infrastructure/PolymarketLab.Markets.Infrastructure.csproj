@@ -10,4 +10,8 @@
     <Folder Include="Adapters\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\PolymarketLab.Markets.Domain\PolymarketLab.Markets.Core.csproj" />
+  </ItemGroup>
+
 </Project>

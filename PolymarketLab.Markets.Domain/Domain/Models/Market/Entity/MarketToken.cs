@@ -4,7 +4,7 @@ using PolymarketLab.SharedKernel.Errors;
 
 namespace PolymarketLab.Markets.Core.Domain.Models.Market.Entity
 {
-    public sealed class MarketToken
+    public sealed class MarketToken : Entity<Guid>
     {
         private MarketToken()
         {
@@ -23,8 +23,6 @@ namespace PolymarketLab.Markets.Core.Domain.Models.Market.Entity
             Outcome = outcome;
             OutcomeIndex = outcomeIndex;
         }
-
-        public Guid Id { get; private set; }
         public MarketId MarketId { get; private set; } = null!;
         public TokenId ExternalTokenId { get; private set; } = null!;
         public string Outcome { get; private set; } = string.Empty;

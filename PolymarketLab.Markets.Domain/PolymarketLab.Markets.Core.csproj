@@ -7,13 +7,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="Application\" />
-    <Folder Include="Domain\Models\ValueObjects\" />
-    <Folder Include="Ports\" />
+    <Folder Include="Application\UseCases\Queries\" />
+    <Folder Include="Domain\Models\Market\ValueObjects\" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="CSharpFunctionalExtensions" Version="3.7.0" />
+    <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="10.0.0" />
     <ProjectReference Include="..\PolymarketLab.SharedKernel\PolymarketLab.SharedKernel.csproj" />
   </ItemGroup>
 

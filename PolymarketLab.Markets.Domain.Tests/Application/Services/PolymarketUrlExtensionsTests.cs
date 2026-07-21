@@ -1,14 +1,12 @@
 using FluentAssertions;
-using PolymarketLab.Markets.Core.Application.Services;
+using PolymarketLab.Markets.Core.Application.Extensions;
 using PolymarketLab.SharedKernel.Errors;
 using Xunit;
 
 namespace PolymarketLab.Markets.Domain.Tests.Application.Services;
 
-public class PolymarketUrlParserTests
+public class PolymarketUrlExtensionsTests
 {
-    private readonly PolymarketUrlParser _parser = new();
-
     [Theory]
     [InlineData("https://polymarket.com/event/will-it-rain", "will-it-rain")]
     [InlineData("https://polymarket.com/ru/event/will-it-rain", "will-it-rain")]
@@ -16,7 +14,7 @@ public class PolymarketUrlParserTests
     [InlineData("https://polymarket.com/event/will-it-rain/", "will-it-rain")]
     public void Parse_WithValidUrl_ShouldReturnSlug(string url, string expectedSlug)
     {
-        var result = _parser.Parse(url);
+        var result = url.ParsePolymarketSlug();
 
         result.IsSuccess.Should().BeTrue();
         result.Value.Value.Should().Be(expectedSlug);
@@ -38,7 +36,7 @@ public class PolymarketUrlParserTests
         string expectedMessage,
         ErrorType expectedType)
     {
-        var result = _parser.Parse(url!);
+        var result = url.ParsePolymarketSlug();
 
         result.IsFailure.Should().BeTrue();
         result.Error.Code.Should().Be(expectedCode);

@@ -24,5 +24,6 @@
   </Folder>
   <Folder Name="/src/Tests/">
     <Project Path="PolymarketLab.Markets.Domain.Tests/PolymarketLab.Markets.Domain.Tests.csproj" Id="fe941d8f-21f4-4f29-bfbd-d48c210a9ea1" />
+    <Project Path="PolymarketLab.Markets.Infrastructure.Tests/PolymarketLab.Markets.Infrastructure.Tests.csproj" Id="e531cc67-aa29-49f8-96d8-119d0ac56cff" />
   </Folder>
 </Solution>

@@ -1,5 +1,6 @@
 ﻿using CSharpFunctionalExtensions;
 using PolymarketLab.Markets.Core.Domain.Models.Market.Entity;
+using PolymarketLab.Markets.Core.Domain.Models.Market.Errors;
 using PolymarketLab.Markets.Core.Domain.Models.Market.ValueObjects;
 using PolymarketLab.SharedKernel.DomainModels;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
@@ -10,6 +11,7 @@ namespace PolymarketLab.Markets.Core.Domain.Models.Market.MarketAggregate
     public sealed class Market : Aggregate<MarketId>
     {
         private readonly List<MarketToken> _tokens = [];
+
 
         private Market()
         {
@@ -53,6 +55,26 @@ namespace PolymarketLab.Markets.Core.Domain.Models.Market.MarketAggregate
                 return GeneralErrors.ValueIsRequired(nameof(question));
 
             return new Market(id, externalId, slug, conditionId, question, startsAt, endsAt);
+        }
+
+        public UnitResult<Error> AddToken(
+            TokenId externalTokenId,
+            string outcome,
+            int outcomeIndex)
+        {
+            if (_tokens.Any(token => token.ExternalTokenId.Equals(externalTokenId)))
+                return UnitResult.Failure(MarketErrors.DuplicateTokenId(externalTokenId.Value));
+
+            if (_tokens.Any(token => token.OutcomeIndex == outcomeIndex))
+                return UnitResult.Failure(MarketErrors.DuplicateOutcomeIndex(outcomeIndex));
+
+            var tokenResult = MarketToken.Create(Id, externalTokenId, outcome, outcomeIndex);
+            if (tokenResult.IsFailure)
+                return UnitResult.Failure(tokenResult.Error);
+
+            _tokens.Add(tokenResult.Value);
+
+            return UnitResult.Success<Error>();
         }
     }
 }

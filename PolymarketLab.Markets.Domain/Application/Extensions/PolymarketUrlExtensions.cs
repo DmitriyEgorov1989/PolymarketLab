@@ -1,17 +1,16 @@
 ﻿using CSharpFunctionalExtensions;
-using PolymarketLab.Markets.Core.Application.Contracts;
 using PolymarketLab.Markets.Core.Application.Errors;
 using PolymarketLab.Markets.Core.Domain.Models.Market.ValueObjects;
 using PolymarketLab.SharedKernel.Errors;
 
-namespace PolymarketLab.Markets.Core.Application.Services
+namespace PolymarketLab.Markets.Core.Application.Extensions
 {
-    public sealed class PolymarketUrlParser : IPolymarketUrlParser
+    public static class PolymarketUrlExtensions
     {
         private const string PolymarketHost = "polymarket.com";
         private const string EventSegment = "event";
 
-        public Result<MarketSlug, Error> Parse(string url)
+        public static Result<MarketSlug, Error> ParsePolymarketSlug(this string? url)
         {
             if (string.IsNullOrWhiteSpace(url))
                 return PolymarketUrlErrors.Empty;
