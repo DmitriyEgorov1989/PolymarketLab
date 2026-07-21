@@ -1,0 +1,31 @@
+using CSharpFunctionalExtensions;
+using FluentAssertions;
+using FluentValidation;
+using MediatR;
+using Microsoft.Extensions.DependencyInjection;
+using PolymarketLab.Markets.Core.Application.DependencyInjection;
+using PolymarketLab.Markets.Core.Application.UseCases.Commands;
+using static PolymarketLab.SharedKernel.Errors.Error;
+using Xunit;
+
+namespace PolymarketLab.Markets.Domain.Tests.Application.DependencyInjection;
+
+public sealed class MarketsApplicationDependencyInjectionTests
+{
+    [Fact]
+    public void AddMarketsApplication_ShouldRegisterHandlersAndValidators()
+    {
+        var services = new ServiceCollection();
+
+        var result = services.AddMarketsApplication();
+
+        result.Should().BeSameAs(services);
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(IRequestHandler<
+                RegisterMarketCommand,
+                Result<RegisterMarketResponse, ErrorList>>));
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(IValidator<RegisterMarketCommand>)
+            && descriptor.ImplementationType == typeof(RegisterCommandValidation));
+    }
+}

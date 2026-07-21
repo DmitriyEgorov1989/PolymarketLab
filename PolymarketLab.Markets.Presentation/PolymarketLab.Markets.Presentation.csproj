@@ -11,4 +11,9 @@
     <Folder Include="Controllers\Services\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\PolymarketLab.Framework\PolymarketLab.Framework.csproj" />
+    <ProjectReference Include="..\PolymarketLab.Markets.Domain\PolymarketLab.Markets.Core.csproj" />
+  </ItemGroup>
+
 </Project>

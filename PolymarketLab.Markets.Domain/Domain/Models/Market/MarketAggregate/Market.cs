@@ -12,7 +12,6 @@ namespace PolymarketLab.Markets.Core.Domain.Models.Market.MarketAggregate
     {
         private readonly List<MarketToken> _tokens = [];
 
-
         private Market()
         {
         }
