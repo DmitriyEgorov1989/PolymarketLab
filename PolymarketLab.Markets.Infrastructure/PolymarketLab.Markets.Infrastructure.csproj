@@ -25,7 +25,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PolymarketLab.Core\PolymarketLab.Core.csproj" />
-    <ProjectReference Include="..\PolymarketLab.Markets.Domain\PolymarketLab.Markets.Core.csproj" />
+    <ProjectReference Include="..\PolymarketLab.Markets.Core\PolymarketLab.Markets.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

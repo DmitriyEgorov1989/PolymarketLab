@@ -8,9 +8,9 @@
 ## Структура и wiring
 
 - Единственный executable host — `PolymarketLab.Api/Program.cs`; папки `/src/...` в `PolymarketLab.slnx` виртуальные, физической `src` нет.
-- `PolymarketLab.Markets.Domain/PolymarketLab.Markets.Core.csproj` содержит Domain, Application и Ports; имя папки, сборки и root namespace (`PolymarketLab.Markets.Core`) различаются.
+- `PolymarketLab.Markets.Core/PolymarketLab.Markets.Core.csproj` содержит Domain, Application и Ports; имя папки, сборки и root namespace — `PolymarketLab.Markets.Core`.
 - `Program.cs` подключает Markets Application, Infrastructure и controllers из Presentation. Application DI сканирует MediatR handlers и FluentValidation validators; Infrastructure DI регистрирует Npgsql context, repository и Gamma typed client.
-- DataCollection-проекты пока scaffold и не подключены к host. Collector и Raw JSON pipeline не реализованы.
+- DataCollection Infrastructure подключён к host и регистрирует `DataCollectionDbContext` и repository. Collector, Presentation и Raw JSON pipeline не реализованы.
 - Все проекты используют `net10.0`; `global.json`, package lock и repo-local tool manifest отсутствуют.
 
 ## Проверка
@@ -48,9 +48,11 @@ dotnet test .\PolymarketLab.Markets.Infrastructure.Tests\PolymarketLab.Markets.I
 ```powershell
 dotnet ef migrations add <MigrationName> --project .\PolymarketLab.Markets.Infrastructure\PolymarketLab.Markets.Infrastructure.csproj --startup-project .\PolymarketLab.Api\PolymarketLab.Api.csproj --context MarketsDbContext --output-dir Adapters\Postgres\Migrations -- --environment Development
 dotnet ef database update --project .\PolymarketLab.Markets.Infrastructure\PolymarketLab.Markets.Infrastructure.csproj --startup-project .\PolymarketLab.Api\PolymarketLab.Api.csproj --context MarketsDbContext -- --environment Development
+dotnet ef migrations add <MigrationName> --project .\PolymarketLab.DataCollection.Infrastructure\PolymarketLab.DataCollection.Infrastructure.csproj --startup-project .\PolymarketLab.Api\PolymarketLab.Api.csproj --context DataCollectionDbContext --output-dir Adapters\Postgres\Migrations -- --environment Development
+dotnet ef database update --project .\PolymarketLab.DataCollection.Infrastructure\PolymarketLab.DataCollection.Infrastructure.csproj --startup-project .\PolymarketLab.Api\PolymarketLab.Api.csproj --context DataCollectionDbContext -- --environment Development
 ```
 
-- Миграции и snapshot находятся в `PolymarketLab.Markets.Infrastructure/Adapters/Postgres/Migrations`; `dotnet-ef` не закреплён manifest-файлом.
+- Миграции и snapshots находятся в `PolymarketLab.Markets.Infrastructure/Adapters/Postgres/Migrations` и `PolymarketLab.DataCollection.Infrastructure/Adapters/Postgres/Migrations`; `dotnet-ef` не закреплён manifest-файлом.
 - Уникальность identity рынка обеспечивают отдельные constraints для `slug`, `external_market_id`, `condition_id`. Только их PostgreSQL `23505` repository преобразует в `MarketInsertStatus.UniqueConflict`; token conflicts и прочие DB errors не маскируй.
 - Repository queries используют `AsNoTracking()` и загружают `Tokens`; aggregate не должен возвращаться частично материализованным.
 

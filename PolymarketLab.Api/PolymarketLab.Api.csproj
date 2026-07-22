@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\PolymarketLab.DataCollection.Infrastructure\PolymarketLab.DataCollection.Infrastructure.csproj" />
     <ProjectReference Include="..\PolymarketLab.Markets.Infrastructure\PolymarketLab.Markets.Infrastructure.csproj" />
     <ProjectReference Include="..\PolymarketLab.Markets.Presentation\PolymarketLab.Markets.Presentation.csproj" />
   </ItemGroup>

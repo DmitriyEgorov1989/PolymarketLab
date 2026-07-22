@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\PolymarketLab.Markets.Core\PolymarketLab.Markets.Core.csproj" />
+    <ProjectReference Include="..\PolymarketLab.DataCollection.Infrastructure\PolymarketLab.DataCollection.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

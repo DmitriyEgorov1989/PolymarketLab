@@ -1,3 +1,4 @@
+using PolymarketLab.DataCollection.Infrastructure.DependencyInjection;
 using PolymarketLab.Markets.Core.Application.DependencyInjection;
 using PolymarketLab.Markets.Infrastructure.DependencyInjection;
 using PolymarketLab.Markets.Presentation.Controllers;
@@ -11,6 +12,7 @@ builder.Services
     .AddApplicationPart(typeof(MarketController).Assembly);
 builder.Services.AddMarketsApplication();
 builder.Services.AddMarketsInfrastructure(builder.Configuration);
+builder.Services.AddDataCollectionInfrastructure(builder.Configuration);
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
