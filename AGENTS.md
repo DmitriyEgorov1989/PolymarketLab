@@ -1,147 +1,69 @@
 # AGENTS.md
 
-## Язык
-
-Всегда отвечай пользователю **на русском языке**, если он явно не попросил использовать другой язык.
-
----
-
-## О проекте
-
-PolyMarketLab — система сбора, хранения и анализа данных Polymarket.
-
-Текущий этап — разработка Collector MVP.
-
-Не предлагай функциональность, которая выходит за рамки MVP или текущей задачи.
-
----
-
-## Архитектура
-
-Проект построен с использованием:
-
-- Clean Architecture
-- Domain-Driven Design (DDD)
-- Modular Monolith
-- CQRS
-- MediatR
-
-Структура каждого модуля:
-
-- Domain
-- Application
-- Infrastructure
-- Presentation
-
-Соблюдай границы слоёв. Не размещай бизнес-логику вне Domain.
-
----
-
-## Стек
-
-Используем:
-
-- C#
-- .NET 10
-- ASP.NET Core
-- PostgreSQL
-- Entity Framework Core
-- MediatR
-- FluentValidation
-- CSharpFunctionalExtensions
-- xUnit
-- FluentAssertions
-- Testcontainers
-
-Не предлагай замену этим библиотекам без явного запроса.
-
----
-
-## Правила разработки
-
-- Используй существующую архитектуру проекта.
-- Не создавай новые абстракции без необходимости.
-- Не добавляй новые NuGet-пакеты без явной причины.
-- Предпочитай расширение существующего кода, а не создание новой параллельной реализации.
-- Следуй существующему стилю проекта.
-
----
-
-## CQRS
-
-- Каждая операция оформляется как Command или Query через MediatR.
-- Handler содержит orchestration-логику.
-- Бизнес-логика находится в Domain.
-- Валидация выполняется через FluentValidation.
-- Не изменяй состояние системы из Query.
-
----
-
-## Ошибки
-
-Для ожидаемых ошибок используй `Result` и `Result<T>` из CSharpFunctionalExtensions.
-
-Не используй исключения для бизнес-ошибок.
-
----
-
-## Collector
-
-Полученные сообщения всегда:
-
-1. сохраняются как Raw JSON;
-2. затем обрабатываются;
-3. затем сохраняются в нормализованном виде.
-
-Raw JSON — источник истины.
-
----
-
-## Тесты
-
-Любая новая бизнес-логика должна сопровождаться тестами.
-
-Используй:
-
-- xUnit;
-- FluentAssertions;
-- Testcontainers — для интеграционных тестов.
-
----
-
-## Перед завершением задачи
-
-Убедись, что:
-
-- соблюдены принципы Clean Architecture и DDD;
-- использован MediatR;
-- применён FluentValidation;
-- используется Result вместо исключений;
-- добавлены или обновлены тесты;
-- не изменён несвязанный код.
-
----
-
-## Главное правило
-
-Работай только в рамках поставленной задачи.
-
-Не усложняй архитектуру.
-
-Не реализуй функциональность «на будущее».
-
-Если существует несколько вариантов решения — выбирай тот, который лучше соответствует существующей кодовой базе.
-
-
----
-
 ## Общение
 
-Всегда отвечай пользователю **на русском языке**, если он явно не попросил использовать другой язык.
+- Отвечай на русском языке, если пользователь явно не попросил другой язык.
+- В финале кратко укажи изменения и причины, затронутые файлы, выполненные тесты и сборки.
 
-После выполнения каждой задачи кратко сообщай:
+## Структура и wiring
 
-- что было изменено;
-- почему выбрано именно такое решение;
-- какие файлы были изменены;
-- какие тесты были добавлены, обновлены или выполнены (если применимо).
+- Единственный executable host — `PolymarketLab.Api/Program.cs`; папки `/src/...` в `PolymarketLab.slnx` виртуальные, физической `src` нет.
+- `PolymarketLab.Markets.Domain/PolymarketLab.Markets.Core.csproj` содержит Domain, Application и Ports; имя папки, сборки и root namespace (`PolymarketLab.Markets.Core`) различаются.
+- `Program.cs` подключает Markets Application, Infrastructure и controllers из Presentation. Application DI сканирует MediatR handlers и FluentValidation validators; Infrastructure DI регистрирует Npgsql context, repository и Gamma typed client.
+- DataCollection-проекты пока scaffold и не подключены к host. Collector и Raw JSON pipeline не реализованы.
+- Все проекты используют `net10.0`; `global.json`, package lock и repo-local tool manifest отсутствуют.
+
+## Проверка
+
+Запускай команды из корня репозитория:
+
+```powershell
+dotnet build .\PolymarketLab.slnx
+dotnet test .\PolymarketLab.slnx
+dotnet test .\PolymarketLab.Markets.Domain.Tests\PolymarketLab.Markets.Domain.Tests.csproj
+dotnet test .\PolymarketLab.Markets.Infrastructure.Tests\PolymarketLab.Markets.Infrastructure.Tests.csproj
+dotnet test .\PolymarketLab.Markets.Domain.Tests\PolymarketLab.Markets.Domain.Tests.csproj --filter "FullyQualifiedName~PolymarketUrlExtensionsTests"
+dotnet test .\PolymarketLab.Markets.Domain.Tests\PolymarketLab.Markets.Domain.Tests.csproj --filter "FullyQualifiedName~RegisterMarketHandlerTests"
+dotnet test .\PolymarketLab.Markets.Infrastructure.Tests\PolymarketLab.Markets.Infrastructure.Tests.csproj --filter "FullyQualifiedName~MarketRepositoryTests"
+```
+
+- Во время разработки сначала запускай самый узкий тест, затем `dotnet test .\PolymarketLab.slnx`; при изменении project references, EF model или host wiring также запускай solution build.
+- Полный test suite не требует Docker, PostgreSQL или сети: repository использует EF InMemory, model tests только строят Npgsql metadata, Gamma tests используют stub `HttpMessageHandler`.
+- Реальных PostgreSQL/Testcontainers, migration-application и API end-to-end тестов пока нет.
+
+## Локальный запуск
+
+1. Задай `Database:ConnectionString` через API User Secrets или `Database__ConnectionString`; значения нет в `appsettings`.
+2. Запусти PostgreSQL: `docker compose up -d postgres`; проверь `docker compose ps`.
+3. Примени миграции командой ниже: приложение не вызывает `Migrate()` или `EnsureCreated()` автоматически.
+4. Запусти API: `dotnet run --project .\PolymarketLab.Api\PolymarketLab.Api.csproj --launch-profile http`.
+
+- Compose публикует PostgreSQL на host port `5433` (container port `5432`) и хранит данные в named volume; не меняй на `5432` без проверки занятости порта.
+- HTTP profile: `http://localhost:5285`. Только в Development доступны Swagger `/swagger` и OpenAPI `/openapi/v1.json`.
+- Endpoint регистрации: `POST /api/Market/register`, body: `{ "marketUri": "https://polymarket.com/event/<slug>" }`.
+- Регистрация требует доступных PostgreSQL и Gamma API. Parser извлекает event slug, а gateway вызывает `/markets/slug/{slug}`; соответствие multi-market events пока не решено.
+
+## EF Core и миграции
+
+```powershell
+dotnet ef migrations add <MigrationName> --project .\PolymarketLab.Markets.Infrastructure\PolymarketLab.Markets.Infrastructure.csproj --startup-project .\PolymarketLab.Api\PolymarketLab.Api.csproj --context MarketsDbContext --output-dir Adapters\Postgres\Migrations -- --environment Development
+dotnet ef database update --project .\PolymarketLab.Markets.Infrastructure\PolymarketLab.Markets.Infrastructure.csproj --startup-project .\PolymarketLab.Api\PolymarketLab.Api.csproj --context MarketsDbContext -- --environment Development
+```
+
+- Миграции и snapshot находятся в `PolymarketLab.Markets.Infrastructure/Adapters/Postgres/Migrations`; `dotnet-ef` не закреплён manifest-файлом.
+- Уникальность identity рынка обеспечивают отдельные constraints для `slug`, `external_market_id`, `condition_id`. Только их PostgreSQL `23505` repository преобразует в `MarketInsertStatus.UniqueConflict`; token conflicts и прочие DB errors не маскируй.
+- Repository queries используют `AsNoTracking()` и загружают `Tokens`; aggregate не должен возвращаться частично материализованным.
+
+## Соглашения Markets
+
+- Инварианты держи в Domain, orchestration — в MediatR handler, внешние и persistence детали — в Infrastructure.
+- Value objects и entities с инвариантами создавай через фабрики; приватные пустые конструкторы нужны EF Core.
+- На ports/domain уровне ожидаемые ошибки возвращаются как `Result<T, Error>`/`UnitResult<Error>`; command/controller boundary использует `Result<T, ErrorList>`.
+- Повторная регистрация того же рынка — success с тем же ID и `Created = false`; новая запись возвращает `Created = true`.
+- Расширяй существующий flow, не добавляй параллельные parser/gateway/repository реализации.
+
+## Известные пробелы
+
+- Validators зарегистрированы, но MediatR validation pipeline отсутствует: `RegisterCommandValidation` автоматически перед handler не запускается.
+- Framework возвращает `Envelope`, не raw response DTO. HTTP mapping ошибок неполный: новые `ErrorType` могут уйти в 500, пока не обновлён `ResponseExtensions`.
+- Нет exception-handler/problem-details middleware и автоматического применения миграций.

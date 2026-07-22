@@ -1,12 +1,12 @@
-﻿using System.Net;
-using System.Net.Http.Json;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using CSharpFunctionalExtensions;
+﻿using CSharpFunctionalExtensions;
 using PolymarketLab.Markets.Core.Domain.Models.Market.ValueObjects;
 using PolymarketLab.Markets.Core.Ports;
 using PolymarketLab.Markets.Core.Ports.Dto;
 using PolymarketLab.SharedKernel.Errors;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace PolymarketLab.Markets.Infrastructure.Adapters.GammaMarket
 {
