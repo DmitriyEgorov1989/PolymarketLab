@@ -13,6 +13,7 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.8" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
   </ItemGroup>
@@ -20,6 +21,11 @@
   <ItemGroup>
     <ProjectReference Include="..\PolymarketLab.Core\PolymarketLab.Core.csproj" />
     <ProjectReference Include="..\PolymarketLab.DataCollection.Core\PolymarketLab.DataCollection.Core.csproj" />
+    <ProjectReference Include="..\PolymarketLab.Markets.Contracts\PolymarketLab.Markets.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PolymarketLab.DataCollection.Infrastructure.Tests" />
   </ItemGroup>
 
 </Project>

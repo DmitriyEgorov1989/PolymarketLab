@@ -12,6 +12,16 @@ namespace PolymarketLab.Markets.Infrastructure.Adapters.Postgres.Repository;
 
 internal sealed class MarketRepository(MarketsDbContext dbContext) : IMarketRepository
 {
+    public Task<Market?> GetByIdAsync(
+        MarketId marketId,
+        CancellationToken cancellationToken)
+    {
+        return QueryMarkets()
+            .SingleOrDefaultAsync(
+                market => market.Id == marketId,
+                cancellationToken);
+    }
+
     public Task<Market?> GetBySlugAsync(
         MarketSlug slug,
         CancellationToken cancellationToken)

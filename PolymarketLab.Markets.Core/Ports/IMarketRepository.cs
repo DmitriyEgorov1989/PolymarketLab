@@ -8,6 +8,10 @@ namespace PolymarketLab.Markets.Core.Ports;
 
 public interface IMarketRepository
 {
+    Task<Market?> GetByIdAsync(
+        MarketId marketId,
+        CancellationToken cancellationToken);
+
     Task<Market?> GetBySlugAsync(
         MarketSlug slug,
         CancellationToken cancellationToken);

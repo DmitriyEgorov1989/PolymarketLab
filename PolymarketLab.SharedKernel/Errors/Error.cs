@@ -10,6 +10,8 @@ public sealed partial class Error : ValueObject
 
     private Error()
     {
+        Code = string.Empty;
+        Message = string.Empty;
     }
 
     public Error(string code, string message, ErrorType type, string? invalidField = null)
@@ -55,12 +57,14 @@ public sealed partial class Error : ValueObject
         if (serialized == "A non-empty request body is required.")
             return GeneralErrors.ValueIsRequired(nameof(serialized));
 
-        var data = serialized.Split(new[] { Separator }, StringSplitOptions.RemoveEmptyEntries);
+        var data = serialized.Split(
+            [Separator],
+            StringSplitOptions.None);
 
-        if (data.Length < 4)
+        if (data.Length != 4
+            || !Enum.TryParse<ErrorType>(data[2], out var type))
             throw new FormatException($"Invalid error serialization: '{serialized}'");
 
-        var type = Enum.Parse<ErrorType>(data[2]);
         var invalidField = string.IsNullOrWhiteSpace(data[3]) ? null : data[3];
 
         return new Error(data[0], data[1], type, invalidField);

@@ -13,6 +13,7 @@
     <Project Path="PolymarketLab.DataCollection.Presentation/PolymarketLab.DataCollection.Presentation.csproj" Id="389f68ca-3e9c-45d4-b79a-83e784fa02d8" />
   </Folder>
   <Folder Name="/src/Modules/Markets/">
+    <Project Path="PolymarketLab.Markets.Contracts/PolymarketLab.Markets.Contracts.csproj" Id="936c5184-e77c-4bd3-979b-fb6f760fecd7" />
     <Project Path="PolymarketLab.Markets.Core/PolymarketLab.Markets.Core.csproj" Id="bc4c3703-5145-4e07-bf80-bd8c6319fd8c" />
     <Project Path="PolymarketLab.Markets.Infrastructure/PolymarketLab.Markets.Infrastructure.csproj" Id="4e891248-a3dc-464b-8ceb-d4bc7f39394f" />
     <Project Path="PolymarketLab.Markets.Presentation/PolymarketLab.Markets.Presentation.csproj" Id="1ff470cd-39a8-4450-b571-d882c70b5139" />
@@ -23,6 +24,7 @@
     <Project Path="PolymarketLab.SharedKernel/PolymarketLab.SharedKernel.csproj" Id="c77d5717-83ef-4e7a-9aa2-0994cfeedefc" />
   </Folder>
   <Folder Name="/src/Tests/">
+    <Project Path="PolymarketLab.DataCollection.Core.Tests/PolymarketLab.DataCollection.Core.Tests.csproj" Id="7c5bdfb4-568e-4945-9df2-e37a38c10f48" />
     <Project Path="PolymarketLab.DataCollection.Infrastructure.Tests/PolymarketLab.DataCollection.Infrastructure.Tests.csproj" Id="a33ef385-57a9-4ff2-85cd-df92eaeecbf3" />
     <Project Path="PolymarketLab.Markets.Domain.Tests/PolymarketLab.Markets.Domain.Tests.csproj" Id="fe941d8f-21f4-4f29-bfbd-d48c210a9ea1" />
     <Project Path="PolymarketLab.Markets.Infrastructure.Tests/PolymarketLab.Markets.Infrastructure.Tests.csproj" Id="e531cc67-aa29-49f8-96d8-119d0ac56cff" />

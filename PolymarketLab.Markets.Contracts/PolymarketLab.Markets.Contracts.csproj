@@ -6,10 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
-
   <ItemGroup>
-    <PackageReference Include="CSharpFunctionalExtensions" Version="3.7.0" />
-    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
     <ProjectReference Include="..\PolymarketLab.SharedKernel\PolymarketLab.SharedKernel.csproj" />
   </ItemGroup>
 

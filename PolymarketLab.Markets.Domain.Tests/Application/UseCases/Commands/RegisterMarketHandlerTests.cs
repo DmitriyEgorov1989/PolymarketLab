@@ -286,6 +286,14 @@ public sealed class RegisterMarketHandlerTests
         public CancellationToken LastCancellationToken { get; private set; }
         public Func<MarketAggregate, Result<MarketInsertStatus, Error>>? TryAddHandler { get; set; }
 
+        public Task<MarketAggregate?> GetByIdAsync(
+            MarketId marketId,
+            CancellationToken cancellationToken)
+        {
+            LastCancellationToken = cancellationToken;
+            return Task.FromResult(_markets.SingleOrDefault(market => market.Id.Equals(marketId)));
+        }
+
         public Task<MarketAggregate?> GetBySlugAsync(
             MarketSlug slug,
             CancellationToken cancellationToken)

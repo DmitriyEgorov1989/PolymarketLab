@@ -8,7 +8,7 @@
 
   <ItemGroup>
     <Folder Include="Controllers\Models\" />
-    <Folder Include="Controllers\Services\" />
+    <Folder Include="Contracts\" />
   </ItemGroup>
 
   <ItemGroup>

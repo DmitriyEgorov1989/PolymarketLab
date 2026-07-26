@@ -39,6 +39,7 @@ public sealed class MarketRepositoryTests
         await repository.TryAddAsync(market, CancellationToken.None);
         context.ChangeTracker.Clear();
 
+        var byId = await repository.GetByIdAsync(market.Id, CancellationToken.None);
         var bySlug = await repository.GetBySlugAsync(market.Slug, CancellationToken.None);
         var byExternalId = await repository.GetByExternalIdAsync(
             market.ExternalId,
@@ -47,6 +48,8 @@ public sealed class MarketRepositoryTests
             market.ConditionId,
             CancellationToken.None);
 
+        byId!.Id.Should().Be(market.Id);
+        byId.Tokens.Should().HaveCount(2);
         bySlug!.Id.Should().Be(market.Id);
         byExternalId!.Id.Should().Be(market.Id);
         byConditionId!.Id.Should().Be(market.Id);
@@ -59,6 +62,9 @@ public sealed class MarketRepositoryTests
         await using var context = CreateContext();
         var repository = new MarketRepository(context);
 
+        var byId = await repository.GetByIdAsync(
+            MarketId.Create(Guid.NewGuid()).Value,
+            CancellationToken.None);
         var bySlug = await repository.GetBySlugAsync(
             MarketSlug.Create("missing").Value,
             CancellationToken.None);
@@ -69,6 +75,7 @@ public sealed class MarketRepositoryTests
             ConditionId.Create("missing").Value,
             CancellationToken.None);
 
+        byId.Should().BeNull();
         bySlug.Should().BeNull();
         byExternalId.Should().BeNull();
         byConditionId.Should().BeNull();

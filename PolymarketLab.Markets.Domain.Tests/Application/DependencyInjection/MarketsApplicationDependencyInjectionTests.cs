@@ -3,6 +3,7 @@ using FluentAssertions;
 using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
+using PolymarketLab.Markets.Contracts;
 using PolymarketLab.Markets.Core.Application.DependencyInjection;
 using PolymarketLab.Markets.Core.Application.UseCases.Commands;
 using static PolymarketLab.SharedKernel.Errors.Error;
@@ -27,5 +28,8 @@ public sealed class MarketsApplicationDependencyInjectionTests
         services.Should().Contain(descriptor =>
             descriptor.ServiceType == typeof(IValidator<RegisterMarketCommand>)
             && descriptor.ImplementationType == typeof(RegisterCommandValidation));
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(IMarketsReader)
+            && descriptor.Lifetime == ServiceLifetime.Scoped);
     }
 }

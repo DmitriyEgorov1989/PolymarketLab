@@ -13,8 +13,17 @@ public static class ValidationExtension
 
         foreach (var validationError in validationResult.Errors)
         {
-            var responseError =
-                GeneralErrors.Validation(nameof(command), validationError.PropertyName);
+            Error responseError;
+            try
+            {
+                responseError = Error.Deserialize(validationError.ErrorMessage);
+            }
+            catch (FormatException)
+            {
+                responseError = GeneralErrors.Validation(
+                    nameof(command),
+                    validationError.PropertyName);
+            }
 
             responseErrors.Add(responseError);
         }

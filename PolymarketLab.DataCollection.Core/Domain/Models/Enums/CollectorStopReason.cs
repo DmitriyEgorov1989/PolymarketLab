@@ -30,6 +30,11 @@
         /// <summary>
         /// Восстановление сессии не завершилось за допустимое время.
         /// </summary>
-        RecoveryTimeout = 6
+        RecoveryTimeout = 6,
+
+        /// <summary>
+        /// Сессия завершена из-за ошибки первоначального запуска collector runtime.
+        /// </summary>
+        StartupFailure = 7
     }
 }
