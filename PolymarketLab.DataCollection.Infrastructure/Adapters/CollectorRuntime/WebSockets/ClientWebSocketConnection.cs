@@ -23,6 +23,17 @@ internal sealed class ClientWebSocketConnection : ICollectorWebSocketConnection
             .AsTask();
     }
 
+    public async ValueTask<CollectorWebSocketReceiveResult> ReceiveAsync(
+        Memory<byte> buffer,
+        CancellationToken cancellationToken)
+    {
+        var result = await _socket.ReceiveAsync(buffer, cancellationToken);
+        return new CollectorWebSocketReceiveResult(
+            result.Count,
+            result.MessageType,
+            result.EndOfMessage);
+    }
+
     public Task CloseAsync(CancellationToken cancellationToken)
     {
         if (_socket.State is not (WebSocketState.Open or WebSocketState.CloseReceived))

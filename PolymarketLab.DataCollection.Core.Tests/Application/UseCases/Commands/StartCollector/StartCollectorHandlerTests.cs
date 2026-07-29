@@ -5,6 +5,7 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartColle
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
+using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using Xunit;
@@ -180,8 +181,9 @@ public sealed class StartCollectorHandlerTests
             "Session state could not be saved.",
             ErrorType.Failure);
         var fixture = new Fixture();
-        fixture.Repository.UpdateResults.Enqueue(UnitResult.Failure(persistenceError));
-        fixture.Repository.UpdateResults.Enqueue(UnitResult.Success<Error>());
+        fixture.Repository.UpdateResults.Enqueue(
+            Result.Failure<CollectorSessionUpdateStatus, Error>(persistenceError));
+        fixture.Repository.UpdateResults.Enqueue(CollectorSessionUpdateStatus.Updated);
 
         var result = await fixture.HandleAsync();
 
@@ -193,6 +195,40 @@ public sealed class StartCollectorHandlerTests
         fixture.Repository.UpdateCalls[0].Status.Should().Be(CollectorSessionStatus.Running);
         fixture.Repository.UpdateCalls[1].Status.Should().Be(CollectorSessionStatus.Failed);
         fixture.Repository.UpdateCalls[1].StopReason.Should().Be(CollectorStopReason.PersistenceFailure);
+    }
+
+    [Fact]
+    public async Task Handle_WhenRuntimeFailureWinsRunningUpdate_ShouldNotResurrectSession()
+    {
+        var runtimeError = new Error(
+            "collector.runtime.receive.closed",
+            "Remote endpoint closed the connection.",
+            ErrorType.Failure);
+        var fixture = new Fixture();
+        fixture.Repository.UpdateResults.Enqueue(
+            CollectorSessionUpdateStatus.ConcurrencyConflict);
+        fixture.Repository.GetByIdHandler = sessionId =>
+        {
+            var persisted = CollectorSessionAggregate.Create(
+                sessionId,
+                fixture.MarketId,
+                Now).Value;
+            persisted.Fail(
+                Now,
+                CollectorStopReason.FatalWebSocketError,
+                runtimeError.Code,
+                runtimeError.Message);
+            return persisted;
+        };
+
+        var result = await fixture.HandleAsync();
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Should().Be(runtimeError);
+        fixture.Runtime.StopCallCount.Should().Be(1);
+        fixture.Repository.UpdateCalls.Should().ContainSingle();
+        fixture.Repository.UpdateCalls[0].ExpectedStatus.Should()
+            .Be(CollectorSessionStatus.Starting);
     }
 
     private static CollectionMarket CreateMarket(InvalidTokens invalidTokens = InvalidTokens.None)
@@ -300,8 +336,9 @@ public sealed class StartCollectorHandlerTests
     private sealed class StubCollectorSessionRepository : ICollectorSessionRepository
     {
         public Queue<CollectorSessionAggregate?> ActiveResults { get; } = [];
-        public Queue<UnitResult<Error>> UpdateResults { get; } = [];
+        public Queue<Result<CollectorSessionUpdateStatus, Error>> UpdateResults { get; } = [];
         public List<UpdateCall> UpdateCalls { get; } = [];
+        public Func<CollectorSessionId, CollectorSessionAggregate?>? GetByIdHandler { get; set; }
         public CollectorSessionInsertStatus InsertResult { get; set; }
             = CollectorSessionInsertStatus.Inserted;
         public CollectorSessionAggregate? InsertedSession { get; private set; }
@@ -324,25 +361,32 @@ public sealed class StartCollectorHandlerTests
             return Task.FromResult<Result<CollectorSessionInsertStatus, Error>>(InsertResult);
         }
 
-        public Task<UnitResult<Error>> UpdateAsync(
+        public Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
             CollectorSessionAggregate session,
+            CollectorSessionStatus expectedStatus,
             CancellationToken cancellationToken)
         {
             UpdateCalls.Add(new UpdateCall(
                 session.Status,
+                expectedStatus,
                 session.StopReason,
                 session.FailureCode,
+                session.FailureMessage,
                 cancellationToken));
 
             return Task.FromResult(
                 UpdateResults.TryDequeue(out var result)
                     ? result
-                    : UnitResult.Success<Error>());
+                    : Result.Success<CollectorSessionUpdateStatus, Error>(
+                        CollectorSessionUpdateStatus.Updated));
         }
 
         public Task<CollectorSessionAggregate?> GetByIdAsync(
             CollectorSessionId sessionId,
-            CancellationToken cancellationToken) => throw new NotSupportedException();
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(GetByIdHandler?.Invoke(sessionId));
+        }
 
         public Task<IReadOnlyCollection<CollectorSessionAggregate>> GetActiveAsync(
             CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -384,7 +428,9 @@ public sealed class StartCollectorHandlerTests
 
     private sealed record UpdateCall(
         CollectorSessionStatus Status,
+        CollectorSessionStatus ExpectedStatus,
         CollectorStopReason? StopReason,
         string? FailureCode,
+        string? FailureMessage,
         CancellationToken CancellationToken);
 }

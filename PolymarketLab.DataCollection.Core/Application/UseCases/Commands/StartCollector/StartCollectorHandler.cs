@@ -5,6 +5,7 @@ using PolymarketLab.DataCollection.Core.Application.Errors;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
+using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using PolymarketLab.SharedKernel.Extensions.Validations;
@@ -94,6 +95,7 @@ public sealed class StartCollectorHandler(
         {
             var compensationResult = await MarkFailedAsync(
                 session,
+                CollectorSessionStatus.Starting,
                 CollectorStopReason.StartupFailure,
                 StartCollectorErrors.RuntimeStartCancelled);
 
@@ -107,6 +109,7 @@ public sealed class StartCollectorHandler(
         {
             var compensationResult = await MarkFailedAsync(
                 session,
+                CollectorSessionStatus.Starting,
                 CollectorStopReason.StartupFailure,
                 runtimeResult.Error);
 
@@ -119,11 +122,15 @@ public sealed class StartCollectorHandler(
         if (markRunningResult.IsFailure)
             return await CompensateStartedRuntimeAsync(session, markRunningResult.Error);
 
-        var updateResult = await sessionRepository.UpdateAsync(
+        var updateResult = await sessionRepository.TryUpdateAsync(
             session,
+            CollectorSessionStatus.Starting,
             CancellationToken.None);
         if (updateResult.IsFailure)
             return await CompensateStartedRuntimeAsync(session, updateResult.Error);
+
+        if (updateResult.Value == CollectorSessionUpdateStatus.ConcurrencyConflict)
+            return await HandleRunningConflictAsync(session);
 
         return Response(session, true);
     }
@@ -138,6 +145,7 @@ public sealed class StartCollectorHandler(
 
         var failResult = await MarkFailedAsync(
             session,
+            CollectorSessionStatus.Starting,
             CollectorStopReason.PersistenceFailure,
             cause);
 
@@ -148,6 +156,7 @@ public sealed class StartCollectorHandler(
 
     private async Task<UnitResult<Error>> MarkFailedAsync(
         CollectorSessionAggregate session,
+        CollectorSessionStatus expectedStatus,
         CollectorStopReason reason,
         Error error)
     {
@@ -159,7 +168,41 @@ public sealed class StartCollectorHandler(
         if (failResult.IsFailure)
             return failResult;
 
-        return await sessionRepository.UpdateAsync(session, CancellationToken.None);
+        var updateResult = await sessionRepository.TryUpdateAsync(
+            session,
+            expectedStatus,
+            CancellationToken.None);
+        if (updateResult.IsFailure)
+            return UnitResult.Failure(updateResult.Error);
+
+        return updateResult.Value == CollectorSessionUpdateStatus.Updated
+            ? UnitResult.Success<Error>()
+            : UnitResult.Failure(StartCollectorErrors.StateTransitionConflict);
+    }
+
+    private async Task<Result<StartCollectorResponse, ErrorList>> HandleRunningConflictAsync(
+        CollectorSessionAggregate session)
+    {
+        var stopResult = await runtime.StopAsync(session.Id, CancellationToken.None);
+        var persistedSession = await sessionRepository.GetByIdAsync(
+            session.Id,
+            CancellationToken.None);
+
+        var cause = persistedSession is
+        {
+            Status: CollectorSessionStatus.Failed,
+            FailureCode: not null,
+            FailureMessage: not null
+        }
+            ? new Error(
+                persistedSession.FailureCode,
+                persistedSession.FailureMessage,
+                ErrorType.Failure)
+            : StartCollectorErrors.StateTransitionConflict;
+
+        return stopResult.IsFailure
+            ? Failure(cause, stopResult.Error)
+            : Failure(cause);
     }
 
     private static Error? ValidateTokens(CollectionMarket market)

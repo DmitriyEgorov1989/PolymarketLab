@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using CollectorSessionAggregate = PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.CollectorSession;
@@ -64,14 +65,28 @@ internal sealed class CollectorSessionRepository(DataCollectionDbContext dbConte
         }
     }
 
-    public async Task<UnitResult<Error>> UpdateAsync(
+    public async Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
         CollectorSessionAggregate session,
+        CollectorSessionStatus expectedStatus,
         CancellationToken cancellationToken)
     {
-        dbContext.CollectorSessions.Update(session);
-        await dbContext.SaveChangesAsync(cancellationToken);
+        var entry = dbContext.Entry(session);
+        if (entry.State == EntityState.Detached)
+            dbContext.CollectorSessions.Attach(session);
 
-        return UnitResult.Success<Error>();
+        entry.State = EntityState.Modified;
+        entry.Property(current => current.Status).OriginalValue = expectedStatus;
+
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return CollectorSessionUpdateStatus.Updated;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            entry.State = EntityState.Detached;
+            return CollectorSessionUpdateStatus.ConcurrencyConflict;
+        }
     }
 
     private IQueryable<CollectorSessionAggregate> QuerySessions()

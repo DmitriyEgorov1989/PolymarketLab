@@ -1,4 +1,4 @@
-namespace PolymarketLab.DataCollection.Core.Ports;
+namespace PolymarketLab.DataCollection.Core.Ports.Enums;
 
 public enum CollectorSessionInsertStatus
 {

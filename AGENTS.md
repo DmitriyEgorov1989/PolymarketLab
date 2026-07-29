@@ -3,6 +3,8 @@
 ## Общение
 
 - Отвечай на русском языке, если пользователь явно не попросил другой язык.
+- В общении с пользователем не смешивай русские и английские слова без необходимости; английские обозначения оставляй только для имён переменных, классов, методов, файлов и других элементов кода.
+- Пиши комментарии понятным русским языком и не чередуй русские и английские слова без необходимости; английские обозначения оставляй только для имён типов, методов, свойств, статусов и других элементов кода.
 - В финале кратко укажи изменения и причины, затронутые файлы, выполненные тесты и сборки.
 
 ## Структура и wiring
@@ -10,7 +12,7 @@
 - Единственный executable host — `PolymarketLab.Api/Program.cs`; папки `/src/...` в `PolymarketLab.slnx` виртуальные, физической `src` нет.
 - `PolymarketLab.Markets.Core/PolymarketLab.Markets.Core.csproj` содержит Domain, Application и Ports; имя папки, сборки и root namespace — `PolymarketLab.Markets.Core`.
 - `Program.cs` подключает Markets Application, Infrastructure и controllers из Presentation. Application DI сканирует MediatR handlers и FluentValidation validators; Infrastructure DI регистрирует Npgsql context, repository и Gamma typed client.
-- DataCollection Infrastructure подключён к host и регистрирует `DataCollectionDbContext` и repository. Collector, Presentation и Raw JSON pipeline не реализованы.
+- DataCollection Application и Infrastructure подключены к host; Presentation и HTTP endpoints пока не подключены. Infrastructure регистрирует `DataCollectionDbContext`, repositories, singleton collector runtime и bounded raw-message ingestion worker. WebSocket collector принимает text messages, собирает fragments и сохраняет исходные UTF-8 bytes batch-ами.
 - Все проекты используют `net10.0`; `global.json`, package lock и repo-local tool manifest отсутствуют.
 
 ## Проверка
@@ -55,6 +57,7 @@ dotnet ef database update --project .\PolymarketLab.DataCollection.Infrastructur
 - Миграции и snapshots находятся в `PolymarketLab.Markets.Infrastructure/Adapters/Postgres/Migrations` и `PolymarketLab.DataCollection.Infrastructure/Adapters/Postgres/Migrations`; `dotnet-ef` не закреплён manifest-файлом.
 - Уникальность identity рынка обеспечивают отдельные constraints для `slug`, `external_market_id`, `condition_id`. Только их PostgreSQL `23505` repository преобразует в `MarketInsertStatus.UniqueConflict`; token conflicts и прочие DB errors не маскируй.
 - Repository queries используют `AsNoTracking()` и загружают `Tokens`; aggregate не должен возвращаться частично материализованным.
+- Переходы `CollectorSession` сохраняются через compare-and-set по ожидаемому `Status`; `status` является EF concurrency token. Конфликт нужно перечитать и разрешить, не выполняй безусловный update aggregate.
 
 ## Соглашения Markets
 
@@ -69,3 +72,4 @@ dotnet ef database update --project .\PolymarketLab.DataCollection.Infrastructur
 - Validators зарегистрированы, но MediatR validation pipeline отсутствует: `RegisterCommandValidation` автоматически перед handler не запускается.
 - Framework возвращает `Envelope`, не raw response DTO. HTTP mapping ошибок неполный: новые `ErrorType` могут уйти в 500, пока не обновлён `ResponseExtensions`.
 - Нет exception-handler/problem-details middleware и автоматического применения миграций.
+- Autonomous collector failure переводит persisted active session в `Failed` через scoped Application handler; ошибка этой записи останавливает host. Reconnect и startup reconciliation stale active sessions пока не реализованы.

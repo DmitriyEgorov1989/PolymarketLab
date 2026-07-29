@@ -1,5 +1,7 @@
 ﻿using CSharpFunctionalExtensions;
 using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
+using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
+using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 
@@ -22,7 +24,8 @@ public interface ICollectorSessionRepository
         CollectorSession session,
         CancellationToken cancellationToken);
 
-    Task<UnitResult<Error>> UpdateAsync(
+    Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
         CollectorSession session,
+        CollectorSessionStatus expectedStatus,
         CancellationToken cancellationToken);
 }

@@ -5,6 +5,8 @@ using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using PolymarketLab.DataCollection.Core.Application.DependencyInjection;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
+using PolymarketLab.DataCollection.Core.Ports;
 using static PolymarketLab.SharedKernel.Errors.Error;
 using Xunit;
 
@@ -30,5 +32,9 @@ public sealed class DataCollectionApplicationDependencyInjectionTests
         services.Should().Contain(descriptor =>
             descriptor.ServiceType == typeof(TimeProvider)
             && descriptor.Lifetime == ServiceLifetime.Singleton);
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(ICollectorRuntimeFailureHandler)
+            && descriptor.ImplementationType == typeof(CollectorRuntimeFailureHandler)
+            && descriptor.Lifetime == ServiceLifetime.Scoped);
     }
 }

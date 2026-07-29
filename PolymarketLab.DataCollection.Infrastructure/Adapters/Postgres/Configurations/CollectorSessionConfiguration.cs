@@ -31,6 +31,7 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Configur
             builder.Property(x => x.Status)
                 .HasColumnName("status")
                 .HasConversion<int>()
+                .IsConcurrencyToken()
                 .IsRequired();
 
             builder.Property(x => x.CreatedAt)

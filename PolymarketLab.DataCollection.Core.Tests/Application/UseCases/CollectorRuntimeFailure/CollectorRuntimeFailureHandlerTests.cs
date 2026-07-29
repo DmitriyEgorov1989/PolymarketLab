@@ -1,0 +1,190 @@
+using CSharpFunctionalExtensions;
+using FluentAssertions;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
+using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
+using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Core.Ports.Dtos;
+using PolymarketLab.DataCollection.Core.Ports.Enums;
+using PolymarketLab.SharedKernel.DomainModels.Ids;
+using PolymarketLab.SharedKernel.Errors;
+using Xunit;
+using CollectorSessionAggregate = PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.CollectorSession;
+using RuntimeFailureNotification = PolymarketLab.DataCollection.Core.Ports.Dtos.CollectorRuntimeFailure;
+
+namespace PolymarketLab.DataCollection.Core.Tests.Application.UseCases.CollectorRuntimeFailure;
+
+public sealed class CollectorRuntimeFailureHandlerTests
+{
+    private static readonly DateTimeOffset CreatedAt =
+        new(2026, 7, 29, 10, 0, 0, TimeSpan.Zero);
+    private static readonly Error RuntimeError = new(
+        "collector.runtime.receive.closed",
+        "Remote endpoint closed the connection.",
+        ErrorType.Failure);
+
+    [Fact]
+    public async Task HandleAsync_WithRunningSession_ShouldPersistFailedState()
+    {
+        var session = CreateSession(CollectorSessionStatus.Running);
+        var repository = new StubCollectorSessionRepository(session);
+        var handler = new CollectorRuntimeFailureHandler(repository);
+        var failedAt = CreatedAt.AddMinutes(1);
+
+        var result = await handler.HandleAsync(
+            new RuntimeFailureNotification(session.Id, failedAt, RuntimeError),
+            CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        repository.UpdateCalls.Should().ContainSingle();
+        var update = repository.UpdateCalls[0];
+        update.ExpectedStatus.Should().Be(CollectorSessionStatus.Running);
+        update.Session.Status.Should().Be(CollectorSessionStatus.Failed);
+        update.Session.StoppedAt.Should().Be(failedAt);
+        update.Session.StopReason.Should().Be(CollectorStopReason.FatalWebSocketError);
+        update.Session.FailureCode.Should().Be(RuntimeError.Code);
+        update.Session.FailureMessage.Should().Be(RuntimeError.Message);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenStartingUpdateConflicts_ShouldRetryRunningState()
+    {
+        var sessionId = CollectorSessionId.Create(Guid.NewGuid()).Value;
+        var marketId = MarketId.Create(Guid.NewGuid()).Value;
+        var starting = CreateSession(sessionId, marketId, CollectorSessionStatus.Starting);
+        var running = CreateSession(sessionId, marketId, CollectorSessionStatus.Running);
+        var repository = new StubCollectorSessionRepository(starting, running);
+        repository.UpdateResults.Enqueue(CollectorSessionUpdateStatus.ConcurrencyConflict);
+        repository.UpdateResults.Enqueue(CollectorSessionUpdateStatus.Updated);
+        var handler = new CollectorRuntimeFailureHandler(repository);
+
+        var result = await handler.HandleAsync(
+            new RuntimeFailureNotification(
+                sessionId,
+                CreatedAt.AddMinutes(1),
+                RuntimeError),
+            CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        repository.UpdateCalls.Should().HaveCount(2);
+        repository.UpdateCalls[0].ExpectedStatus.Should()
+            .Be(CollectorSessionStatus.Starting);
+        repository.UpdateCalls[1].ExpectedStatus.Should()
+            .Be(CollectorSessionStatus.Running);
+    }
+
+    [Theory]
+    [InlineData(CollectorSessionStatus.Stopping)]
+    [InlineData(CollectorSessionStatus.Stopped)]
+    [InlineData(CollectorSessionStatus.Failed)]
+    [InlineData(CollectorSessionStatus.Interrupted)]
+    public async Task HandleAsync_WithNonApplicableState_ShouldBeIdempotent(
+        CollectorSessionStatus status)
+    {
+        var session = CreateSession(status);
+        var repository = new StubCollectorSessionRepository(session);
+        var handler = new CollectorRuntimeFailureHandler(repository);
+
+        var result = await handler.HandleAsync(
+            new RuntimeFailureNotification(
+                session.Id,
+                CreatedAt.AddMinutes(1),
+                RuntimeError),
+            CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        repository.UpdateCalls.Should().BeEmpty();
+    }
+
+    private static CollectorSessionAggregate CreateSession(
+        CollectorSessionStatus status)
+    {
+        return CreateSession(
+            CollectorSessionId.Create(Guid.NewGuid()).Value,
+            MarketId.Create(Guid.NewGuid()).Value,
+            status);
+    }
+
+    private static CollectorSessionAggregate CreateSession(
+        CollectorSessionId sessionId,
+        MarketId marketId,
+        CollectorSessionStatus status)
+    {
+        var session = CollectorSessionAggregate.Create(
+            sessionId,
+            marketId,
+            CreatedAt).Value;
+
+        if (status != CollectorSessionStatus.Starting)
+            session.MarkRunning(CreatedAt.AddSeconds(1));
+
+        if (status == CollectorSessionStatus.Stopping)
+            SetStatus(session, CollectorSessionStatus.Stopping);
+        else if (status == CollectorSessionStatus.Stopped)
+            session.Stop(CreatedAt.AddSeconds(2), CollectorStopReason.Requested);
+        else if (status == CollectorSessionStatus.Failed)
+            session.Fail(
+                CreatedAt.AddSeconds(2),
+                CollectorStopReason.FatalWebSocketError,
+                RuntimeError.Code,
+                RuntimeError.Message);
+        else if (status == CollectorSessionStatus.Interrupted)
+            SetStatus(session, CollectorSessionStatus.Interrupted);
+
+        return session;
+    }
+
+    private static void SetStatus(
+        CollectorSessionAggregate session,
+        CollectorSessionStatus status)
+    {
+        typeof(CollectorSessionAggregate)
+            .GetProperty(nameof(CollectorSessionAggregate.Status))!
+            .SetValue(session, status);
+    }
+
+    private sealed class StubCollectorSessionRepository(
+        params CollectorSessionAggregate[] sessions)
+        : ICollectorSessionRepository
+    {
+        private readonly Queue<CollectorSessionAggregate> _sessions = new(sessions);
+
+        public Queue<Result<CollectorSessionUpdateStatus, Error>> UpdateResults { get; } = [];
+        public List<UpdateCall> UpdateCalls { get; } = [];
+
+        public Task<CollectorSessionAggregate?> GetByIdAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult<CollectorSessionAggregate?>(
+                _sessions.TryDequeue(out var session) ? session : null);
+        }
+
+        public Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
+            CollectorSessionAggregate session,
+            CollectorSessionStatus expectedStatus,
+            CancellationToken cancellationToken)
+        {
+            UpdateCalls.Add(new UpdateCall(session, expectedStatus));
+            return Task.FromResult(
+                UpdateResults.TryDequeue(out var result)
+                    ? result
+                    : Result.Success<CollectorSessionUpdateStatus, Error>(
+                        CollectorSessionUpdateStatus.Updated));
+        }
+
+        public Task<CollectorSessionAggregate?> GetActiveByMarketIdAsync(
+            MarketId marketId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyCollection<CollectorSessionAggregate>> GetActiveAsync(
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<Result<CollectorSessionInsertStatus, Error>> TryAddAsync(
+            CollectorSessionAggregate session,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed record UpdateCall(
+        CollectorSessionAggregate Session,
+        CollectorSessionStatus ExpectedStatus);
+}

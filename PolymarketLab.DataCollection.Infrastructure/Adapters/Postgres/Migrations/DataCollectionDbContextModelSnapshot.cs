@@ -51,6 +51,7 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Migratio
                         .HasColumnName("started_at");
 
                     b.Property<int>("Status")
+                        .IsConcurrencyToken()
                         .HasColumnType("integer")
                         .HasColumnName("status");
 
@@ -70,6 +71,45 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Migratio
                         .HasFilter("\"status\" IN (0, 1, 2)");
 
                     b.ToTable("collector_sessions", "data_collection");
+                });
+
+            modelBuilder.Entity("PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Models.RawMarketMessageRecord", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<byte[]>("Payload")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("payload");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("received_at");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("session_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SessionId", "ReceivedAt", "Id")
+                        .HasDatabaseName("ix_raw_market_messages_session_received_id");
+
+                    b.ToTable("raw_market_messages", "data_collection");
+                });
+
+            modelBuilder.Entity("PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Models.RawMarketMessageRecord", b =>
+                {
+                    b.HasOne("PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.CollectorSession", null)
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

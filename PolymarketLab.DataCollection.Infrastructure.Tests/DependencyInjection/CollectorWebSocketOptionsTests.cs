@@ -25,6 +25,9 @@ public sealed class CollectorWebSocketOptionsTests
         options.Endpoint.Should().Be(
             "wss://ws-subscriptions-clob.polymarket.com/ws/market");
         options.ConnectTimeout.Should().Be(TimeSpan.FromSeconds(10));
+        options.StopTimeout.Should().Be(TimeSpan.FromSeconds(10));
+        options.ReceiveBufferSize.Should().Be(16 * 1024);
+        options.MaximumMessageSize.Should().Be(1024 * 1024);
         options.CustomFeatureEnabled.Should().BeTrue();
     }
 
@@ -41,6 +44,48 @@ public sealed class CollectorWebSocketOptionsTests
         {
             [$"{CollectorWebSocketOptions.SectionName}:Endpoint"] = endpoint,
             [$"{CollectorWebSocketOptions.SectionName}:ConnectTimeout"] = connectTimeout
+        });
+
+        var action = () => provider
+            .GetRequiredService<IOptions<CollectorWebSocketOptions>>()
+            .Value;
+
+        action.Should().Throw<OptionsValidationException>();
+    }
+
+    [Theory]
+    [InlineData("0", "1048576")]
+    [InlineData("1024", "0")]
+    [InlineData("2048", "1024")]
+    [InlineData("1024", "16777217")]
+    public void AddDataCollectionInfrastructure_WithInvalidReceiveSizes_ShouldFailValidation(
+        string receiveBufferSize,
+        string maximumMessageSize)
+    {
+        using var provider = CreateProvider(new Dictionary<string, string?>
+        {
+            [$"{CollectorWebSocketOptions.SectionName}:ReceiveBufferSize"] =
+                receiveBufferSize,
+            [$"{CollectorWebSocketOptions.SectionName}:MaximumMessageSize"] =
+                maximumMessageSize
+        });
+
+        var action = () => provider
+            .GetRequiredService<IOptions<CollectorWebSocketOptions>>()
+            .Value;
+
+        action.Should().Throw<OptionsValidationException>();
+    }
+
+    [Theory]
+    [InlineData("00:00:00")]
+    [InlineData("100.00:00:00")]
+    public void AddDataCollectionInfrastructure_WithInvalidStopTimeout_ShouldFailValidation(
+        string stopTimeout)
+    {
+        using var provider = CreateProvider(new Dictionary<string, string?>
+        {
+            [$"{CollectorWebSocketOptions.SectionName}:StopTimeout"] = stopTimeout
         });
 
         var action = () => provider
