@@ -1,5 +1,6 @@
 using PolymarketLab.DataCollection.Infrastructure.DependencyInjection;
 using PolymarketLab.DataCollection.Core.Application.DependencyInjection;
+using PolymarketLab.DataCollection.Presentation.Controllers;
 using PolymarketLab.Markets.Core.Application.DependencyInjection;
 using PolymarketLab.Markets.Infrastructure.DependencyInjection;
 using PolymarketLab.Markets.Presentation.Controllers;
@@ -10,6 +11,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services
     .AddControllers()
+    .AddApplicationPart(typeof(CollectorController).Assembly)
     .AddApplicationPart(typeof(MarketController).Assembly);
 builder.Services.AddMarketsApplication();
 builder.Services.AddMarketsInfrastructure(builder.Configuration);

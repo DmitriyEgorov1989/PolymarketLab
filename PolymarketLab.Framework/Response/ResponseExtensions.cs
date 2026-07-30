@@ -30,8 +30,13 @@ public static class ResponseExtensions
         {
             ErrorType.Validation => StatusCodes.Status400BadRequest,
             ErrorType.ValueIsInvalid => StatusCodes.Status400BadRequest,
+            ErrorType.ValueIsRequired => StatusCodes.Status400BadRequest,
             ErrorType.InvalidLength => StatusCodes.Status400BadRequest,
+            ErrorType.InvalidSize => StatusCodes.Status400BadRequest,
+            ErrorType.CollectionIsTooSmall => StatusCodes.Status400BadRequest,
+            ErrorType.CollectionIsTooLarge => StatusCodes.Status400BadRequest,
             ErrorType.NotFound => StatusCodes.Status404NotFound,
+            ErrorType.Conflict => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status500InternalServerError
         };
         var envelope = Envelope.Errors(responseErrors);
@@ -64,8 +69,13 @@ public static class ResponseExtensions
         {
             ErrorType.Validation => StatusCodes.Status400BadRequest,
             ErrorType.ValueIsInvalid => StatusCodes.Status400BadRequest,
+            ErrorType.ValueIsRequired => StatusCodes.Status400BadRequest,
             ErrorType.InvalidLength => StatusCodes.Status400BadRequest,
+            ErrorType.InvalidSize => StatusCodes.Status400BadRequest,
+            ErrorType.CollectionIsTooSmall => StatusCodes.Status400BadRequest,
+            ErrorType.CollectionIsTooLarge => StatusCodes.Status400BadRequest,
             ErrorType.NotFound => StatusCodes.Status404NotFound,
+            ErrorType.Conflict => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status500InternalServerError
         };
         var envelope = Envelope.Errors(responseErrors);
