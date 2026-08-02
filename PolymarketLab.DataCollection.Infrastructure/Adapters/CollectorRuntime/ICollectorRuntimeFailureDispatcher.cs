@@ -11,7 +11,8 @@ internal interface ICollectorRuntimeFailureDispatcher
     /// <summary>Передаёт сведения об ошибке для сохранения в отдельной области зависимостей.</summary>
     /// <param name="failure">Идентификатор сессии, время и причина завершения.</param>
     /// <param name="cancellationToken">Токен отмены ожидания сохранения.</param>
-    Task DispatchAsync(
+    /// <returns>Признак успешного сохранения состояния сессии.</returns>
+    Task<bool> DispatchAsync(
         CollectorRuntimeFailure failure,
         CancellationToken cancellationToken);
 }

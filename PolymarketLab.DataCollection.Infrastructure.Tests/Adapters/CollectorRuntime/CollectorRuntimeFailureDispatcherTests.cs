@@ -23,8 +23,9 @@ public sealed class CollectorRuntimeFailureDispatcherTests
         var dispatcher = CreateDispatcher(provider, lifetime);
         var failure = CreateFailure();
 
-        await dispatcher.DispatchAsync(failure, CancellationToken.None);
+        var result = await dispatcher.DispatchAsync(failure, CancellationToken.None);
 
+        result.Should().BeTrue();
         handler.Failures.Should().ContainSingle().Which.Should().Be(failure);
         lifetime.StopCallCount.Should().Be(0);
     }
@@ -41,8 +42,11 @@ public sealed class CollectorRuntimeFailureDispatcherTests
         using var provider = CreateProvider(handler);
         var dispatcher = CreateDispatcher(provider, lifetime);
 
-        await dispatcher.DispatchAsync(CreateFailure(), CancellationToken.None);
+        var result = await dispatcher.DispatchAsync(
+            CreateFailure(),
+            CancellationToken.None);
 
+        result.Should().BeFalse();
         lifetime.StopCallCount.Should().Be(1);
     }
 

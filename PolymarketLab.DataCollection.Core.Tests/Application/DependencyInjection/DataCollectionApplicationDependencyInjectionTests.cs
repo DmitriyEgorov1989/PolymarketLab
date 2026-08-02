@@ -5,7 +5,10 @@ using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using PolymarketLab.DataCollection.Core.Application.DependencyInjection;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
+using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
 using PolymarketLab.DataCollection.Core.Ports;
 using static PolymarketLab.SharedKernel.Errors.Error;
 using Xunit;
@@ -30,11 +33,26 @@ public sealed class DataCollectionApplicationDependencyInjectionTests
             descriptor.ServiceType == typeof(IValidator<StartCollectorCommand>)
             && descriptor.ImplementationType == typeof(StartCollectorValidator));
         services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(IRequestHandler<
+                StopCollectorCommand,
+                Result<StopCollectorResponse, ErrorList>>));
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(IValidator<StopCollectorCommand>)
+            && descriptor.ImplementationType == typeof(StopCollectorValidator));
+        services.Should().Contain(descriptor =>
             descriptor.ServiceType == typeof(TimeProvider)
             && descriptor.Lifetime == ServiceLifetime.Singleton);
         services.Should().Contain(descriptor =>
             descriptor.ServiceType == typeof(ICollectorRuntimeFailureHandler)
             && descriptor.ImplementationType == typeof(CollectorRuntimeFailureHandler)
+            && descriptor.Lifetime == ServiceLifetime.Scoped);
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(ICollectorSessionStartupReconciler)
+            && descriptor.ImplementationType == typeof(CollectorSessionStartupReconciler)
+            && descriptor.Lifetime == ServiceLifetime.Scoped);
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(ICollectorSessionShutdownHandler)
+            && descriptor.ImplementationType == typeof(CollectorSessionShutdownHandler)
             && descriptor.Lifetime == ServiceLifetime.Scoped);
     }
 }

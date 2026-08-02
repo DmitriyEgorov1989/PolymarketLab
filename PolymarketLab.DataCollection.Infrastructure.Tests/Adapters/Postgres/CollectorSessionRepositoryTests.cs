@@ -64,6 +64,50 @@ public sealed class CollectorSessionRepositoryTests
         persisted!.Status.Should().Be(CollectorSessionStatus.Failed);
     }
 
+    [Fact]
+    public async Task GetActiveAsync_ShouldReturnOnlyActiveStatuses()
+    {
+        var options = CreateOptions(new InMemoryDatabaseRoot());
+        var starting = CreateSession();
+        var running = CreateSession();
+        running.MarkRunning(Now.AddSeconds(1));
+        var stopping = CreateSession();
+        stopping.MarkRunning(Now.AddSeconds(1));
+        stopping.MarkStopping();
+        var stopped = CreateSession();
+        stopped.Stop(Now.AddSeconds(1), CollectorStopReason.Requested);
+        var failed = CreateSession();
+        failed.Fail(
+            Now.AddSeconds(1),
+            CollectorStopReason.StartupFailure,
+            "collector.start.failed",
+            "Start failed.");
+        var interrupted = CreateSession();
+        interrupted.Interrupt(
+            Now.AddSeconds(1),
+            CollectorStopReason.ProcessTerminated);
+        await using var context = new DataCollectionDbContext(options);
+        context.CollectorSessions.AddRange(
+            starting,
+            running,
+            stopping,
+            stopped,
+            failed,
+            interrupted);
+        await context.SaveChangesAsync();
+        var repository = new CollectorSessionRepository(context);
+
+        var activeSessions = await repository.GetActiveAsync(
+            CancellationToken.None);
+
+        activeSessions.Select(session => session.Status).Should().BeEquivalentTo(
+            [
+                CollectorSessionStatus.Starting,
+                CollectorSessionStatus.Running,
+                CollectorSessionStatus.Stopping
+            ]);
+    }
+
     private static DbContextOptions<DataCollectionDbContext> CreateOptions(
         InMemoryDatabaseRoot databaseRoot)
     {

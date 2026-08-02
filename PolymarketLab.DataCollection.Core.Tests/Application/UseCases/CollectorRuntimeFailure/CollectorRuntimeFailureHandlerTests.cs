@@ -22,10 +22,13 @@ public sealed class CollectorRuntimeFailureHandlerTests
         "Remote endpoint closed the connection.",
         ErrorType.Failure);
 
-    [Fact]
-    public async Task HandleAsync_WithRunningSession_ShouldPersistFailedState()
+    [Theory]
+    [InlineData(CollectorSessionStatus.Running)]
+    [InlineData(CollectorSessionStatus.Stopping)]
+    public async Task HandleAsync_WithActiveSession_ShouldPersistFailedState(
+        CollectorSessionStatus status)
     {
-        var session = CreateSession(CollectorSessionStatus.Running);
+        var session = CreateSession(status);
         var repository = new StubCollectorSessionRepository(session);
         var handler = new CollectorRuntimeFailureHandler(repository);
         var failedAt = CreatedAt.AddMinutes(1);
@@ -37,7 +40,7 @@ public sealed class CollectorRuntimeFailureHandlerTests
         result.IsSuccess.Should().BeTrue();
         repository.UpdateCalls.Should().ContainSingle();
         var update = repository.UpdateCalls[0];
-        update.ExpectedStatus.Should().Be(CollectorSessionStatus.Running);
+        update.ExpectedStatus.Should().Be(status);
         update.Session.Status.Should().Be(CollectorSessionStatus.Failed);
         update.Session.StoppedAt.Should().Be(failedAt);
         update.Session.StopReason.Should().Be(CollectorStopReason.FatalWebSocketError);
@@ -73,7 +76,6 @@ public sealed class CollectorRuntimeFailureHandlerTests
     }
 
     [Theory]
-    [InlineData(CollectorSessionStatus.Stopping)]
     [InlineData(CollectorSessionStatus.Stopped)]
     [InlineData(CollectorSessionStatus.Failed)]
     [InlineData(CollectorSessionStatus.Interrupted)]

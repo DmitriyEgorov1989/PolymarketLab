@@ -12,7 +12,7 @@ internal sealed class CollectorRuntimeFailureDispatcher(
     ILogger<CollectorRuntimeFailureDispatcher> logger)
     : ICollectorRuntimeFailureDispatcher
 {
-    public async Task DispatchAsync(
+    public async Task<bool> DispatchAsync(
         CollectorRuntimeFailure failure,
         CancellationToken cancellationToken)
     {
@@ -24,7 +24,7 @@ internal sealed class CollectorRuntimeFailureDispatcher(
             var result = await handler.HandleAsync(failure, cancellationToken);
 
             if (result.IsSuccess)
-                return;
+                return true;
 
             logger.LogCritical(
                 "Collector runtime failure for session {SessionId} could not be persisted: {ErrorCode}.",
@@ -40,5 +40,6 @@ internal sealed class CollectorRuntimeFailureDispatcher(
         }
 
         applicationLifetime.StopApplication();
+        return false;
     }
 }

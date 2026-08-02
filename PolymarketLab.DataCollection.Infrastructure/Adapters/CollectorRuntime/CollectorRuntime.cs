@@ -16,6 +16,7 @@ internal sealed class CollectorRuntime(
         CollectorSessionId,
         Lazy<CollectorRuntimeEntry>> _entries = new();
     private readonly ConcurrentDictionary<Task, byte> _completionObservers = new();
+    private readonly ConcurrentDictionary<CollectorSessionId, AutonomousFailure> _autonomousFailures = new();
     private int _shuttingDown;
 
     public async Task<UnitResult<Error>> StartAsync(
@@ -79,6 +80,8 @@ internal sealed class CollectorRuntime(
 
                 if (attempt.IsOwner && result.IsFailure)
                     RemoveEntry(request.SessionId, entryHolder);
+                else if (attempt.IsOwner)
+                    _autonomousFailures.TryRemove(request.SessionId, out _);
 
                 return result;
             }
@@ -92,17 +95,96 @@ internal sealed class CollectorRuntime(
         }
     }
 
-    internal async Task ShutdownAsync(CancellationToken cancellationToken)
+    internal IReadOnlyCollection<CollectorRuntimeShutdownEntry> BeginShutdown()
     {
         Interlocked.Exchange(ref _shuttingDown, 1);
-        var sessionIds = _entries.Keys.ToArray();
+        return _entries
+            .Select(entry => new CollectorRuntimeShutdownEntry(
+                entry.Key,
+                entry.Value))
+            .ToArray();
+    }
 
-        await Task.WhenAll(sessionIds.Select(sessionId =>
-            StopAsync(sessionId, cancellationToken)));
+    internal async Task<IReadOnlyCollection<CollectorRuntimeShutdownResult>> ShutdownAsync(
+        IReadOnlyCollection<CollectorRuntimeShutdownEntry> shutdownEntries,
+        CancellationToken cancellationToken)
+    {
+        var results = await Task.WhenAll(shutdownEntries.Select(shutdownEntry =>
+            StopForShutdownAsync(shutdownEntry, cancellationToken)));
 
         var completionObservers = _completionObservers.Keys.ToArray();
         if (completionObservers.Length > 0)
-            await Task.WhenAll(completionObservers).WaitAsync(cancellationToken);
+        {
+            try
+            {
+                await Task.WhenAll(completionObservers).WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+            }
+        }
+
+        return results;
+    }
+
+    internal Task<IReadOnlyCollection<CollectorRuntimeShutdownResult>> ShutdownAsync(
+        CancellationToken cancellationToken)
+    {
+        return ShutdownAsync(BeginShutdown(), cancellationToken);
+    }
+
+    private async Task<CollectorRuntimeShutdownResult> StopForShutdownAsync(
+        CollectorRuntimeShutdownEntry shutdownEntry,
+        CancellationToken cancellationToken)
+    {
+        var autonomousFailure = GetAutonomousFailure(shutdownEntry);
+        if (autonomousFailure is not null)
+            return FailureResult(shutdownEntry.SessionId, autonomousFailure);
+
+        try
+        {
+            var result = await StopAsync(
+                shutdownEntry.SessionId,
+                cancellationToken);
+            autonomousFailure = GetAutonomousFailure(shutdownEntry);
+            return autonomousFailure is null
+                ? new CollectorRuntimeShutdownResult(
+                    shutdownEntry.SessionId,
+                    result)
+                : FailureResult(
+                    shutdownEntry.SessionId,
+                    autonomousFailure);
+        }
+        catch (Exception exception)
+        {
+            return new CollectorRuntimeShutdownResult(
+                shutdownEntry.SessionId,
+                UnitResult.Failure(
+                    CollectorRuntimeErrors.StopFailed(shutdownEntry.SessionId)),
+                exception);
+        }
+    }
+
+    private Error? GetAutonomousFailure(
+        CollectorRuntimeShutdownEntry shutdownEntry)
+    {
+        return _autonomousFailures.TryGetValue(
+                   shutdownEntry.SessionId,
+                   out var failure)
+               && ReferenceEquals(
+                   failure.EntryHolder,
+                   shutdownEntry.EntryHolder)
+            ? failure.Error
+            : null;
+    }
+
+    private static CollectorRuntimeShutdownResult FailureResult(
+        CollectorSessionId sessionId,
+        Error error)
+    {
+        return new CollectorRuntimeShutdownResult(
+            sessionId,
+            UnitResult.Failure(error));
     }
 
     public async Task<UnitResult<Error>> StopAsync(
@@ -158,20 +240,32 @@ internal sealed class CollectorRuntime(
             return;
         }
 
-        RemoveEntry(sessionId, entryHolder);
-
         if (completion.Origin != CollectorWorkerCompletionOrigin.Autonomous
             || completion.Result.IsSuccess)
         {
+            RemoveEntry(sessionId, entryHolder);
             return;
         }
 
-        await failureDispatcher.DispatchAsync(
+        var autonomousFailure = new AutonomousFailure(
+            entryHolder,
+            completion.Result.Error);
+        _autonomousFailures[sessionId] = autonomousFailure;
+        RemoveEntry(sessionId, entryHolder);
+
+        var persisted = await failureDispatcher.DispatchAsync(
             new CollectorRuntimeFailure(
                 sessionId,
                 completion.CompletedAt,
                 completion.Result.Error),
             CancellationToken.None);
+        if (persisted)
+        {
+            _autonomousFailures.TryRemove(
+                new KeyValuePair<CollectorSessionId, AutonomousFailure>(
+                    sessionId,
+                    autonomousFailure));
+        }
     }
 
     private async Task RemoveEntryWhenOperationCompletedAsync(
@@ -197,4 +291,8 @@ internal sealed class CollectorRuntime(
     {
         await task.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     }
+
+    private sealed record AutonomousFailure(
+        Lazy<CollectorRuntimeEntry> EntryHolder,
+        Error Error);
 }

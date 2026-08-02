@@ -79,6 +79,19 @@ public static class DataCollectionInfrastructureDependencyInjection
                 "Raw message ingestion shutdown timeout is outside the supported range.")
             .ValidateOnStart();
 
+        services.AddOptions<CollectorLifecycleOptions>()
+            .Bind(configuration.GetSection(CollectorLifecycleOptions.SectionName))
+            .Validate(
+                options => options.ShutdownTimeout > TimeSpan.Zero
+                           && options.ShutdownTimeout <=
+                           CollectorLifecycleOptions.MaximumShutdownTimeout,
+                "Collector lifecycle shutdown timeout is outside the supported range.")
+            .Validate<IOptions<CollectorWebSocketOptions>>(
+                (options, webSocketOptions) =>
+                    options.ShutdownTimeout >= webSocketOptions.Value.StopTimeout,
+                "Collector lifecycle shutdown timeout must not be shorter than the WebSocket stop timeout.")
+            .ValidateOnStart();
+
         services.AddDbContext<DataCollectionDbContext>((serviceProvider, options) =>
         {
             var databaseOptions = serviceProvider
@@ -100,11 +113,17 @@ public static class DataCollectionInfrastructureDependencyInjection
         services.AddSingleton<ICollectorRuntime>(serviceProvider =>
             serviceProvider.GetRequiredService<CollectorRuntime>());
         services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<RawMarketMessageTelemetry>();
         services.AddSingleton<RawMarketMessageChannel>();
         services.AddSingleton<IRawMarketMessageSink>(serviceProvider =>
             serviceProvider.GetRequiredService<RawMarketMessageChannel>());
-        services.AddHostedService<RawMarketMessagePersistenceWorker>();
+        services.AddSingleton<RawMarketMessagePersistenceWorker>();
+        services.AddSingleton<IRawMessagePersistenceCompletion>(serviceProvider =>
+            serviceProvider.GetRequiredService<RawMarketMessagePersistenceWorker>());
+        services.AddHostedService(serviceProvider =>
+            serviceProvider.GetRequiredService<RawMarketMessagePersistenceWorker>());
         services.AddHostedService<CollectorRuntimeShutdownService>();
+        services.AddHostedService<CollectorSessionStartupReconciliationService>();
 
         return services;
     }

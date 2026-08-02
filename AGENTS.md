@@ -12,7 +12,7 @@
 - Единственный executable host — `PolymarketLab.Api/Program.cs`; папки `/src/...` в `PolymarketLab.slnx` виртуальные, физической `src` нет.
 - `PolymarketLab.Markets.Core/PolymarketLab.Markets.Core.csproj` содержит Domain, Application и Ports; имя папки, сборки и root namespace — `PolymarketLab.Markets.Core`.
 - `Program.cs` подключает Markets Application, Infrastructure и controllers из Presentation. Application DI сканирует MediatR handlers и FluentValidation validators; Infrastructure DI регистрирует Npgsql context, repository и Gamma typed client.
-- DataCollection Application и Infrastructure подключены к host; Presentation и HTTP endpoints пока не подключены. Infrastructure регистрирует `DataCollectionDbContext`, repositories, singleton collector runtime и bounded raw-message ingestion worker. WebSocket collector принимает text messages, собирает fragments и сохраняет исходные UTF-8 bytes batch-ами.
+- DataCollection Application и Infrastructure подключены к host; Presentation и HTTP endpoints пока не подключены. Infrastructure регистрирует `DataCollectionDbContext`, repositories, singleton collector runtime и bounded raw-message ingestion worker. При запуске активные сессии предыдущего процесса переводятся в `Interrupted/ProcessTerminated`; при штатной остановке текущие сессии проходят `Stopping -> Stopped/ApplicationShutdown`. WebSocket collector принимает text messages, собирает fragments и сохраняет исходные UTF-8 bytes batch-ами.
 - Все проекты используют `net10.0`; `global.json`, package lock и repo-local tool manifest отсутствуют.
 
 ## Проверка
@@ -72,4 +72,5 @@ dotnet ef database update --project .\PolymarketLab.DataCollection.Infrastructur
 - Validators зарегистрированы, но MediatR validation pipeline отсутствует: `RegisterCommandValidation` автоматически перед handler не запускается.
 - Framework возвращает `Envelope`, не raw response DTO. HTTP mapping ошибок неполный: новые `ErrorType` могут уйти в 500, пока не обновлён `ResponseExtensions`.
 - Нет exception-handler/problem-details middleware и автоматического применения миграций.
-- Autonomous collector failure переводит persisted active session в `Failed` через scoped Application handler; ошибка этой записи останавливает host. Reconnect и startup reconciliation stale active sessions пока не реализованы.
+- Автономная ошибка сборщика переводит сохранённую активную сессию в `Failed` через обработчик прикладного слоя; ошибка этой записи останавливает приложение.
+- Согласование сессий при запуске рассчитано на один экземпляр приложения и прекращает запуск при ошибке PostgreSQL. Владение сессией несколькими экземплярами, повторное подключение и автоматическое возобновление сбора пока не реализованы.

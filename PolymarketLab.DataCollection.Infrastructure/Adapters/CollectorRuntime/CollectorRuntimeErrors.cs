@@ -102,6 +102,14 @@ internal static class CollectorRuntimeErrors
             ErrorType.Failure);
     }
 
+    public static Error EnqueueCancelled(CollectorSessionId sessionId)
+    {
+        return new Error(
+            "collector.runtime.ingestion.enqueue_cancelled",
+            $"Raw message enqueue was cancelled for collector runtime '{sessionId.Value}' after a complete message was received.",
+            ErrorType.Failure);
+    }
+
     public static Error RuntimeStopping(CollectorSessionId sessionId)
     {
         return new Error(

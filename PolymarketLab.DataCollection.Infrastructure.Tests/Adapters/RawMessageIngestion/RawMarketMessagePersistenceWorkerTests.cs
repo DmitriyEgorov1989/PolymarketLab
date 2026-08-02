@@ -26,11 +26,13 @@ public sealed class RawMarketMessagePersistenceWorkerTests
             FlushInterval = TimeSpan.FromHours(1)
         });
         await fixture.Worker.StartAsync(CancellationToken.None);
+        var firstSessionId = CollectorSessionId.Create(Guid.NewGuid()).Value;
+        var secondSessionId = CollectorSessionId.Create(Guid.NewGuid()).Value;
 
         for (var value = 1; value <= 4; value++)
         {
             await fixture.Channel.EnqueueAsync(
-                CreateMessage(value),
+                CreateMessage(value, value <= 2 ? firstSessionId : secondSessionId),
                 CancellationToken.None);
         }
 
@@ -40,6 +42,8 @@ public sealed class RawMarketMessagePersistenceWorkerTests
         firstBatch.Select(ReadValue).Should().Equal(1, 2);
         secondBatch.Select(ReadValue).Should().Equal(3, 4);
         fixture.State.WriterInstanceCount.Should().Be(2);
+        fixture.Telemetry.GetSnapshot(firstSessionId).Persisted.Should().Be(2);
+        fixture.Telemetry.GetSnapshot(secondSessionId).Persisted.Should().Be(2);
     }
 
     [Fact]
@@ -81,6 +85,30 @@ public sealed class RawMarketMessagePersistenceWorkerTests
         fixture.Worker.ExecuteTask!.IsCompletedSuccessfully.Should().BeTrue();
         fixture.Lifetime.StopCallCount.Should().Be(0);
         fixture.State.WriterInstanceCount.Should().Be(1);
+        var batch = await fixture.State.WaitForBatchAsync();
+        batch.Select(ReadValue).Should().Equal(1);
+    }
+
+    [Fact]
+    public async Task StopAsync_WithCancelledHostToken_ShouldStillDrainPartialBatch()
+    {
+        await using var fixture = CreateFixture(new RawMessageIngestionOptions
+        {
+            Capacity = 10,
+            BatchSize = 10,
+            FlushInterval = TimeSpan.FromHours(1),
+            ShutdownTimeout = TimeSpan.FromSeconds(1)
+        });
+        await fixture.Worker.StartAsync(CancellationToken.None);
+        await fixture.Channel.EnqueueAsync(
+            CreateMessage(1),
+            CancellationToken.None);
+        using var cancellationTokenSource = new CancellationTokenSource();
+        cancellationTokenSource.Cancel();
+
+        await fixture.Worker.StopAsync(cancellationTokenSource.Token);
+
+        fixture.Worker.ExecuteTask!.IsCompletedSuccessfully.Should().BeTrue();
         var batch = await fixture.State.WaitForBatchAsync();
         batch.Select(ReadValue).Should().Equal(1);
     }
@@ -175,6 +203,87 @@ public sealed class RawMarketMessagePersistenceWorkerTests
         await fixture.Worker.ExecuteTask.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
+    [Fact]
+    public async Task Completion_ShouldCompleteOnlyAfterChannelDrainedAndFinalFlushSucceeded()
+    {
+        await using var fixture = CreateFixture(new RawMessageIngestionOptions
+        {
+            Capacity = 10,
+            BatchSize = 10,
+            FlushInterval = TimeSpan.FromHours(1),
+            ShutdownTimeout = TimeSpan.FromSeconds(1)
+        });
+        await fixture.Worker.StartAsync(CancellationToken.None);
+        await fixture.Channel.EnqueueAsync(CreateMessage(1), CancellationToken.None);
+
+        fixture.Worker.Completion.IsCompleted.Should().BeFalse();
+
+        await fixture.Worker.StopAsync(CancellationToken.None);
+        var completion = await fixture.Worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        completion.Result.IsSuccess.Should().BeTrue();
+        completion.UnconfirmedMessageCount.Should().Be(0);
+        var batch = await fixture.State.WaitForBatchAsync();
+        batch.Select(ReadValue).Should().Equal(1);
+    }
+
+    [Fact]
+    public async Task Completion_WhenFinalFlushFails_ShouldCompleteWithFailure()
+    {
+        await using var fixture = CreateFixture(new RawMessageIngestionOptions
+        {
+            Capacity = 10,
+            BatchSize = 10,
+            FlushInterval = TimeSpan.FromHours(1),
+            ShutdownTimeout = TimeSpan.FromSeconds(1)
+        });
+        fixture.State.Handler = (_, _) => throw new InvalidOperationException(
+            "Final flush failed.");
+        await fixture.Worker.StartAsync(CancellationToken.None);
+        await fixture.Channel.EnqueueAsync(CreateMessage(1), CancellationToken.None);
+
+        await fixture.Worker.StopAsync(CancellationToken.None);
+        var completion = await fixture.Worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Code.Should().Be("raw_messages.persistence.failed");
+        completion.UnconfirmedMessageCount.Should().Be(1);
+        fixture.Lifetime.StopCallCount.Should().Be(1);
+        fixture.Telemetry.GetSnapshot(
+                fixture.State.LastAttemptedSessionId!)
+            .Persisted
+            .Should()
+            .Be(0);
+    }
+
+    [Fact]
+    public async Task StopAsync_WithCancelledHostToken_ShouldNotCancelFinalFlushToken()
+    {
+        CancellationToken observedToken = default;
+        await using var fixture = CreateFixture(new RawMessageIngestionOptions
+        {
+            Capacity = 10,
+            BatchSize = 10,
+            FlushInterval = TimeSpan.FromHours(1),
+            ShutdownTimeout = TimeSpan.FromSeconds(1)
+        });
+        fixture.State.Handler = (_, cancellationToken) =>
+        {
+            observedToken = cancellationToken;
+            return Task.CompletedTask;
+        };
+        await fixture.Worker.StartAsync(CancellationToken.None);
+        await fixture.Channel.EnqueueAsync(CreateMessage(1), CancellationToken.None);
+        using var cancellationTokenSource = new CancellationTokenSource();
+        cancellationTokenSource.Cancel();
+
+        await fixture.Worker.StopAsync(cancellationTokenSource.Token);
+
+        observedToken.CanBeCanceled.Should().BeTrue();
+        observedToken.IsCancellationRequested.Should().BeFalse();
+        (await fixture.Worker.Completion).Result.IsSuccess.Should().BeTrue();
+    }
+
     private static WorkerFixture CreateFixture(RawMessageIngestionOptions options)
     {
         var services = new ServiceCollection();
@@ -187,22 +296,26 @@ public sealed class RawMarketMessagePersistenceWorkerTests
             ValidateScopes = true
         });
         var channel = new RawMarketMessageChannel(Options.Create(options));
+        var telemetry = new RawMarketMessageTelemetry();
         var lifetime = new StubHostApplicationLifetime();
         var worker = new RawMarketMessagePersistenceWorker(
             channel,
+            telemetry,
             provider.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(options),
             TimeProvider.System,
             lifetime,
             NullLogger<RawMarketMessagePersistenceWorker>.Instance);
 
-        return new WorkerFixture(provider, channel, worker, state, lifetime);
+        return new WorkerFixture(provider, channel, worker, state, lifetime, telemetry);
     }
 
-    private static RawMarketMessage CreateMessage(int value)
+    private static RawMarketMessage CreateMessage(
+        int value,
+        CollectorSessionId? sessionId = null)
     {
         return new RawMarketMessage(
-            CollectorSessionId.Create(Guid.NewGuid()).Value,
+            sessionId ?? CollectorSessionId.Create(Guid.NewGuid()).Value,
             DateTimeOffset.UtcNow,
             BitConverter.GetBytes(value));
     }
@@ -239,6 +352,7 @@ public sealed class RawMarketMessagePersistenceWorkerTests
         public Func<IReadOnlyCollection<RawMarketMessage>, CancellationToken, Task>?
             Handler { get; set; }
         public int WriterInstanceCount => _writerInstanceCount;
+        public CollectorSessionId? LastAttemptedSessionId { get; private set; }
 
         public RecordingWriterState()
         {
@@ -248,6 +362,8 @@ public sealed class RawMarketMessagePersistenceWorkerTests
             IReadOnlyCollection<RawMarketMessage> messages,
             CancellationToken cancellationToken)
         {
+            LastAttemptedSessionId = messages.FirstOrDefault()?.SessionId;
+
             if (Handler is not null)
                 await Handler(messages, cancellationToken);
 
@@ -288,13 +404,15 @@ public sealed class RawMarketMessagePersistenceWorkerTests
         RawMarketMessageChannel channel,
         RawMarketMessagePersistenceWorker worker,
         RecordingWriterState state,
-        StubHostApplicationLifetime lifetime)
+        StubHostApplicationLifetime lifetime,
+        RawMarketMessageTelemetry telemetry)
         : IAsyncDisposable
     {
         public RawMarketMessageChannel Channel { get; } = channel;
         public RawMarketMessagePersistenceWorker Worker { get; } = worker;
         public RecordingWriterState State { get; } = state;
         public StubHostApplicationLifetime Lifetime { get; } = lifetime;
+        public RawMarketMessageTelemetry Telemetry { get; } = telemetry;
 
         public async ValueTask DisposeAsync()
         {
@@ -306,6 +424,7 @@ public sealed class RawMarketMessagePersistenceWorkerTests
             }
 
             Worker.Dispose();
+            Telemetry.Dispose();
             await provider.DisposeAsync();
         }
     }

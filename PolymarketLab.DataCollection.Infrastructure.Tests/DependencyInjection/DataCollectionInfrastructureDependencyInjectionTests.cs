@@ -37,6 +37,10 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
             NullLogger<RawMarketMessagePersistenceWorker>.Instance);
         services.AddSingleton<ILogger<CollectorRuntimeFailureDispatcher>>(
             NullLogger<CollectorRuntimeFailureDispatcher>.Instance);
+        services.AddSingleton<ILogger<CollectorRuntimeShutdownService>>(
+            NullLogger<CollectorRuntimeShutdownService>.Instance);
+        services.AddSingleton<ILogger<CollectorSessionStartupReconciliationService>>(
+            NullLogger<CollectorSessionStartupReconciliationService>.Instance);
         services.AddDataCollectionInfrastructure(configuration);
 
         using var provider = services.BuildServiceProvider(new ServiceProviderOptions
@@ -54,11 +58,12 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
         AssertSingleton<IRawMarketMessageSink>(firstScope, secondScope);
         AssertScoped<IRawMarketMessageWriter>(firstScope, secondScope);
         provider.GetServices<IHostedService>()
+            .Select(service => service.GetType())
             .Should()
-            .ContainSingle(service => service is RawMarketMessagePersistenceWorker);
-        provider.GetServices<IHostedService>()
-            .Should()
-            .ContainSingle(service => service is CollectorRuntimeShutdownService);
+            .Equal(
+                typeof(RawMarketMessagePersistenceWorker),
+                typeof(CollectorRuntimeShutdownService),
+                typeof(CollectorSessionStartupReconciliationService));
     }
 
     private static void AssertSingleton<TService>(

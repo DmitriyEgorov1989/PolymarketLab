@@ -356,12 +356,15 @@ public sealed class CollectorRuntimeStartTests
         var request = CreateRequest();
         await runtime.StartAsync(request, CancellationToken.None);
 
-        await runtime.ShutdownAsync(CancellationToken.None);
+        var shutdownResults = await runtime.ShutdownAsync(CancellationToken.None);
         var rejectedStart = await runtime.StartAsync(
             request,
             CancellationToken.None);
 
         worker.StopCallCount.Should().Be(1);
+        shutdownResults.Should().ContainSingle();
+        shutdownResults.Single().SessionId.Should().Be(request.SessionId);
+        shutdownResults.Single().Result.IsSuccess.Should().BeTrue();
         rejectedStart.IsFailure.Should().BeTrue();
         rejectedStart.Error.Code.Should().Be("collector.runtime.stopping");
         factory.CreateCallCount.Should().Be(1);
@@ -538,13 +541,13 @@ public sealed class CollectorRuntimeStartTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int DispatchCallCount { get; private set; }
 
-        public Task DispatchAsync(
+        public Task<bool> DispatchAsync(
             CollectorRuntimeFailure failure,
             CancellationToken cancellationToken)
         {
             DispatchCallCount++;
             Dispatched.TrySetResult(failure);
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         }
     }
 
@@ -556,12 +559,13 @@ public sealed class CollectorRuntimeStartTests
         public TaskCompletionSource Release { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public async Task DispatchAsync(
+        public async Task<bool> DispatchAsync(
             CollectorRuntimeFailure failure,
             CancellationToken cancellationToken)
         {
             Entered.TrySetResult();
             await Release.Task.WaitAsync(cancellationToken);
+            return true;
         }
     }
 }

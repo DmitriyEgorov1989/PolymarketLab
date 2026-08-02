@@ -26,7 +26,6 @@ public sealed class CollectorRuntimeFailureHandler(
                 cancellationToken);
 
             if (session is null || session.Status is
-                CollectorSessionStatus.Stopping or
                 CollectorSessionStatus.Stopped or
                 CollectorSessionStatus.Failed or
                 CollectorSessionStatus.Interrupted)

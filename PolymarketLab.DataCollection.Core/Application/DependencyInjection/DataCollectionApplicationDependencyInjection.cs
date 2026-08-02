@@ -2,6 +2,8 @@ using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
 using PolymarketLab.DataCollection.Core.Ports;
 
 namespace PolymarketLab.DataCollection.Core.Application.DependencyInjection;
@@ -17,6 +19,12 @@ public static class DataCollectionApplicationDependencyInjection
         services.AddScoped<
             ICollectorRuntimeFailureHandler,
             CollectorRuntimeFailureHandler>();
+        services.AddScoped<
+            ICollectorSessionStartupReconciler,
+            CollectorSessionStartupReconciler>();
+        services.AddScoped<
+            ICollectorSessionShutdownHandler,
+            CollectorSessionShutdownHandler>();
         services.TryAddSingleton(TimeProvider.System);
 
         return services;

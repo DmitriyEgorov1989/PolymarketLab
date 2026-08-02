@@ -7,6 +7,7 @@ using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime.WebSockets;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using System.Net.WebSockets;
@@ -69,11 +70,13 @@ public sealed class CollectorWebSocketWorkerTests
         connection.AddFrame("{\"price\":0.5}"u8);
         var sink = new StubRawMarketMessageSink();
         var request = CreateRequest();
+        var telemetry = new RawMarketMessageTelemetry();
         var receivedAt = DateTimeOffset.Parse("2026-07-27T12:00:00Z");
         var worker = CreateWorker(
             request,
             connection,
             messageSink: sink,
+            telemetry: telemetry,
             timeProvider: new StubTimeProvider(receivedAt));
 
         var startResult = await worker.StartAsync(CancellationToken.None);
@@ -84,6 +87,8 @@ public sealed class CollectorWebSocketWorkerTests
         message.SessionId.Should().Be(request.SessionId);
         message.ReceivedAt.Should().Be(receivedAt);
         message.Payload.Should().Equal("{\"price\":0.5}"u8.ToArray());
+        telemetry.GetSnapshot(request.SessionId).Should().Be(
+            new RawMarketMessageCounters(1, 1, 0));
     }
 
     [Fact]
@@ -217,6 +222,47 @@ public sealed class CollectorWebSocketWorkerTests
     }
 
     [Fact]
+    public async Task StopAsync_WhenEnqueueIsCancelledAfterCompleteMessage_ShouldFail()
+    {
+        var enqueueEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var connection = new StubWebSocketConnection();
+        connection.AddFrame("complete"u8);
+        var sink = new StubRawMarketMessageSink
+        {
+            Handler = async (_, cancellationToken) =>
+            {
+                enqueueEntered.SetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+        };
+        var request = CreateRequest();
+        var telemetry = new RawMarketMessageTelemetry();
+        var worker = CreateWorker(
+            request,
+            connection,
+            options: new CollectorWebSocketOptions
+            {
+                StopTimeout = TimeSpan.FromMilliseconds(20)
+            },
+            messageSink: sink,
+            telemetry: telemetry);
+
+        await worker.StartAsync(CancellationToken.None);
+        await enqueueEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var stopResult = await worker.StopAsync(CancellationToken.None);
+        var completion = await worker.Completion;
+
+        stopResult.IsFailure.Should().BeTrue();
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Code.Should().Be(
+            "collector.runtime.ingestion.enqueue_cancelled");
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Autonomous);
+        telemetry.GetSnapshot(request.SessionId).Should().Be(
+            new RawMarketMessageCounters(1, 0, 0));
+    }
+
+    [Fact]
     public async Task StartAsync_WhenCallerCancels_ShouldDisposeConnectionAndRethrow()
     {
         var connectEntered = new TaskCompletionSource(
@@ -318,6 +364,7 @@ public sealed class CollectorWebSocketWorkerTests
             factory,
             options,
             new StubRawMarketMessageSink(),
+            new RawMarketMessageTelemetry(),
             TimeProvider.System,
             new StubHostApplicationLifetime(),
             NullLogger<CollectorWebSocketWorker>.Instance);
@@ -358,6 +405,7 @@ public sealed class CollectorWebSocketWorkerTests
         await worker.StartAsync(CancellationToken.None);
 
         lifetime.StopApplication();
+        await worker.StopAsync(CancellationToken.None);
         var completion = await worker.Completion;
 
         completion.Result.IsSuccess.Should().BeTrue();
@@ -531,6 +579,7 @@ public sealed class CollectorWebSocketWorkerTests
         CollectorWebSocketOptions? options = null,
         IHostApplicationLifetime? lifetime = null,
         StubRawMarketMessageSink? messageSink = null,
+        RawMarketMessageTelemetry? telemetry = null,
         TimeProvider? timeProvider = null)
     {
         return new CollectorWebSocketWorker(
@@ -538,6 +587,7 @@ public sealed class CollectorWebSocketWorkerTests
             new StubWebSocketFactory(connection),
             options ?? CreateOptions(),
             messageSink ?? new StubRawMarketMessageSink(),
+            telemetry ?? new RawMarketMessageTelemetry(),
             timeProvider ?? TimeProvider.System,
             lifetime ?? new StubHostApplicationLifetime(),
             NullLogger<CollectorWebSocketWorker>.Instance);

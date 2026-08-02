@@ -43,11 +43,11 @@ public sealed class StopCollectorHandler(
         if (IsTerminal(session.Status))
             return Response(session, false);
 
-        var runtimeResult = await runtime.StopAsync(session.Id, CancellationToken.None);
+        var runtimeResult = await runtime.StopAsync(session.Id, cancellationToken);
         if (runtimeResult.IsFailure)
             return Failure(runtimeResult.Error);
 
-        var stoppedResult = await MarkStoppedAsync(session.Id);
+        var stoppedResult = await MarkStoppedAsync(session.Id, cancellationToken);
         if (stoppedResult.IsFailure)
             return Result.Failure<StopCollectorResponse, ErrorList>(stoppedResult.Error);
 
@@ -91,13 +91,14 @@ public sealed class StopCollectorHandler(
     }
 
     private async Task<Result<CollectorSessionAggregate, ErrorList>> MarkStoppedAsync(
-        CollectorSessionId sessionId)
+        CollectorSessionId sessionId,
+        CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < MaximumUpdateAttempts; attempt++)
         {
             var session = await sessionRepository.GetByIdAsync(
                 sessionId,
-                CancellationToken.None);
+                cancellationToken);
             if (session is null)
                 return FailureSession(StopCollectorErrors.SessionNotFound(sessionId.Value));
 
@@ -119,7 +120,7 @@ public sealed class StopCollectorHandler(
             var updateResult = await sessionRepository.TryUpdateAsync(
                 session,
                 expectedStatus,
-                CancellationToken.None);
+                cancellationToken);
             if (updateResult.IsFailure)
                 return FailureSession(updateResult.Error);
 

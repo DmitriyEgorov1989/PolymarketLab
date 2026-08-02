@@ -35,6 +35,11 @@
         /// <summary>
         /// Сессия завершена из-за ошибки первоначального запуска collector runtime.
         /// </summary>
-        StartupFailure = 7
+        StartupFailure = 7,
+
+        /// <summary>
+        /// Работа сессии прервана из-за завершения предыдущего процесса приложения.
+        /// </summary>
+        ProcessTerminated = 8
     }
 }

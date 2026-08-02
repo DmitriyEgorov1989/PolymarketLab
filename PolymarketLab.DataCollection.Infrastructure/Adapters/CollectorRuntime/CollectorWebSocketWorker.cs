@@ -5,6 +5,7 @@ using PolymarketLab.Core.Options;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime.WebSockets;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
 using PolymarketLab.SharedKernel.Errors;
 using System.Buffers;
 using System.Net.WebSockets;
@@ -19,15 +20,14 @@ internal sealed class CollectorWebSocketWorker(
     ICollectorWebSocketFactory webSocketFactory,
     CollectorWebSocketOptions options,
     IRawMarketMessageSink messageSink,
+    RawMarketMessageTelemetry telemetry,
     TimeProvider timeProvider,
     IHostApplicationLifetime applicationLifetime,
     ILogger<CollectorWebSocketWorker> logger)
     : ICollectorWorker
 {
     private readonly object _sync = new();
-    private readonly CancellationTokenSource _receiveCts =
-        CancellationTokenSource.CreateLinkedTokenSource(
-            applicationLifetime.ApplicationStopping);
+    private readonly CancellationTokenSource _receiveCts = new();
     private readonly CancellationTokenSource _enqueueCts = new();
     private readonly TaskCompletionSource<CollectorWorkerCompletion> _completion = new(
         TaskCreationOptions.RunContinuationsAsynchronously);
@@ -67,7 +67,8 @@ internal sealed class CollectorWebSocketWorker(
         {
             using var startupCts = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken,
-                _receiveCts.Token);
+                _receiveCts.Token,
+                applicationLifetime.ApplicationStopping);
             startupCts.CancelAfter(options.ConnectTimeout);
 
             connection = webSocketFactory.Create();
@@ -90,7 +91,9 @@ internal sealed class CollectorWebSocketWorker(
 
             lock (_sync)
             {
-                if (_stopRequested || _receiveCts.IsCancellationRequested)
+                if (_stopRequested
+                    || _receiveCts.IsCancellationRequested
+                    || applicationLifetime.ApplicationStopping.IsCancellationRequested)
                 {
                     startupError = CollectorRuntimeErrors.StartCancelled(
                         request.SessionId);
@@ -122,7 +125,8 @@ internal sealed class CollectorWebSocketWorker(
             throw;
         }
         catch (OperationCanceledException)
-            when (_receiveCts.IsCancellationRequested)
+            when (_receiveCts.IsCancellationRequested
+                  || applicationLifetime.ApplicationStopping.IsCancellationRequested)
         {
             startupError = CollectorRuntimeErrors.StartCancelled(request.SessionId);
             CancelAndDisposeLifetime();
@@ -246,18 +250,34 @@ internal sealed class CollectorWebSocketWorker(
         {
             result = await ReceiveLoopAsync(connection);
         }
+        catch (RawMessageEnqueueCancelledException exception)
+        {
+            var counters = telemetry.GetSnapshot(request.SessionId);
+            logger.LogError(
+                exception,
+                "Collector WebSocket {SessionId} enqueue was cancelled after message completion. ReceivedComplete: {ReceivedCompleteCount}, Enqueued: {EnqueuedCount}, Persisted: {PersistedCount}.",
+                request.SessionId.Value,
+                counters.ReceivedComplete,
+                counters.Enqueued,
+                counters.Persisted);
+            result = UnitResult.Failure(
+                CollectorRuntimeErrors.EnqueueCancelled(request.SessionId));
+        }
         catch (OperationCanceledException)
-            when (_receiveCts.IsCancellationRequested
-                  || _enqueueCts.IsCancellationRequested)
+            when (_receiveCts.IsCancellationRequested)
         {
             result = UnitResult.Success<Error>();
         }
         catch (ChannelClosedException exception)
         {
+            var counters = telemetry.GetSnapshot(request.SessionId);
             logger.LogError(
                 exception,
-                "Collector WebSocket {SessionId} cannot enqueue received messages.",
-                request.SessionId.Value);
+                "Collector WebSocket {SessionId} cannot enqueue received messages. ReceivedComplete: {ReceivedCompleteCount}, Enqueued: {EnqueuedCount}, Persisted: {PersistedCount}.",
+                request.SessionId.Value,
+                counters.ReceivedComplete,
+                counters.Enqueued,
+                counters.Persisted);
             result = UnitResult.Failure(
                 CollectorRuntimeErrors.IngestionClosed(request.SessionId));
         }
@@ -347,10 +367,14 @@ internal sealed class CollectorWebSocketWorker(
 
             if (result.IsFailure)
             {
+                var counters = telemetry.GetSnapshot(request.SessionId);
                 logger.LogError(
-                    "Collector WebSocket {SessionId} completed with error {ErrorCode}.",
+                    "Collector WebSocket {SessionId} completed with error {ErrorCode}. ReceivedComplete: {ReceivedCompleteCount}, Enqueued: {EnqueuedCount}, Persisted: {PersistedCount}.",
                     request.SessionId.Value,
-                    result.Error.Code);
+                    result.Error.Code,
+                    counters.ReceivedComplete,
+                    counters.Enqueued,
+                    counters.Persisted);
             }
 
             _completion.TrySetResult(new CollectorWorkerCompletion(
@@ -404,12 +428,36 @@ internal sealed class CollectorWebSocketWorker(
                 if (!frame.EndOfMessage)
                     continue;
 
-                await messageSink.EnqueueAsync(
-                    new RawMarketMessage(
-                        request.SessionId,
-                        timeProvider.GetUtcNow(),
-                        messageBuffer.WrittenSpan.ToArray()),
-                    _enqueueCts.Token);
+                var message = new RawMarketMessage(
+                    request.SessionId,
+                    timeProvider.GetUtcNow(),
+                    messageBuffer.WrittenSpan.ToArray());
+                var receivedCounters = telemetry.RecordReceivedComplete(
+                    request.SessionId);
+                logger.LogDebug(
+                    "Collector WebSocket {SessionId} received complete message. ReceivedComplete: {ReceivedCompleteCount}, Enqueued: {EnqueuedCount}, Persisted: {PersistedCount}.",
+                    request.SessionId.Value,
+                    receivedCounters.ReceivedComplete,
+                    receivedCounters.Enqueued,
+                    receivedCounters.Persisted);
+
+                try
+                {
+                    await messageSink.EnqueueAsync(message, _enqueueCts.Token);
+                }
+                catch (OperationCanceledException exception)
+                    when (_enqueueCts.IsCancellationRequested)
+                {
+                    throw new RawMessageEnqueueCancelledException(exception);
+                }
+
+                var enqueuedCounters = telemetry.RecordEnqueued(request.SessionId);
+                logger.LogDebug(
+                    "Collector WebSocket {SessionId} enqueued raw message. ReceivedComplete: {ReceivedCompleteCount}, Enqueued: {EnqueuedCount}, Persisted: {PersistedCount}.",
+                    request.SessionId.Value,
+                    enqueuedCounters.ReceivedComplete,
+                    enqueuedCounters.Enqueued,
+                    enqueuedCounters.Persisted);
                 messageBuffer.Clear();
             }
         }
@@ -583,4 +631,8 @@ internal sealed class CollectorWebSocketWorker(
         [property: JsonPropertyName("assets_ids")] string[] AssetIds,
         [property: JsonPropertyName("type")] string Type,
         [property: JsonPropertyName("custom_feature_enabled")] bool CustomFeatureEnabled);
+
+    private sealed class RawMessageEnqueueCancelledException(
+        Exception innerException)
+        : Exception("Raw message enqueue was cancelled.", innerException);
 }

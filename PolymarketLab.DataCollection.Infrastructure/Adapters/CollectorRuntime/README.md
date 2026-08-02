@@ -230,7 +230,19 @@ Application flow находится в [`StartCollectorHandler`](../../../Polyma
 7. При startup failure перевести session в `Failed`.
 8. При ошибке сохранения `Running` остановить уже запущенный runtime как compensation.
 
-DataCollection Application подключён к API host для обработки runtime failure. Presentation не подключён, поэтому этот flow ещё не опубликован как HTTP endpoint.
+DataCollection Application подключён к API host для обработки runtime failure. DataCollection Presentation подключён к API host для пользовательской остановки collector session.
+
+Публичный endpoint ручной остановки:
+
+```http
+POST /api/Collector/stop
+```
+
+Тело запроса:
+
+```json
+{ "sessionId": "<collector-session-id>" }
+```
 
 ## Registry и дедупликация start
 
@@ -427,10 +439,10 @@ Worker использует два token sources:
 
 | CTS | Назначение |
 |---|---|
-| `_receiveCts` | Немедленно остановить network receive; связан с `ApplicationStopping` |
+| `_receiveCts` | Немедленно остановить получение данных после вызова `StopAsync` |
 | `_enqueueCts` | Дать уже полученному payload шанс попасть в channel до stop deadline |
 
-`_enqueueCts` намеренно не связан напрямую с `ApplicationStopping`. Иначе host мог бы отменить in-flight enqueue до того, как runtime shutdown coordinator остановит collectors и до того, как ingestion consumer освободит место.
+Оба источника отмены намеренно не связаны напрямую с `ApplicationStopping`. Остановку начинает `CollectorRuntimeShutdownService`: это не позволяет обработчикам исчезнуть из реестра до сохранения `Stopping` и сохраняет порядок «остановить сборщики, затем закрыть очередь».
 
 ### Stop во время active receive
 
@@ -544,18 +556,22 @@ Runtime ждёт completion, удаляет именно старую entry и �
 
 ## Global shutdown
 
-Shutdown состоит из двух hosted services:
+Жизненный цикл состоит из трёх размещённых служб:
 
-1. [`CollectorRuntimeShutdownService`](CollectorRuntimeShutdownService.cs).
-2. [`RawMarketMessagePersistenceWorker`](../RawMessageIngestion/RawMarketMessagePersistenceWorker.cs).
+1. [`RawMarketMessagePersistenceWorker`](../RawMessageIngestion/RawMarketMessagePersistenceWorker.cs).
+2. [`CollectorRuntimeShutdownService`](CollectorRuntimeShutdownService.cs).
+3. [`CollectorSessionStartupReconciliationService`](CollectorSessionStartupReconciliationService.cs).
+
+При запуске службы вызываются последовательно. Служба согласования находит сохранённые `Starting`, `Running` и `Stopping` сессии предыдущего процесса и атомарно переводит их в `Interrupted` с причиной `ProcessTerminated`. Ошибка чтения или обновления PostgreSQL прекращает запуск приложения.
 
 Ожидаемый порядок:
 
 ```text
 ApplicationStopping
-  -> receive tokens collectors отменяются
   -> CollectorRuntimeShutdownService запрещает новые starts
-  -> runtime останавливает active collectors
+  -> сохранённые сессии переходят в Stopping
+  -> runtime останавливает активные сборщики
+  -> успешно остановленные сессии переходят в Stopped/ApplicationShutdown
   -> in-flight payloads получают шанс попасть в channel
   -> RawMarketMessagePersistenceWorker закрывает channel
   -> consumer сохраняет оставшийся tail
@@ -572,11 +588,14 @@ sequenceDiagram
     participant DB
 
     Host->>Shutdown: StopAsync
-    Shutdown->>Runtime: ShutdownAsync
+    Shutdown->>Runtime: BeginShutdown
     Runtime->>Runtime: reject future starts
+    Shutdown->>DB: sessions -> Stopping
+    Shutdown->>Runtime: ShutdownAsync
     Runtime->>Workers: StopAsync all entries
     Workers-->>Runtime: completions
     Runtime-->>Shutdown: stopped
+    Shutdown->>DB: successful sessions -> Stopped
     Host->>Consumer: StopAsync
     Consumer->>Consumer: complete channel
     Consumer->>DB: flush remaining batches
@@ -585,7 +604,7 @@ sequenceDiagram
 
 ### Почему важен порядок DI registration
 
-Hosted services зарегистрированы так, чтобы Generic Host остановил runtime producers раньше ingestion consumer.
+Размещённые службы зарегистрированы так, чтобы приложение завершило согласование до открытия API, а при остановке прекратило работу сборщиков раньше потребителя очереди.
 
 Нельзя без проверки переставлять registrations в [`DataCollectionInfrastructureDependencyInjection`](../../DependencyInjection/DataCollectionInfrastructureDependencyInjection.cs).
 
@@ -595,10 +614,11 @@ Hosted services зарегистрированы так, чтобы Generic Host
 
 `CollectorRuntime.ShutdownAsync`:
 
-1. Необратимо выставляет `_shuttingDown`.
+1. Сохраняет установленный `BeginShutdown` запрет новых запусков.
 2. Делает snapshot текущих session IDs.
 3. Параллельно вызывает shared `StopAsync`.
-4. Все последующие starts возвращают `collector.runtime.stopping`.
+4. Возвращает отдельный результат остановки для каждой сессии.
+5. Все последующие starts возвращают `collector.runtime.stopping`.
 
 Повторное включение runtime после shutdown не поддерживается.
 
@@ -683,6 +703,8 @@ Writer exception считается фатальной ошибкой ingestion 
 Consumer пытается сохранить tail не дольше `RawMessageIngestion:ShutdownTimeout`.
 
 Если writer учитывает cancellation, текущий write отменяется. Если writer игнорирует token, host продолжает shutdown после deadline, а позднее завершение task наблюдается отдельно, чтобы избежать unobserved exception.
+
+Уже отменённый общий токен остановки приложения не сокращает этот срок: потребитель очереди всегда получает собственное ограниченное время на сохранение остатка сообщений.
 
 ## PostgreSQL
 
@@ -791,7 +813,7 @@ stateDiagram-v2
     Starting --> Active: connect + subscribe
     Starting --> Completed: failure/cancel/timeout
     Active --> Active: text message enqueued
-    Active --> CleaningUp: Stop/ApplicationStopping
+    Active --> CleaningUp: Stop/host shutdown
     Active --> CleaningUp: remote close/error
     CleaningUp --> Completed: close + dispose
     Completed --> [*]
@@ -859,6 +881,16 @@ Validation:
 - `0 < BatchSize <= Capacity`;
 - интервалы положительные и поддерживаются timer API.
 
+### CollectorLifecycle
+
+| Option | Default | Назначение |
+|---|---:|---|
+| `ShutdownTimeout` | 30 s | Отдельный предел для сохранения состояний и остановки runtime |
+
+Значение должно быть положительным, не превышать 5 минут и быть не меньше `CollectorWebSocket:StopTimeout`. Внешний токен остановки приложения не прерывает порядок завершения немедленно: каждая стадия получает собственный ограниченный срок.
+
+Общий `HostOptions.ShutdownTimeout` вычисляется из трёх таких стадий, срока сохранения остатка очереди и дополнительного запаса. Даже если общий токен уже отменён, потребитель очереди всё равно ограничивает себя собственным сроком.
+
 Секции отсутствуют в текущих `appsettings`, поэтому используются defaults.
 
 Options читаются через обычный `IOptions<T>`. Hot reload уже созданных workers не реализован.
@@ -892,6 +924,7 @@ Options читаются через обычный `IOptions<T>`. Hot reload у�
 |---|---|
 | `RawMarketMessagePersistenceWorker` | Channel consumer и batch persistence |
 | `CollectorRuntimeShutdownService` | Остановка collectors до ingestion shutdown |
+| `CollectorSessionStartupReconciliationService` | Согласование сессий предыдущего процесса до открытия API |
 
 Singleton runtime/factory не должны напрямую зависеть от scoped repository или DbContext.
 
@@ -971,7 +1004,7 @@ Singleton runtime/factory не должны напрямую зависеть о
 - invalid configuration boundaries;
 - singleton/scoped lifetimes;
 - `ValidateOnBuild` и `ValidateScopes`;
-- регистрацию обоих hosted services.
+- регистрацию и порядок трёх размещённых служб.
 
 ### Что тестами не покрывается
 
@@ -982,15 +1015,15 @@ Singleton runtime/factory не должны напрямую зависеть о
 - реальный shutdown ordering Generic Host;
 - длительная нагрузка и memory pressure;
 - network partitions и неоднозначный результат DB write;
-- process crash recovery.
+- работу согласования с настоящим PostgreSQL и реальное аварийное завершение процесса.
 
 ## Известные ограничения
 
 1. Нет reconnect, exponential backoff и повторной subscription.
 2. Нет heartbeat и detection состояния «socket открыт, но данные не приходят».
-3. Нет durable notification между autonomous worker failure и записью session: process crash в этом окне всё ещё может оставить stale active session.
-4. Нет application-level stop use case.
-5. DataCollection Presentation не подключён к API host.
+3. Между автономной ошибкой обработчика и записью сессии нет надёжного сохраняемого уведомления; после сбоя остаточная активная сессия исправляется только при следующем запуске.
+4. StartCollector application flow ещё не опубликован как HTTP endpoint.
+5. Остановка collector session опубликована только по `CollectorSessionId`, не по `MarketId`.
 6. Channel in-memory: process crash теряет непросохранённый tail.
 7. Shutdown timeout допускает потерю tail.
 8. Нет persistence retry и dead-letter queue.
@@ -1005,18 +1038,18 @@ Singleton runtime/factory не должны напрямую зависеть о
 17. Remote close считается failure, если local stop ещё не начался.
 18. Runtime uniqueness основана на `CollectorSessionId`, не на `MarketId`.
 19. Ошибка одного persistence batch останавливает всю ingestion subsystem.
-20. Миграции не применяются автоматически при startup приложения.
+20. Миграции не применяются автоматически при запуске приложения.
+21. Согласование при запуске безопасно только при одном экземпляре приложения: идентификатор владельца и аренда сессии отсутствуют.
 
 ## Что делать дальше
 
-Следующий этап — добавить startup reconciliation для persisted active sessions, оставшихся после process crash:
+Пользовательская остановка сборщика уже реализована:
 
 ```text
-host startup
-  -> load persisted active sessions
-  -> сопоставить с runtime ownership
-  -> stale sessions перевести в Interrupted/Failed
-  -> при необходимости запустить recovery/reconnect policy
+stop command
+  -> active session -> Stopping
+  -> CollectorRuntime.StopAsync
+  -> session -> Stopped/Requested
 ```
 
-После этого можно добавлять reconnect/backoff и подключать DataCollection Presentation к API host.
+Следующий этап — опубликовать StartCollector flow через DataCollection Presentation и отдельно проектировать повторное подключение.

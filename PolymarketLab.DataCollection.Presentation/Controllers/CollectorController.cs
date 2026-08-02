@@ -1,5 +1,6 @@
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
 using PolymarketLab.DataCollection.Presentation.Controllers.Models;
 using PolymarketLab.Framework;
@@ -9,6 +10,18 @@ namespace PolymarketLab.DataCollection.Presentation.Controllers;
 
 public sealed class CollectorController(IMediator mediator) : ApplicationController
 {
+    [HttpPost("start")]
+    public async Task<ActionResult<StartCollectorResponse>> StartCollector(
+        [FromBody] StartCollectorRequest request,
+        CancellationToken cancellationToken)
+    {
+        var response = await mediator.Send(
+            request.ToCommand(),
+            cancellationToken);
+
+        return response.ToResponseErrorOrResult();
+    }
+
     [HttpPost("stop")]
     public async Task<ActionResult<StopCollectorResponse>> StopCollector(
         [FromBody] StopCollectorRequest request,

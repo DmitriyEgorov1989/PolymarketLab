@@ -77,7 +77,10 @@ public sealed class RawMarketMessageChannelTests
 
         Func<Task> write = async () => await blockedWrite;
         await write.Should().ThrowAsync<OperationCanceledException>();
-        ReadValue(await channel.Reader.ReadAsync()).Should().Be(1);
+        channel.QueuedCount.Should().Be(1);
+        channel.TryRead(out var message).Should().BeTrue();
+        ReadValue(message).Should().Be(1);
+        channel.QueuedCount.Should().Be(0);
     }
 
     [Fact]

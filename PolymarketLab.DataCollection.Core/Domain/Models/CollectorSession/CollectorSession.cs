@@ -102,6 +102,46 @@ namespace PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession
             return UnitResult.Success<Error>();
         }
 
+        public UnitResult<Error> MarkStopping()
+        {
+            if (Status is not CollectorSessionStatus.Starting
+                and not CollectorSessionStatus.Running)
+            {
+                return UnitResult.Failure(
+                    CollectorSessionErrors.InvalidTransition(
+                        Status,
+                        CollectorSessionStatus.Stopping));
+            }
+
+            Status = CollectorSessionStatus.Stopping;
+
+            return UnitResult.Success<Error>();
+        }
+
+        public UnitResult<Error> Interrupt(
+            DateTimeOffset interruptedAt,
+            CollectorStopReason reason)
+        {
+            if (Status is not CollectorSessionStatus.Starting
+                and not CollectorSessionStatus.Running
+                and not CollectorSessionStatus.Stopping)
+            {
+                return UnitResult.Failure(CollectorSessionErrors.NotActive);
+            }
+
+            var lowerBound = StartedAt ?? CreatedAt;
+            if (interruptedAt < lowerBound)
+                return UnitResult.Failure(CollectorSessionErrors.InvalidStoppedAt);
+
+            Status = CollectorSessionStatus.Interrupted;
+            StoppedAt = interruptedAt;
+            StopReason = reason;
+            FailureCode = null;
+            FailureMessage = null;
+
+            return UnitResult.Success<Error>();
+        }
+
         public UnitResult<Error> Fail(
             DateTimeOffset failedAt,
             CollectorStopReason reason,
