@@ -1,0 +1,170 @@
+.dashboard-shell {
+  min-height: 100vh;
+  padding: 48px;
+}
+
+.hero-panel {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 28px;
+  padding: 40px;
+  background:
+    radial-gradient(circle at top left, rgba(56, 189, 248, 0.24), transparent 34%),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(30, 41, 59, 0.92));
+  box-shadow: 0 28px 80px rgba(2, 6, 23, 0.36);
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: #38bdf8;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.hero-panel h1 {
+  margin: 0;
+  font-size: clamp(2.25rem, 7vw, 5.5rem);
+  line-height: 0.9;
+  letter-spacing: -0.07em;
+}
+
+.hero-copy {
+  max-width: 720px;
+  margin: 24px 0 0;
+  color: #cbd5e1;
+  font-size: 1.08rem;
+  line-height: 1.7;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.85fr) minmax(0, 1.35fr);
+  gap: 20px;
+  margin-top: 24px;
+}
+
+.card {
+  min-height: 180px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 24px;
+  padding: 28px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 1.15rem;
+}
+
+.card p {
+  margin: 0;
+  color: #94a3b8;
+  line-height: 1.6;
+}
+
+.card-intro {
+  color: #94a3b8;
+}
+
+.add-market-form {
+  display: grid;
+  gap: 20px;
+}
+
+.form-copy {
+  max-width: 58rem;
+}
+
+.form-controls {
+  display: grid;
+  gap: 12px;
+}
+
+.field-label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+.url-input {
+  min-width: 0;
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 16px;
+  color: #f8fafc;
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.url-input::placeholder {
+  color: #64748b;
+}
+
+.url-input:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.primary-button {
+  min-height: 48px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 16px;
+  color: #082f49;
+  font-weight: 700;
+  background: linear-gradient(135deg, #38bdf8, #67e8f9);
+  cursor: pointer;
+}
+
+.primary-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.form-message {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.form-message-error {
+  color: #fda4af;
+}
+
+.form-message-success {
+  color: #86efac;
+}
+
+.add-market-card {
+  grid-column: 1 / -1;
+}
+
+.market-details-card {
+  min-height: 320px;
+}
+
+@media (max-width: 760px) {
+  .dashboard-shell {
+    padding: 20px;
+  }
+
+  .hero-panel {
+    padding: 28px;
+    border-radius: 22px;
+  }
+
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .field-row {
+    grid-template-columns: 1fr;
+  }
+}

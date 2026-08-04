@@ -3,8 +3,8 @@
 namespace PolymarketLab.DataCollection.Presentation.Controllers.Models
 {
 
-    public sealed record StartCollectorRequest(Guid SessionId)
+    public sealed record StartCollectorRequest(Guid MarketId)
     {
-        public StartCollectorCommand ToCommand() => new(SessionId);
+        public StartCollectorCommand ToCommand() => new(MarketId);
     }
 }
