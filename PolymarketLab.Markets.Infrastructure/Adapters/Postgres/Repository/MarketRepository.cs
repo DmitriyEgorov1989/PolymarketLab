@@ -12,6 +12,14 @@ namespace PolymarketLab.Markets.Infrastructure.Adapters.Postgres.Repository;
 
 internal sealed class MarketRepository(MarketsDbContext dbContext) : IMarketRepository
 {
+    public async Task<IReadOnlyCollection<Market>> GetAllAsync(
+        CancellationToken cancellationToken)
+    {
+        return await QueryMarkets()
+            .OrderBy(market => market.Slug.Value)
+            .ToArrayAsync(cancellationToken);
+    }
+
     public Task<Market?> GetByIdAsync(
         MarketId marketId,
         CancellationToken cancellationToken)

@@ -8,6 +8,9 @@ namespace PolymarketLab.Markets.Core.Ports;
 
 public interface IMarketRepository
 {
+    Task<IReadOnlyCollection<Market>> GetAllAsync(
+        CancellationToken cancellationToken);
+
     Task<Market?> GetByIdAsync(
         MarketId marketId,
         CancellationToken cancellationToken);

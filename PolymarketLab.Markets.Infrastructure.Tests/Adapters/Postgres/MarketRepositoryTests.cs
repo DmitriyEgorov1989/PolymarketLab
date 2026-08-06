@@ -57,6 +57,26 @@ public sealed class MarketRepositoryTests
     }
 
     [Fact]
+    public async Task GetAllAsync_WithStoredMarkets_ShouldReturnAllMarketsOrderedBySlug()
+    {
+        await using var context = CreateContext();
+        var repository = new MarketRepository(context);
+        var second = CreateMarket(slug: "zeta-market", externalId: "market-999", conditionId: "0x999");
+        var first = CreateMarket(slug: "alpha-market", externalId: "market-111", conditionId: "0x111");
+        await repository.TryAddAsync(second, CancellationToken.None);
+        await repository.TryAddAsync(first, CancellationToken.None);
+        context.ChangeTracker.Clear();
+
+        var markets = await repository.GetAllAsync(CancellationToken.None);
+
+        markets.Select(market => market.Slug.Value)
+            .Should()
+            .Equal("alpha-market", "zeta-market");
+        markets.Should().OnlyContain(market => market.Tokens.Count == 2);
+        context.ChangeTracker.Entries().Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task LookupMethods_WithMissingMarket_ShouldReturnNull()
     {
         await using var context = CreateContext();
@@ -105,13 +125,16 @@ public sealed class MarketRepositoryTests
         return new MarketsDbContext(options);
     }
 
-    private static Market CreateMarket()
+    private static Market CreateMarket(
+        string slug = "will-it-rain",
+        string externalId = "market-123",
+        string conditionId = "0xcondition")
     {
         var market = Market.Create(
             MarketId.Create(Guid.NewGuid()).Value,
-            ExternalMarketId.Create("market-123").Value,
-            MarketSlug.Create("will-it-rain").Value,
-            ConditionId.Create("0xcondition").Value,
+            ExternalMarketId.Create(externalId).Value,
+            MarketSlug.Create(slug).Value,
+            ConditionId.Create(conditionId).Value,
             "Will it rain?",
             null,
             null).Value;

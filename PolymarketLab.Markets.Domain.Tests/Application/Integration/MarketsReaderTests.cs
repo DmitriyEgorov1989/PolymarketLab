@@ -79,6 +79,9 @@ public sealed class MarketsReaderTests
     {
         public CancellationToken LastCancellationToken { get; private set; }
 
+        public Task<IReadOnlyCollection<Market>> GetAllAsync(
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<Market?> GetByIdAsync(
             MarketId marketId,
             CancellationToken cancellationToken)

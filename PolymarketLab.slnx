@@ -3,6 +3,13 @@
     <File Path="AGENTS.md" />
   </Folder>
   <Folder Name="/src/BuildingBlocks/" />
+  <Folder Name="/src/Frontend/">
+    <File Path="PolymarketLab.Web/AGENTS.md" />
+    <File Path="PolymarketLab.Web/README.md" />
+    <File Path="PolymarketLab.Web/package.json" />
+    <File Path="PolymarketLab.Web/vite.config.ts" />
+    <File Path="docs/frontend-context.md" />
+  </Folder>
   <Folder Name="/src/Host/">
     <Project Path="PolymarketLab.Api/PolymarketLab.Api.csproj" Id="1bb84e9e-0cfa-4b1c-85a7-c70dda6f4313" />
   </Folder>

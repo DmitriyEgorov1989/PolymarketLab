@@ -294,6 +294,13 @@ public sealed class RegisterMarketHandlerTests
             return Task.FromResult(_markets.SingleOrDefault(market => market.Id.Equals(marketId)));
         }
 
+        public Task<IReadOnlyCollection<MarketAggregate>> GetAllAsync(
+            CancellationToken cancellationToken)
+        {
+            LastCancellationToken = cancellationToken;
+            return Task.FromResult<IReadOnlyCollection<MarketAggregate>>(_markets.ToArray());
+        }
+
         public Task<MarketAggregate?> GetBySlugAsync(
             MarketSlug slug,
             CancellationToken cancellationToken)
