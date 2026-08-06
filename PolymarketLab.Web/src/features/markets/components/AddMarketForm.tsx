@@ -1,35 +1,71 @@
 import { useId, useState, type FormEvent } from 'react';
 import { ApiError } from '../../../api/apiError';
 import { useRegisterMarketMutation } from '../hooks/useRegisterMarketMutation';
+import { validateMarketUri } from '../model/marketUrl';
 
-function getFormErrorMessage(error: ApiError | null): string | null {
+function getBackendMarketUriError(error: ApiError | null): string | null {
   if (error === null) {
     return null;
   }
 
-  const invalidMarketUriError = error.errors.find((item) => item.invalidField === 'marketUri');
+  const marketUriError = error.errors.find((item) => {
+    const invalidField = item.invalidField?.trim().toLowerCase();
+    const errorCode = item.errorCode?.trim().toLowerCase();
 
-  return invalidMarketUriError?.errorMessage ?? error.message;
+    return invalidField === 'marketuri'
+      || invalidField?.endsWith('.marketuri') === true
+      || errorCode?.startsWith('polymarket.url.') === true;
+  });
+
+  if (marketUriError === undefined) {
+    return null;
+  }
+
+  return marketUriError.errorMessage?.trim()
+    || marketUriError.errorCode?.trim()
+    || error.message;
 }
 
-export function AddMarketForm() {
+interface AddMarketFormProps {
+  onMarketRegistered: (marketId: string) => void;
+}
+
+export function AddMarketForm({ onMarketRegistered }: AddMarketFormProps) {
   const inputId = useId();
   const errorId = useId();
   const successId = useId();
   const [marketUri, setMarketUri] = useState('');
+  const [clientError, setClientError] = useState<string | null>(null);
   const mutation = useRegisterMarketMutation();
-  const errorMessage = getFormErrorMessage(mutation.error ?? null);
+  const backendFieldError = getBackendMarketUriError(mutation.error);
+  const fieldError = clientError ?? backendFieldError;
+  const submissionError = mutation.error !== null && backendFieldError === null
+    ? mutation.error.message
+    : null;
+  const errorMessage = fieldError ?? submissionError;
   const statusMessage = mutation.isSuccess
-    ? `Рынок зарегистрирован. Market ID: ${mutation.data.marketId}`
+    ? mutation.data.created
+      ? `Рынок добавлен. Market ID: ${mutation.data.marketId}`
+      : `Рынок уже был зарегистрирован. Выбран существующий рынок. Market ID: ${mutation.data.marketId}`
     : null;
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    const validationResult = validateMarketUri(marketUri);
+    if (!validationResult.isValid) {
+      mutation.reset();
+      setClientError(validationResult.message);
+      return;
+    }
+
+    setClientError(null);
+
     mutation.mutate(
-      { marketUri },
+      { marketUri: validationResult.marketUri },
       {
-        onSuccess: () => {
+        onSuccess: (result) => {
+          onMarketRegistered(result.marketId);
           setMarketUri('');
         },
       },
@@ -37,7 +73,12 @@ export function AddMarketForm() {
   }
 
   return (
-    <form className="add-market-form" onSubmit={handleSubmit} noValidate>
+    <form
+      className="add-market-form"
+      onSubmit={handleSubmit}
+      aria-busy={mutation.isPending}
+      noValidate
+    >
       <div className="form-copy">
         <p className="card-intro">
           Вставьте ссылку на событие Polymarket. Backend получит метаданные рынка и вернёт
@@ -60,8 +101,12 @@ export function AddMarketForm() {
             autoComplete="off"
             placeholder="https://polymarket.com/event/..."
             value={marketUri}
-            onChange={(event) => setMarketUri(event.target.value)}
-            aria-invalid={errorMessage !== null}
+            onChange={(event) => {
+              setMarketUri(event.target.value);
+              setClientError(null);
+              mutation.reset();
+            }}
+            aria-invalid={fieldError !== null}
             aria-describedby={errorMessage !== null ? errorId : undefined}
             disabled={mutation.isPending}
             required

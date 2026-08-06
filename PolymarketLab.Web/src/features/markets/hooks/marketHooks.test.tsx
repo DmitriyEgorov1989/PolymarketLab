@@ -119,6 +119,20 @@ describe('market hooks', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: marketKeys.list() });
     expect(queryClient.getQueryData(marketKeys.detail('market-id'))).toBeUndefined();
   });
+
+  it('does not keep registration pending while the list invalidates', async () => {
+    registerMarketMock.mockResolvedValue({ marketId: 'market-id', created: true });
+    const queryClient = createQueryClient();
+    const pendingInvalidation = new Promise<void>(() => undefined);
+    vi.spyOn(queryClient, 'invalidateQueries').mockReturnValue(pendingInvalidation);
+
+    const { result } = renderHook(() => useRegisterMarketMutation(), {
+      wrapper: createWrapper(queryClient),
+    });
+    act(() => result.current.mutate({ marketUri: 'https://polymarket.com/event/example' }));
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
 });
 
 function createMarket(): MarketResponse {

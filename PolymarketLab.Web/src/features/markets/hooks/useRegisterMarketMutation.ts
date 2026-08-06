@@ -12,6 +12,8 @@ export function useRegisterMarketMutation() {
 
   return useMutation<RegisterMarketResponse, ApiError, RegisterMarketRequest>({
     mutationFn: (request) => registerMarket(request),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: marketKeys.list() }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: marketKeys.list() });
+    },
   });
 }

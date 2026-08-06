@@ -9,6 +9,7 @@
     <File Path="PolymarketLab.Web/package.json" />
     <File Path="PolymarketLab.Web/vite.config.ts" />
     <File Path="PolymarketLab.Web/vitest.config.ts" />
+    <File Path="PolymarketLab.Web/vitest.setup.ts" />
     <File Path="docs/frontend-api-contract.md" />
     <File Path="docs/frontend-context.md" />
   </Folder>
