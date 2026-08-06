@@ -1,6 +1,6 @@
 import { useId, useState, type FormEvent } from 'react';
 import { ApiError } from '../../../api/apiError';
-import { useRegisterMarket } from '../hooks/useRegisterMarket';
+import { useRegisterMarketMutation } from '../hooks/useRegisterMarketMutation';
 
 function getFormErrorMessage(error: ApiError | null): string | null {
   if (error === null) {
@@ -17,22 +17,19 @@ export function AddMarketForm() {
   const errorId = useId();
   const successId = useId();
   const [marketUri, setMarketUri] = useState('');
-  const [lastRegisteredMarketId, setLastRegisteredMarketId] = useState<string | null>(null);
-  const mutation = useRegisterMarket();
+  const mutation = useRegisterMarketMutation();
   const errorMessage = getFormErrorMessage(mutation.error ?? null);
   const statusMessage = mutation.isSuccess
-    ? `Рынок зарегистрирован. Market ID: ${lastRegisteredMarketId ?? mutation.data.marketId}`
+    ? `Рынок зарегистрирован. Market ID: ${mutation.data.marketId}`
     : null;
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    setLastRegisteredMarketId(null);
     mutation.mutate(
       { marketUri },
       {
-        onSuccess: (result) => {
-          setLastRegisteredMarketId(result.marketId);
+        onSuccess: () => {
           setMarketUri('');
         },
       },
