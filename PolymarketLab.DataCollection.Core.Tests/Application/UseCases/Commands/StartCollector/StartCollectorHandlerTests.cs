@@ -72,8 +72,7 @@ public sealed class StartCollectorHandlerTests
 
         result.IsSuccess.Should().BeTrue();
         result.Value.SessionId.Should().Be(activeSession.Id.Value);
-        result.Value.Status.Should().Be(CollectorSessionStatus.Starting);
-        result.Value.Created.Should().BeFalse();
+        result.Value.Status.Should().Be("Starting");
         fixture.Repository.TryAddCallCount.Should().Be(0);
         fixture.Runtime.StartCallCount.Should().Be(0);
     }
@@ -87,8 +86,7 @@ public sealed class StartCollectorHandlerTests
 
         result.IsSuccess.Should().BeTrue();
         result.Value.MarketId.Should().Be(fixture.MarketId.Value);
-        result.Value.Status.Should().Be(CollectorSessionStatus.Running);
-        result.Value.Created.Should().BeTrue();
+        result.Value.Status.Should().Be("Running");
         fixture.Repository.InsertedSession.Should().NotBeNull();
         fixture.Runtime.StartCallCount.Should().Be(1);
         fixture.Runtime.StartRequest!.Market.Should().BeSameAs(fixture.Market);
@@ -111,7 +109,6 @@ public sealed class StartCollectorHandlerTests
 
         result.IsSuccess.Should().BeTrue();
         result.Value.SessionId.Should().Be(concurrentSession.Id.Value);
-        result.Value.Created.Should().BeFalse();
         fixture.Runtime.StartCallCount.Should().Be(0);
     }
 
@@ -351,6 +348,10 @@ public sealed class StartCollectorHandlerTests
             return Task.FromResult(
                 ActiveResults.TryDequeue(out var session) ? session : null);
         }
+
+        public Task<CollectorSessionAggregate?> GetCurrentByMarketIdAsync(
+            MarketId marketId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<Result<CollectorSessionInsertStatus, Error>> TryAddAsync(
             CollectorSessionAggregate session,

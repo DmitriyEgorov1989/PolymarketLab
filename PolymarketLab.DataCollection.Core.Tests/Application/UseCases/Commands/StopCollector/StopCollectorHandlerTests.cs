@@ -55,8 +55,8 @@ public sealed class StopCollectorHandlerTests
         var result = await fixture.HandleAsync();
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Status.Should().Be(CollectorSessionStatus.Stopped);
-        result.Value.Stopped.Should().BeFalse();
+        result.Value.Session.Status.Should().Be("Stopped");
+        result.Value.Session.SessionId.Should().Be(session.Id.Value);
         fixture.Repository.UpdateCalls.Should().BeEmpty();
         fixture.Runtime.StopCallCount.Should().Be(0);
     }
@@ -87,8 +87,9 @@ public sealed class StopCollectorHandlerTests
         var result = await fixture.HandleAsync();
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Status.Should().Be(status);
-        result.Value.Stopped.Should().BeFalse();
+        result.Value.Session.Status.Should().Be(status.ToString());
+        result.Value.Session.FailureCode.Should().Be(session.FailureCode);
+        result.Value.Session.FailureMessage.Should().Be(session.FailureMessage);
         fixture.Repository.UpdateCalls.Should().BeEmpty();
         fixture.Runtime.StopCallCount.Should().Be(0);
     }
@@ -105,8 +106,7 @@ public sealed class StopCollectorHandlerTests
         var result = await fixture.HandleAsync();
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Status.Should().Be(CollectorSessionStatus.Stopped);
-        result.Value.Stopped.Should().BeTrue();
+        result.Value.Session.Status.Should().Be("Stopped");
         fixture.Runtime.StopCallCount.Should().Be(1);
         fixture.Repository.UpdateCalls.Should().ContainSingle();
         fixture.Repository.UpdateCalls[0].ExpectedStatus.Should().Be(CollectorSessionStatus.Stopping);
@@ -124,8 +124,7 @@ public sealed class StopCollectorHandlerTests
         var result = await fixture.HandleAsync();
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Status.Should().Be(CollectorSessionStatus.Stopped);
-        result.Value.Stopped.Should().BeTrue();
+        result.Value.Session.Status.Should().Be("Stopped");
         fixture.Runtime.StopCallCount.Should().Be(1);
         fixture.Runtime.StoppedSessionId.Should().Be(fixture.SessionId);
         fixture.Repository.UpdateCalls.Should().HaveCount(2);
@@ -173,8 +172,8 @@ public sealed class StopCollectorHandlerTests
         var result = await fixture.HandleAsync();
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Status.Should().Be(CollectorSessionStatus.Failed);
-        result.Value.Stopped.Should().BeFalse();
+        result.Value.Session.Status.Should().Be("Failed");
+        result.Value.Session.FailureCode.Should().Be("collector.runtime.receive.failed");
         fixture.Runtime.StopCallCount.Should().Be(1);
         fixture.Repository.UpdateCalls.Should().ContainSingle();
         fixture.Repository.UpdateCalls[0].Status.Should().Be(CollectorSessionStatus.Stopping);
@@ -308,6 +307,10 @@ public sealed class StopCollectorHandlerTests
         }
 
         public Task<CollectorSessionAggregate?> GetActiveByMarketIdAsync(
+            MarketId marketId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<CollectorSessionAggregate?> GetCurrentByMarketIdAsync(
             MarketId marketId,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 

@@ -1,9 +1,12 @@
+using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using PolymarketLab.Core.Options;
 using PolymarketLab.DataCollection.Core.Application.DependencyInjection;
 using PolymarketLab.DataCollection.Infrastructure.DependencyInjection;
 using PolymarketLab.DataCollection.Presentation.Controllers;
+using PolymarketLab.Framework.Response;
 using PolymarketLab.Markets.Core.Application.DependencyInjection;
 using PolymarketLab.Markets.Infrastructure.DependencyInjection;
 using PolymarketLab.Markets.Presentation.Controllers;
@@ -23,7 +26,23 @@ builder.Logging.AddJsonConsole(options =>
 builder.Services
     .AddControllers()
     .AddApplicationPart(typeof(CollectorController).Assembly)
-    .AddApplicationPart(typeof(MarketController).Assembly);
+    .AddApplicationPart(typeof(MarketController).Assembly)
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var errors = context.ModelState
+                .SelectMany(entry => entry.Value?.Errors.Select(_ =>
+                    new ResponseError(
+                        string.IsNullOrWhiteSpace(entry.Key)
+                            ? "request.body.required"
+                            : "request.validation",
+                        "The request is invalid.",
+                        string.IsNullOrWhiteSpace(entry.Key) ? null : entry.Key)) ?? []);
+
+            return new BadRequestObjectResult(Envelope.Errors(errors));
+        };
+    });
 builder.Services.AddMarketsApplication();
 builder.Services.AddMarketsInfrastructure(builder.Configuration);
 builder.Services.AddDataCollectionApplication();
@@ -48,6 +67,50 @@ builder.Services.AddOptions<HostOptions>()
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
+
+app.UseExceptionHandler(exceptionHandler =>
+{
+    exceptionHandler.Run(async context =>
+    {
+        var exception = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+        var logger = context.RequestServices
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("PolymarketLab.Api.UnhandledException");
+        logger.LogError(exception, "Unhandled exception while processing the HTTP request.");
+
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        await context.Response.WriteAsJsonAsync(
+            Envelope.Errors(
+            [
+                new ResponseError(
+                    "server.unexpected",
+                    "An unexpected server error occurred.",
+                    null)
+            ]),
+            context.RequestAborted);
+    });
+});
+
+app.UseStatusCodePages(async statusCodeContext =>
+{
+    var response = statusCodeContext.HttpContext.Response;
+    var statusCode = response.StatusCode;
+    var error = statusCode switch
+    {
+        StatusCodes.Status404NotFound => new ResponseError(
+            "http.not_found",
+            "The requested resource was not found.",
+            null),
+        _ => new ResponseError(
+            $"http.{statusCode}",
+            "The request could not be completed.",
+            null)
+    };
+
+    await response.WriteAsJsonAsync(
+        Envelope.Errors([error]),
+        statusCodeContext.HttpContext.RequestAborted);
+});
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())

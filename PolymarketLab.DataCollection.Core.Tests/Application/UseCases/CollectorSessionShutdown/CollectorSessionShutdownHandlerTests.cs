@@ -168,6 +168,10 @@ public sealed class CollectorSessionShutdownHandlerTests
             MarketId marketId,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
+        public Task<CollectorSessionAggregate?> GetCurrentByMarketIdAsync(
+            MarketId marketId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<IReadOnlyCollection<CollectorSessionAggregate>> GetActiveAsync(
             CancellationToken cancellationToken) => throw new NotSupportedException();
 

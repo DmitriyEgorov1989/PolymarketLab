@@ -7,7 +7,7 @@ export interface ResponseError {
 export interface Envelope<TResult> {
   result: TResult | null;
   listErrors: ResponseError[];
-  createdOtc: string;
+  createdUtc: string;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -39,8 +39,8 @@ export function isEnvelope<TResult>(value: unknown): value is Envelope<TResult> 
     'listErrors' in value &&
     Array.isArray(value.listErrors) &&
     value.listErrors.every(isResponseError) &&
-    'createdOtc' in value &&
-    typeof value.createdOtc === 'string'
+    'createdUtc' in value &&
+    typeof value.createdUtc === 'string'
   );
 }
 

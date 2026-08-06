@@ -9,6 +9,8 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollec
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
+using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionById;
+using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionByMarket;
 using PolymarketLab.DataCollection.Core.Ports;
 using static PolymarketLab.SharedKernel.Errors.Error;
 using Xunit;
@@ -39,6 +41,20 @@ public sealed class DataCollectionApplicationDependencyInjectionTests
         services.Should().Contain(descriptor =>
             descriptor.ServiceType == typeof(IValidator<StopCollectorCommand>)
             && descriptor.ImplementationType == typeof(StopCollectorValidator));
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(IRequestHandler<
+                GetCollectorSessionByIdQuery,
+                Result<GetCollectorSessionByIdResponse, ErrorList>>));
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(IValidator<GetCollectorSessionByIdQuery>)
+            && descriptor.ImplementationType == typeof(GetCollectorSessionByIdValidator));
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(IRequestHandler<
+                GetCollectorSessionByMarketQuery,
+                Result<GetCollectorSessionByMarketResponse, ErrorList>>));
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(IValidator<GetCollectorSessionByMarketQuery>)
+            && descriptor.ImplementationType == typeof(GetCollectorSessionByMarketValidator));
         services.Should().Contain(descriptor =>
             descriptor.ServiceType == typeof(TimeProvider)
             && descriptor.Lifetime == ServiceLifetime.Singleton);

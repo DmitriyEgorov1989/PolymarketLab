@@ -14,6 +14,7 @@ Frontend для PolymarketLab Collector.
 ```powershell
 npm install
 npm run dev
+npm run test
 npm run typecheck
 npm run build
 ```
@@ -26,6 +27,8 @@ npm run build
 npm run dev
 ```
 
-Backend API должен быть запущен отдельно из `../PolymarketLab.Api`.
+Backend API должен быть запущен отдельно из `../PolymarketLab.Api` на
+`http://localhost:5285`. В development Vite направляет относительные запросы
+`/api` через proxy на backend.
 
-Фактические endpoints и DTO проверять по backend-коду перед реализацией API-слоя.
+Зафиксированные endpoints и DTO описаны в `../docs/frontend-api-contract.md`.

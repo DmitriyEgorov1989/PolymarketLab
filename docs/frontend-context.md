@@ -99,28 +99,24 @@ Header
 Collector panel
 ```
 
-## Backend API: текущее состояние и целевая потребность
+## Backend API
 
-Фактический backend-контракт всегда проверять по коду перед реализацией frontend-запросов.
-
-На момент создания документа в backend найдены:
+Зафиксированный контракт первого вертикального среза описан в
+`docs/frontend-api-contract.md`. Фактические endpoints:
 
 ```http
-POST /api/Market/register
-POST /api/Collector/start
-POST /api/Collector/stop
+GET  /api/Market
+GET  /api/Market/{marketId}
+POST /api/Market
+GET  /api/Collector/{sessionId}
+GET  /api/Collector/by-market/{marketId}
+POST /api/Collector
+POST /api/Collector/{sessionId}/stop
 ```
 
-Текущий backend использует `Envelope` из `PolymarketLab.Framework.Response`, а не Problem Details.
-
-Целевой frontend MVP также нуждается в read endpoints для:
-
-- списка рынков;
-- деталей рынка;
-- списка или активной collector session по рынку;
-- counters по session: received, persisted, reconnect count, last error, last message time.
-
-Если этих endpoints нет, frontend-задача должна явно зафиксировать backend-блокер или создать отдельную backend-задачу после разрешения пользователя.
+Все ответы используют `Envelope`. Read API collector session пока не содержит
+counters; received, persisted, reconnect count и last message time остаются
+отдельной backend-задачей.
 
 ## Минимальные frontend-модели
 
@@ -128,38 +124,31 @@ POST /api/Collector/stop
 
 ```ts
 export interface MarketTokenDto {
-  id?: string;
-  externalTokenId: string;
+  tokenId: string;
   outcome: string;
-  outcomeIndex?: number;
+  outcomeIndex: number;
 }
 
 export interface MarketDto {
-  id: string;
-  externalMarketId?: string;
+  marketId: string;
+  externalMarketId: string;
   slug: string;
   conditionId: string;
   question: string;
   startsAt: string | null;
   endsAt: string | null;
-  active?: boolean;
-  closed?: boolean;
-  orderBookEnabled?: boolean;
   tokens: MarketTokenDto[];
 }
 
 export interface CollectorSessionDto {
-  id: string;
+  sessionId: string;
   marketId: string;
-  status: string;
+  status: 'Starting' | 'Running' | 'Stopping' | 'Stopped' | 'Failed' | 'Interrupted';
   createdAt: string;
   startedAt: string | null;
-  stoppedAt?: string | null;
-  lastMessageAt: string | null;
-  messagesReceived: number;
-  messagesPersisted: number;
-  reconnectCount: number;
-  lastError: string | null;
+  stoppedAt: string | null;
+  failureCode: string | null;
+  failureMessage: string | null;
 }
 ```
 

@@ -30,7 +30,7 @@ namespace PolymarketLab.Markets.Presentation.Controllers
             return response.ToResponseErrorOrResult();
         }
 
-        [HttpPost("register")]
+        [HttpPost]
         public async Task<ActionResult<RegisterMarketResponse>> RegisterMarket(
             [FromBody] RegisterMarketRequest registerMarketRequest,
             CancellationToken cancellationToken)

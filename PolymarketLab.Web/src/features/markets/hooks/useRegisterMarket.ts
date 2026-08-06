@@ -4,7 +4,7 @@ import {
   type RegisterMarketRequest,
   type RegisterMarketResponse,
 } from '../../../api/marketsApi';
-import { ApiError } from '../../../api/httpClient';
+import { ApiError } from '../../../api/apiError';
 
 export function useRegisterMarket() {
   return useMutation<RegisterMarketResponse, ApiError, RegisterMarketRequest>({

@@ -52,12 +52,17 @@ Zod допустим для runtime-проверки API-ответов, есл�
 
 Перед реализацией каждого запроса проверить текущие backend endpoints и DTO в коде.
 
-Текущее состояние backend на момент создания этого файла:
+Зафиксированный контракт первого вертикального среза находится в
+`../docs/frontend-api-contract.md`. Канонические endpoints:
 
-- `POST /api/Market/register`;
-- `POST /api/Collector/start`;
-- `POST /api/Collector/stop`;
-- ответы проходят через `Envelope`, а не через Problem Details;
+- `GET /api/Market`;
+- `GET /api/Market/{marketId}`;
+- `POST /api/Market`;
+- `GET /api/Collector/{sessionId}`;
+- `GET /api/Collector/by-market/{marketId}`;
+- `POST /api/Collector`;
+- `POST /api/Collector/{sessionId}/stop`;
+- все ответы проходят через `Envelope`.
 
 Не выдумывать отсутствующие endpoints, DTO и поля. Если frontend требует read endpoints для списков, деталей или counters, сначала явно согласовать backend-задачу.
 

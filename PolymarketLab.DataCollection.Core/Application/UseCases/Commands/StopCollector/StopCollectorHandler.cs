@@ -2,6 +2,7 @@ using CSharpFunctionalExtensions;
 using FluentValidation;
 using MediatR;
 using PolymarketLab.DataCollection.Core.Application.Errors;
+using PolymarketLab.DataCollection.Core.Application.UseCases.Common;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
@@ -41,7 +42,7 @@ public sealed class StopCollectorHandler(
 
         var session = stoppingResult.Value;
         if (IsTerminal(session.Status))
-            return Response(session, false);
+            return Response(session);
 
         var runtimeResult = await runtime.StopAsync(session.Id, cancellationToken);
         if (runtimeResult.IsFailure)
@@ -51,9 +52,7 @@ public sealed class StopCollectorHandler(
         if (stoppedResult.IsFailure)
             return Result.Failure<StopCollectorResponse, ErrorList>(stoppedResult.Error);
 
-        return Response(
-            stoppedResult.Value,
-            stoppedResult.Value.Status == CollectorSessionStatus.Stopped);
+        return Response(stoppedResult.Value);
     }
 
     private async Task<Result<CollectorSessionAggregate, ErrorList>> MarkStoppingAsync(
@@ -138,15 +137,9 @@ public sealed class StopCollectorHandler(
             or CollectorSessionStatus.Interrupted;
     }
 
-    private static StopCollectorResponse Response(
-        CollectorSessionAggregate session,
-        bool stopped)
+    private static StopCollectorResponse Response(CollectorSessionAggregate session)
     {
-        return new StopCollectorResponse(
-            session.Id.Value,
-            session.MarketId.Value,
-            session.Status,
-            stopped);
+        return new StopCollectorResponse(CollectorSessionResponse.FromSession(session));
     }
 
     private static Result<StopCollectorResponse, ErrorList> Failure(params Error[] errors)

@@ -1,0 +1,42 @@
+using CSharpFunctionalExtensions;
+using FluentValidation;
+using MediatR;
+using PolymarketLab.DataCollection.Core.Application.UseCases.Common;
+using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.SharedKernel.DomainModels.Ids;
+using PolymarketLab.SharedKernel.Errors;
+using PolymarketLab.SharedKernel.Extensions.Validations;
+using ErrorList = PolymarketLab.SharedKernel.Errors.Error.ErrorList;
+
+namespace PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionByMarket;
+
+public sealed class GetCollectorSessionByMarketHandler(
+    IValidator<GetCollectorSessionByMarketQuery> validator,
+    ICollectorSessionRepository sessionRepository)
+    : IRequestHandler<GetCollectorSessionByMarketQuery, Result<GetCollectorSessionByMarketResponse, ErrorList>>
+{
+    public async Task<Result<GetCollectorSessionByMarketResponse, ErrorList>> Handle(
+        GetCollectorSessionByMarketQuery request,
+        CancellationToken cancellationToken)
+    {
+        var validationResult = await validator.ValidateAsync(request, cancellationToken);
+        if (!validationResult.IsValid)
+            return validationResult.ToValidationErrorResponse(request);
+
+        var marketIdResult = MarketId.Create(request.MarketId);
+        if (marketIdResult.IsFailure)
+            return Failure(marketIdResult.Error);
+
+        var session = await sessionRepository.GetCurrentByMarketIdAsync(
+            marketIdResult.Value,
+            cancellationToken);
+
+        return new GetCollectorSessionByMarketResponse(
+            session is null ? null : CollectorSessionResponse.FromSession(session));
+    }
+
+    private static Result<GetCollectorSessionByMarketResponse, ErrorList> Failure(params Error[] errors)
+    {
+        return Result.Failure<GetCollectorSessionByMarketResponse, ErrorList>(errors.ToList());
+    }
+}

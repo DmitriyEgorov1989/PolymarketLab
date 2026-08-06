@@ -108,6 +108,70 @@ public sealed class CollectorSessionRepositoryTests
             ]);
     }
 
+    [Fact]
+    public async Task GetCurrentByMarketIdAsync_WithActiveSession_ShouldPreferActiveSession()
+    {
+        var marketId = MarketId.Create(Guid.NewGuid()).Value;
+        var active = CreateSession(marketId, Now);
+        active.MarkRunning(Now.AddSeconds(1));
+        var newerStopped = CreateSession(marketId, Now.AddMinutes(1));
+        newerStopped.Stop(Now.AddMinutes(2), CollectorStopReason.Requested);
+        await using var context = new DataCollectionDbContext(
+            CreateOptions(new InMemoryDatabaseRoot()));
+        context.CollectorSessions.AddRange(active, newerStopped);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+        var repository = new CollectorSessionRepository(context);
+
+        var current = await repository.GetCurrentByMarketIdAsync(
+            marketId,
+            CancellationToken.None);
+
+        current!.Id.Should().Be(active.Id);
+        context.ChangeTracker.Entries().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetCurrentByMarketIdAsync_WithoutActiveSession_ShouldReturnLatestSession()
+    {
+        var marketId = MarketId.Create(Guid.NewGuid()).Value;
+        var older = CreateSession(marketId, Now);
+        older.Stop(Now.AddSeconds(1), CollectorStopReason.Requested);
+        var latest = CreateSession(marketId, Now.AddMinutes(1));
+        latest.Fail(
+            Now.AddMinutes(2),
+            CollectorStopReason.StartupFailure,
+            "collector.start.failed",
+            "Start failed.");
+        var otherMarket = CreateSession();
+        await using var context = new DataCollectionDbContext(
+            CreateOptions(new InMemoryDatabaseRoot()));
+        context.CollectorSessions.AddRange(older, latest, otherMarket);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+        var repository = new CollectorSessionRepository(context);
+
+        var current = await repository.GetCurrentByMarketIdAsync(
+            marketId,
+            CancellationToken.None);
+
+        current!.Id.Should().Be(latest.Id);
+    }
+
+    [Fact]
+    public async Task GetCurrentByMarketIdAsync_WithoutSessions_ShouldReturnNull()
+    {
+        await using var context = new DataCollectionDbContext(
+            CreateOptions(new InMemoryDatabaseRoot()));
+        var repository = new CollectorSessionRepository(context);
+
+        var current = await repository.GetCurrentByMarketIdAsync(
+            MarketId.Create(Guid.NewGuid()).Value,
+            CancellationToken.None);
+
+        current.Should().BeNull();
+    }
+
     private static DbContextOptions<DataCollectionDbContext> CreateOptions(
         InMemoryDatabaseRoot databaseRoot)
     {
@@ -116,11 +180,13 @@ public sealed class CollectorSessionRepositoryTests
             .Options;
     }
 
-    private static CollectorSessionAggregate CreateSession()
+    private static CollectorSessionAggregate CreateSession(
+        MarketId? marketId = null,
+        DateTimeOffset? createdAt = null)
     {
         return CollectorSessionAggregate.Create(
             CollectorSessionId.Create(Guid.NewGuid()).Value,
-            MarketId.Create(Guid.NewGuid()).Value,
-            Now).Value;
+            marketId ?? MarketId.Create(Guid.NewGuid()).Value,
+            createdAt ?? Now).Value;
     }
 }

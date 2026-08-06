@@ -42,7 +42,7 @@ dotnet test .\PolymarketLab.Markets.Infrastructure.Tests\PolymarketLab.Markets.I
 
 - Compose публикует PostgreSQL на host port `5433` (container port `5432`) и хранит данные в named volume; не меняй на `5432` без проверки занятости порта.
 - HTTP profile: `http://localhost:5285`. Только в Development доступны Swagger `/swagger` и OpenAPI `/openapi/v1.json`.
-- Endpoint регистрации: `POST /api/Market/register`, body: `{ "marketUri": "https://polymarket.com/event/<slug>" }`.
+- Endpoint регистрации: `POST /api/Market`, body: `{ "marketUri": "https://polymarket.com/event/<slug>" }`.
 - Регистрация требует доступных PostgreSQL и Gamma API. Parser извлекает event slug, а gateway вызывает `/markets/slug/{slug}`; соответствие multi-market events пока не решено.
 
 ## EF Core и миграции

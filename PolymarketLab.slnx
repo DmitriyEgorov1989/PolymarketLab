@@ -8,6 +8,8 @@
     <File Path="PolymarketLab.Web/README.md" />
     <File Path="PolymarketLab.Web/package.json" />
     <File Path="PolymarketLab.Web/vite.config.ts" />
+    <File Path="PolymarketLab.Web/vitest.config.ts" />
+    <File Path="docs/frontend-api-contract.md" />
     <File Path="docs/frontend-context.md" />
   </Folder>
   <Folder Name="/src/Host/">
@@ -31,6 +33,7 @@
     <Project Path="PolymarketLab.SharedKernel/PolymarketLab.SharedKernel.csproj" Id="c77d5717-83ef-4e7a-9aa2-0994cfeedefc" />
   </Folder>
   <Folder Name="/src/Tests/">
+    <Project Path="PolymarketLab.ApiContract.Tests/PolymarketLab.ApiContract.Tests.csproj" Id="9d57422f-b97f-4f73-9db9-4856644eac17" />
     <Project Path="PolymarketLab.DataCollection.Core.Tests/PolymarketLab.DataCollection.Core.Tests.csproj" Id="7c5bdfb4-568e-4945-9df2-e37a38c10f48" />
     <Project Path="PolymarketLab.DataCollection.Infrastructure.Tests/PolymarketLab.DataCollection.Infrastructure.Tests.csproj" Id="a33ef385-57a9-4ff2-85cd-df92eaeecbf3" />
     <Project Path="PolymarketLab.Markets.Domain.Tests/PolymarketLab.Markets.Domain.Tests.csproj" Id="fe941d8f-21f4-4f29-bfbd-d48c210a9ea1" />

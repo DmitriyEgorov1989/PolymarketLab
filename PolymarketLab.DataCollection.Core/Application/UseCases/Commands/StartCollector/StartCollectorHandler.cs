@@ -132,7 +132,7 @@ public sealed class StartCollectorHandler(
         if (updateResult.Value == CollectorSessionUpdateStatus.ConcurrencyConflict)
             return await HandleRunningConflictAsync(session);
 
-        return Response(session, true);
+        return Response(session);
     }
 
     private async Task<Result<StartCollectorResponse, ErrorList>> CompensateStartedRuntimeAsync(
@@ -233,18 +233,15 @@ public sealed class StartCollectorHandler(
     private static Result<StartCollectorResponse, ErrorList> Existing(
         CollectorSessionAggregate session)
     {
-        return Response(session, false);
+        return Response(session);
     }
 
-    private static StartCollectorResponse Response(
-        CollectorSessionAggregate session,
-        bool created)
+    private static StartCollectorResponse Response(CollectorSessionAggregate session)
     {
         return new StartCollectorResponse(
             session.Id.Value,
             session.MarketId.Value,
-            session.Status,
-            created);
+            session.Status.ToString());
     }
 
     private static Result<StartCollectorResponse, ErrorList> Failure(params Error[] errors)

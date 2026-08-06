@@ -1,5 +1,5 @@
 import { useId, useState, type FormEvent } from 'react';
-import { ApiError } from '../../../api/httpClient';
+import { ApiError } from '../../../api/apiError';
 import { useRegisterMarket } from '../hooks/useRegisterMarket';
 
 function getFormErrorMessage(error: ApiError | null): string | null {

@@ -171,6 +171,10 @@ public sealed class CollectorSessionStartupReconcilerTests
             MarketId marketId,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
+        public Task<CollectorSessionAggregate?> GetCurrentByMarketIdAsync(
+            MarketId marketId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<Result<CollectorSessionInsertStatus, Error>> TryAddAsync(
             CollectorSessionAggregate session,
             CancellationToken cancellationToken) => throw new NotSupportedException();

@@ -235,14 +235,10 @@ DataCollection Application подключён к API host для обработ�
 Публичный endpoint ручной остановки:
 
 ```http
-POST /api/Collector/stop
+POST /api/Collector/{sessionId}/stop
 ```
 
-Тело запроса:
-
-```json
-{ "sessionId": "<collector-session-id>" }
-```
+Тело запроса отсутствует.
 
 ## Registry и дедупликация start
 

@@ -17,6 +17,10 @@ public interface ICollectorSessionRepository
         MarketId marketId,
         CancellationToken cancellationToken);
 
+    Task<CollectorSession?> GetCurrentByMarketIdAsync(
+        MarketId marketId,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyCollection<CollectorSession>> GetActiveAsync(
         CancellationToken cancellationToken);
 

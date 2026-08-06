@@ -11,7 +11,7 @@ public record Envelope
     {
         Result = result;
         ListErrors = errors.ToList();
-        CreatedOtc = DateTime.UtcNow;
+        CreatedUtc = DateTime.UtcNow;
     }
 
     /// <summary>
@@ -27,7 +27,7 @@ public record Envelope
     /// <summary>
     ///     Дата запроса
     /// </summary>
-    public DateTime CreatedOtc { get; }
+    public DateTime CreatedUtc { get; }
 
     public static Envelope Ok(object? result = null)
     {

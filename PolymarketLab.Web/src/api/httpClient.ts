@@ -1,30 +1,10 @@
 import {
-  getResponseErrorMessage,
-  isEnvelope,
-  type Envelope,
-  type ResponseError,
-} from './envelope';
-
-const apiBaseUrl = getApiBaseUrl();
-
-export class ApiError extends Error {
-  readonly status: number;
-  readonly errors: ResponseError[];
-  readonly body?: unknown;
-
-  constructor(
-    message: string,
-    status: number,
-    errors: ResponseError[] = [],
-    body?: unknown,
-  ) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-    this.errors = errors;
-    this.body = body;
-  }
-}
+  ApiError,
+  createHttpApiError,
+  createNetworkApiError,
+  type ResponseBody,
+} from './apiError';
+import { getResponseErrorMessage, isEnvelope, type Envelope } from './envelope';
 
 interface RequestOptions {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -39,103 +19,106 @@ export async function request<TResult>({
   body,
   signal,
 }: RequestOptions): Promise<TResult> {
-  const response = await fetch(buildUrl(path), {
-    method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal,
-  });
+  assertApiPath(path);
 
-  const responseText = await response.text();
-  const parsedBody = parseJsonSafely(responseText);
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method,
+      headers: {
+        Accept: 'application/json',
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
+    });
+  } catch (error: unknown) {
+    if (isAbortError(error)) {
+      throw error;
+    }
+
+    throw createNetworkApiError(error);
+  }
+
+  let responseText: string;
+  try {
+    responseText = await response.text();
+  } catch (error: unknown) {
+    throw new ApiError('Unable to read the API response.', response.status, { cause: error });
+  }
+
+  const responseBody = parseResponseBody(
+    responseText,
+    response.headers.get('content-type'),
+  );
 
   if (!response.ok) {
-    throw buildApiError(response.status, parsedBody, responseText);
+    throw createHttpApiError(response.status, responseBody);
   }
 
-  if (!isEnvelope<TResult>(parsedBody)) {
-    const message = responseText.trim()
-      ? 'Request succeeded with invalid JSON envelope.'
-      : 'Request succeeded with empty response body.';
+  return getSuccessfulResult<TResult>(response.status, responseBody);
+}
 
-    throw new ApiError(message, response.status, [], parsedBody);
+function getSuccessfulResult<TResult>(status: number, responseBody: ResponseBody): TResult {
+  if (responseBody.kind === 'empty') {
+    throw new ApiError('Request succeeded with empty response body.', status);
   }
 
-  if (parsedBody.listErrors.length > 0) {
+  if (responseBody.kind === 'invalid-json') {
+    throw new ApiError('Request succeeded with invalid JSON response.', status, {
+      body: responseBody.rawText,
+    });
+  }
+
+  if (responseBody.kind === 'text' || !isEnvelope<TResult>(responseBody.value)) {
+    throw new ApiError('Request succeeded with invalid response envelope.', status, {
+      body: responseBody.kind === 'text' ? responseBody.rawText : responseBody.value,
+    });
+  }
+
+  const envelope = responseBody.value;
+  if (envelope.listErrors.length > 0) {
     throw new ApiError(
-      getResponseErrorMessage(
-        parsedBody.listErrors,
-        `Request failed with status ${response.status}.`,
-      ),
-      response.status,
-      parsedBody.listErrors,
-      parsedBody,
+      getResponseErrorMessage(envelope.listErrors, `Request failed with status ${status}.`),
+      status,
+      { errors: envelope.listErrors, body: envelope },
     );
   }
 
-  return getEnvelopeResult(parsedBody, response.status);
+  return getEnvelopeResult(envelope, status);
 }
 
-function getApiBaseUrl(): string {
-  const value = import.meta.env.VITE_API_BASE_URL;
-
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error('VITE_API_BASE_URL is not configured.');
-  }
-
-  return value.trim().replace(/\/$/, '');
-}
-
-function buildUrl(path: string): string {
-  if (path.startsWith('http://') || path.startsWith('https://')) {
-    return path;
-  }
-
-  return `${apiBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
-}
-
-function parseJsonSafely(text: string): unknown {
+function parseResponseBody(text: string, contentType: string | null): ResponseBody {
   const trimmedText = text.trim();
-
   if (trimmedText === '') {
-    return null;
+    return { kind: 'empty' };
   }
 
   try {
-    return JSON.parse(trimmedText) as unknown;
+    return { kind: 'json', value: JSON.parse(trimmedText) as unknown };
   } catch {
-    return null;
+    if (contentType?.toLowerCase().includes('json')) {
+      return { kind: 'invalid-json', rawText: text };
+    }
+
+    return { kind: 'text', rawText: text };
   }
 }
 
-function buildApiError(status: number, body: unknown, responseText: string): ApiError {
-  if (isEnvelope(body)) {
-    return new ApiError(
-      getResponseErrorMessage(body.listErrors, `Request failed with status ${status}.`),
-      status,
-      body.listErrors,
-      body,
-    );
-  }
-
-  if (responseText.trim() === '') {
-    return new ApiError('Request failed with empty response body.', status, [], body);
-  }
-
-  if (body === null) {
-    return new ApiError('Request failed with invalid JSON response.', status, [], responseText);
-  }
-
-  return new ApiError(`Request failed with status ${status}.`, status, [], body);
-}
-
-function getEnvelopeResult<TResult>(
-  envelope: Envelope<TResult>,
-  status: number,
-): TResult {
+function getEnvelopeResult<TResult>(envelope: Envelope<TResult>, status: number): TResult {
   if (envelope.result === null) {
-    throw new ApiError('Request succeeded without result payload.', status, [], envelope);
+    throw new ApiError('Request succeeded without result payload.', status, { body: envelope });
   }
 
   return envelope.result;
+}
+
+function assertApiPath(path: string): void {
+  if (!path.startsWith('/api/')) {
+    throw new Error(`API path must start with '/api/': '${path}'.`);
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError';
 }
