@@ -5,6 +5,12 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { PropsWithChildren } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  getCollectorByMarketId,
+  startCollector,
+  stopCollector,
+} from '../api/collectorsApi';
+import {
+  getMarketById,
   getMarkets,
   registerMarket,
   type MarketResponse,
@@ -17,17 +23,52 @@ vi.mock('../api/marketsApi', async (importOriginal) => {
 
   return {
     ...actual,
+    getMarketById: vi.fn(),
     getMarkets: vi.fn(),
     registerMarket: vi.fn(),
   };
 });
 
+vi.mock('../api/collectorsApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api/collectorsApi')>();
+
+  return {
+    ...actual,
+    getCollectorByMarketId: vi.fn(),
+    startCollector: vi.fn(),
+    stopCollector: vi.fn(),
+  };
+});
+
+const getCollectorByMarketIdMock = vi.mocked(getCollectorByMarketId);
+const startCollectorMock = vi.mocked(startCollector);
+const stopCollectorMock = vi.mocked(stopCollector);
+const getMarketByIdMock = vi.mocked(getMarketById);
 const getMarketsMock = vi.mocked(getMarkets);
 const registerMarketMock = vi.mocked(registerMarket);
 
 describe('CollectorDashboardPage market selection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getCollectorByMarketIdMock.mockResolvedValue({ session: null });
+    startCollectorMock.mockResolvedValue({
+      sessionId: 'session-id',
+      marketId: 'market-id',
+      status: 'Running',
+    });
+    stopCollectorMock.mockResolvedValue({
+      session: {
+        sessionId: 'session-id',
+        marketId: 'market-id',
+        status: 'Stopped',
+        createdAt: '2026-08-06T12:00:00Z',
+        startedAt: '2026-08-06T12:00:01Z',
+        stoppedAt: '2026-08-06T12:10:00Z',
+        failureCode: null,
+        failureMessage: null,
+      },
+    });
+    getMarketByIdMock.mockImplementation(async (marketId) => ({ market: createMarket(marketId) }));
   });
 
   it('selects the first market after initial loading', async () => {
@@ -38,7 +79,7 @@ describe('CollectorDashboardPage market selection', () => {
 
     const firstButton = await screen.findByRole('button', { name: /Question first/ });
     await waitFor(() => expect(firstButton.getAttribute('aria-pressed')).toBe('true'));
-    expect(screen.getByText(`Выбран рынок: ${first.marketId}`)).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: first.question })).toBeTruthy();
   });
 
   it('preserves manual selection after refetch changes the first market', async () => {
@@ -57,7 +98,7 @@ describe('CollectorDashboardPage market selection', () => {
     await screen.findByRole('button', { name: /Question new-first/ });
     expect(screen.getByRole('button', { name: /Question second/ }).getAttribute('aria-pressed'))
       .toBe('true');
-    expect(screen.getByText(`Выбран рынок: ${second.marketId}`)).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: second.question })).toBeTruthy();
   });
 
   it('does not auto-select after an initially empty result', async () => {
@@ -89,10 +130,33 @@ describe('CollectorDashboardPage market selection', () => {
     fireEvent.submit(input.closest('form')!);
 
     await waitFor(() => {
-      expect(screen.getByText(`Выбран рынок: ${registered.marketId}`)).toBeTruthy();
+      expect(screen.getByRole('heading', { name: registered.question })).toBeTruthy();
     });
     const registeredButton = await screen.findByRole('button', { name: /Question registered/ });
     expect(registeredButton.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('loads outcomes and token ids for the selected market', async () => {
+    const market = createMarket('tokens');
+    const detail = {
+      ...market,
+      tokens: [
+        { outcome: 'Yes', outcomeIndex: 0, tokenId: '123456789012345678901234567890' },
+        { outcome: 'No', outcomeIndex: 1, tokenId: 'token-no' },
+      ],
+    };
+    getMarketsMock.mockResolvedValue({ markets: [market] });
+    getMarketByIdMock.mockResolvedValue({ market: detail });
+
+    renderPage();
+
+    expect(await screen.findByRole('heading', { name: detail.question })).toBeTruthy();
+    expect(getMarketByIdMock).toHaveBeenCalledWith(detail.marketId, expect.any(AbortSignal));
+    expect(screen.getByText('Yes')).toBeTruthy();
+    expect(screen.getByText('Outcome index: 0')).toBeTruthy();
+    expect(screen.getByText('123456789012345678901234567890')).toBeTruthy();
+    expect(screen.getByText('No')).toBeTruthy();
+    expect(screen.getByText('token-no')).toBeTruthy();
   });
 });
 

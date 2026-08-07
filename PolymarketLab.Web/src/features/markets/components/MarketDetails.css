@@ -1,0 +1,97 @@
+.market-details-content,
+.market-details-state {
+  display: grid;
+  min-width: 0;
+  gap: 22px;
+}
+
+.market-details-header {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.market-details-label {
+  color: #38bdf8;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.market-details-header h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: clamp(1.3rem, 3vw, 2rem);
+  line-height: 1.25;
+}
+
+.market-details-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.market-details-grid > div {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 14px;
+  background: rgba(30, 41, 59, 0.34);
+}
+
+.market-details-grid .market-details-wide {
+  grid-column: 1 / -1;
+}
+
+.market-details-grid dt {
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.market-details-grid dd {
+  min-width: 0;
+  margin: 0;
+  color: #e2e8f0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.market-details-id {
+  color: #bae6fd;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.market-details-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #fda4af;
+}
+
+.market-details-refresh {
+  font-size: 0.88rem;
+}
+
+@media (max-width: 480px) {
+  .market-details-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .market-details-grid .market-details-wide {
+    grid-column: auto;
+  }
+
+  .market-details-warning {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

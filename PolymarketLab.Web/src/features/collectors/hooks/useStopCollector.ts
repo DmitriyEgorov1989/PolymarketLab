@@ -11,13 +11,8 @@ export function useStopCollector() {
 
   return useMutation<StopCollectorResponse, ApiError, string>({
     mutationFn: (sessionId) => stopCollector(sessionId),
-    onSuccess: (response) => Promise.all([
-      queryClient.invalidateQueries({
-        queryKey: collectorKeys.detail(response.session.sessionId),
-      }),
-      queryClient.invalidateQueries({
-        queryKey: collectorKeys.byMarket(response.session.marketId),
-      }),
-    ]),
+    onSuccess: (_response, sessionId) => queryClient.invalidateQueries({
+      queryKey: collectorKeys.detail(sessionId),
+    }),
   });
 }

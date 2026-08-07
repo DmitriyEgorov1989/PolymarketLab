@@ -155,6 +155,15 @@
   min-height: 320px;
 }
 
+.market-list-card {
+  grid-row: span 2;
+}
+
+.collector-card {
+  grid-column: 2;
+  min-width: 0;
+}
+
 @media (max-width: 760px) {
   .dashboard-shell {
     padding: 20px;
@@ -167,6 +176,12 @@
 
   .workspace-grid {
     grid-template-columns: 1fr;
+  }
+
+  .market-list-card,
+  .collector-card {
+    grid-column: auto;
+    grid-row: auto;
   }
 
   .field-row {

@@ -1,0 +1,189 @@
+.collector-panel,
+.collector-session-content,
+.collector-query-error {
+  display: grid;
+  min-width: 0;
+  gap: 18px;
+}
+
+.collector-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.collector-button,
+.collector-retry-button {
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.collector-button:disabled,
+.collector-retry-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.collector-start-button {
+  border: 0;
+  color: #082f49;
+  background: linear-gradient(135deg, #38bdf8, #67e8f9);
+}
+
+.collector-stop-button {
+  border: 1px solid rgba(251, 113, 133, 0.5);
+  color: #fecdd3;
+  background: rgba(159, 18, 57, 0.2);
+}
+
+.collector-retry-button {
+  border: 1px solid rgba(103, 232, 249, 0.42);
+  color: #cffafe;
+  background: rgba(14, 116, 144, 0.18);
+}
+
+.collector-operation-error,
+.collector-query-warning {
+  color: #fda4af;
+}
+
+.collector-query-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.collector-refresh {
+  font-size: 0.88rem;
+}
+
+.collector-empty {
+  padding: 18px;
+  border: 1px dashed rgba(148, 163, 184, 0.24);
+  border-radius: 14px;
+  text-align: center;
+  background: rgba(2, 6, 23, 0.2);
+}
+
+.collector-session-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.collector-session-heading h3,
+.collector-failure h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.collector-status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 4px 11px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 999px;
+  color: #cbd5e1;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  background: rgba(51, 65, 85, 0.44);
+  text-transform: uppercase;
+}
+
+.collector-status-badge[data-status='Starting'],
+.collector-status-badge[data-status='Stopping'] {
+  border-color: rgba(251, 191, 36, 0.44);
+  color: #fde68a;
+  background: rgba(146, 64, 14, 0.2);
+}
+
+.collector-status-badge[data-status='Running'] {
+  border-color: rgba(74, 222, 128, 0.44);
+  color: #bbf7d0;
+  background: rgba(21, 128, 61, 0.2);
+}
+
+.collector-status-badge[data-status='Failed'] {
+  border-color: rgba(251, 113, 133, 0.48);
+  color: #fecdd3;
+  background: rgba(159, 18, 57, 0.22);
+}
+
+.collector-session-grid,
+.collector-failure dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.collector-session-grid > div,
+.collector-failure dl > div {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 14px;
+  background: rgba(30, 41, 59, 0.34);
+}
+
+.collector-session-grid dt,
+.collector-failure dt {
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.collector-session-grid dd,
+.collector-failure dd {
+  min-width: 0;
+  margin: 0;
+  color: #e2e8f0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.collector-failure {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(251, 113, 133, 0.28);
+  border-radius: 16px;
+  background: rgba(76, 5, 25, 0.18);
+}
+
+.collector-failure dl {
+  grid-template-columns: minmax(160px, 0.5fr) minmax(0, 1.5fr);
+}
+
+.collector-failure code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  color: #fecdd3;
+  white-space: normal;
+  word-break: break-word;
+}
+
+@media (max-width: 600px) {
+  .collector-session-grid,
+  .collector-failure dl {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .collector-controls {
+    display: grid;
+  }
+
+  .collector-query-warning {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
