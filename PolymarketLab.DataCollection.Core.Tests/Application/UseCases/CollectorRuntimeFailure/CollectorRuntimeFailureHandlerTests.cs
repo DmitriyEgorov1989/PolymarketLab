@@ -30,7 +30,8 @@ public sealed class CollectorRuntimeFailureHandlerTests
     {
         var session = CreateSession(status);
         var repository = new StubCollectorSessionRepository(session);
-        var handler = new CollectorRuntimeFailureHandler(repository);
+        var progressCompletion = new StubProgressCompletion();
+        var handler = new CollectorRuntimeFailureHandler(repository, progressCompletion);
         var failedAt = CreatedAt.AddMinutes(1);
 
         var result = await handler.HandleAsync(
@@ -46,6 +47,7 @@ public sealed class CollectorRuntimeFailureHandlerTests
         update.Session.StopReason.Should().Be(CollectorStopReason.FatalWebSocketError);
         update.Session.FailureCode.Should().Be(RuntimeError.Code);
         update.Session.FailureMessage.Should().Be(RuntimeError.Message);
+        progressCompletion.CallCount.Should().Be(1);
     }
 
     [Fact]
@@ -58,7 +60,9 @@ public sealed class CollectorRuntimeFailureHandlerTests
         var repository = new StubCollectorSessionRepository(starting, running);
         repository.UpdateResults.Enqueue(CollectorSessionUpdateStatus.ConcurrencyConflict);
         repository.UpdateResults.Enqueue(CollectorSessionUpdateStatus.Updated);
-        var handler = new CollectorRuntimeFailureHandler(repository);
+        var handler = new CollectorRuntimeFailureHandler(
+            repository,
+            new StubProgressCompletion());
 
         var result = await handler.HandleAsync(
             new RuntimeFailureNotification(
@@ -84,7 +88,9 @@ public sealed class CollectorRuntimeFailureHandlerTests
     {
         var session = CreateSession(status);
         var repository = new StubCollectorSessionRepository(session);
-        var handler = new CollectorRuntimeFailureHandler(repository);
+        var handler = new CollectorRuntimeFailureHandler(
+            repository,
+            new StubProgressCompletion());
 
         var result = await handler.HandleAsync(
             new RuntimeFailureNotification(
@@ -193,4 +199,17 @@ public sealed class CollectorRuntimeFailureHandlerTests
     private sealed record UpdateCall(
         CollectorSessionAggregate Session,
         CollectorSessionStatus ExpectedStatus);
+
+    private sealed class StubProgressCompletion : ICollectorSessionProgressCompletion
+    {
+        public int CallCount { get; private set; }
+
+        public Task<UnitResult<Error>> CompleteAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromResult(UnitResult.Success<Error>());
+        }
+    }
 }

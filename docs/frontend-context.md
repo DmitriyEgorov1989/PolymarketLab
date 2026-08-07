@@ -114,9 +114,8 @@ POST /api/Collector
 POST /api/Collector/{sessionId}/stop
 ```
 
-Все ответы используют `Envelope`. Read API collector session пока не содержит
-counters; received, persisted, reconnect count и last message time остаются
-отдельной backend-задачей.
+Все ответы используют `Envelope`. Collector session read API возвращает durable
+received/persisted counters, время последнего сообщения и reconnect count.
 
 ## Минимальные frontend-модели
 
@@ -149,6 +148,10 @@ export interface CollectorSessionDto {
   stoppedAt: string | null;
   failureCode: string | null;
   failureMessage: string | null;
+  messagesReceived: number;
+  messagesPersisted: number;
+  lastMessageAt: string | null;
+  reconnectCount: number;
 }
 ```
 

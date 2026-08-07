@@ -17,6 +17,8 @@ namespace PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCo
 public sealed class StopCollectorHandler(
     IValidator<StopCollectorCommand> validator,
     ICollectorSessionRepository sessionRepository,
+    ICollectorSessionProgressRepository progressRepository,
+    ICollectorSessionProgressCompletion progressCompletion,
     ICollectorRuntime runtime,
     TimeProvider timeProvider)
     : IRequestHandler<StopCollectorCommand, Result<StopCollectorResponse, ErrorList>>
@@ -42,17 +44,44 @@ public sealed class StopCollectorHandler(
 
         var session = stoppingResult.Value;
         if (IsTerminal(session.Status))
-            return Response(session);
+            return await ResponseAsync(session, cancellationToken);
 
         var runtimeResult = await runtime.StopAsync(session.Id, cancellationToken);
         if (runtimeResult.IsFailure)
+        {
+            await progressCompletion.CompleteAsync(session.Id, cancellationToken);
+            var failedResult = await MarkFailedAsync(
+                session.Id,
+                CollectorStopReason.FatalWebSocketError,
+                runtimeResult.Error,
+                cancellationToken);
+            if (failedResult.IsFailure)
+                return Result.Failure<StopCollectorResponse, ErrorList>(failedResult.Error);
+
             return Failure(runtimeResult.Error);
+        }
+
+        var progressResult = await progressCompletion.CompleteAsync(
+            session.Id,
+            cancellationToken);
+        if (progressResult.IsFailure)
+        {
+            var failedResult = await MarkFailedAsync(
+                session.Id,
+                CollectorStopReason.PersistenceFailure,
+                progressResult.Error,
+                cancellationToken);
+            if (failedResult.IsFailure)
+                return Result.Failure<StopCollectorResponse, ErrorList>(failedResult.Error);
+
+            return Failure(progressResult.Error);
+        }
 
         var stoppedResult = await MarkStoppedAsync(session.Id, cancellationToken);
         if (stoppedResult.IsFailure)
             return Result.Failure<StopCollectorResponse, ErrorList>(stoppedResult.Error);
 
-        return Response(stoppedResult.Value);
+        return await ResponseAsync(stoppedResult.Value, cancellationToken);
     }
 
     private async Task<Result<CollectorSessionAggregate, ErrorList>> MarkStoppingAsync(
@@ -130,6 +159,49 @@ public sealed class StopCollectorHandler(
         return FailureSession(StopCollectorErrors.StateTransitionConflict(sessionId));
     }
 
+    private async Task<Result<CollectorSessionAggregate, ErrorList>> MarkFailedAsync(
+        CollectorSessionId sessionId,
+        CollectorStopReason stopReason,
+        Error error,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < MaximumUpdateAttempts; attempt++)
+        {
+            var session = await sessionRepository.GetByIdAsync(
+                sessionId,
+                cancellationToken);
+            if (session is null)
+                return FailureSession(StopCollectorErrors.SessionNotFound(sessionId.Value));
+
+            if (IsTerminal(session.Status))
+                return session;
+
+            var expectedStatus = session.Status;
+            var lowerBound = session.StartedAt ?? session.CreatedAt;
+            var currentTime = timeProvider.GetUtcNow();
+            var failedAt = currentTime < lowerBound ? lowerBound : currentTime;
+            var transitionResult = session.Fail(
+                failedAt,
+                stopReason,
+                error.Code,
+                error.Message);
+            if (transitionResult.IsFailure)
+                return FailureSession(transitionResult.Error);
+
+            var updateResult = await sessionRepository.TryUpdateAsync(
+                session,
+                expectedStatus,
+                cancellationToken);
+            if (updateResult.IsFailure)
+                return FailureSession(updateResult.Error);
+
+            if (updateResult.Value == CollectorSessionUpdateStatus.Updated)
+                return session;
+        }
+
+        return FailureSession(StopCollectorErrors.StateTransitionConflict(sessionId));
+    }
+
     private static bool IsTerminal(CollectorSessionStatus status)
     {
         return status is CollectorSessionStatus.Stopped
@@ -137,9 +209,13 @@ public sealed class StopCollectorHandler(
             or CollectorSessionStatus.Interrupted;
     }
 
-    private static StopCollectorResponse Response(CollectorSessionAggregate session)
+    private async Task<StopCollectorResponse> ResponseAsync(
+        CollectorSessionAggregate session,
+        CancellationToken cancellationToken)
     {
-        return new StopCollectorResponse(CollectorSessionResponse.FromSession(session));
+        var progress = await progressRepository.GetAsync(session.Id, cancellationToken);
+        return new StopCollectorResponse(
+            CollectorSessionResponse.FromSession(session, progress));
     }
 
     private static Result<StopCollectorResponse, ErrorList> Failure(params Error[] errors)

@@ -12,7 +12,8 @@ namespace PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetColl
 
 public sealed class GetCollectorSessionByMarketHandler(
     IValidator<GetCollectorSessionByMarketQuery> validator,
-    ICollectorSessionRepository sessionRepository)
+    ICollectorSessionRepository sessionRepository,
+    ICollectorSessionProgressRepository progressRepository)
     : IRequestHandler<GetCollectorSessionByMarketQuery, Result<GetCollectorSessionByMarketResponse, ErrorList>>
 {
     public async Task<Result<GetCollectorSessionByMarketResponse, ErrorList>> Handle(
@@ -31,8 +32,12 @@ public sealed class GetCollectorSessionByMarketHandler(
             marketIdResult.Value,
             cancellationToken);
 
+        if (session is null)
+            return new GetCollectorSessionByMarketResponse(null);
+
+        var progress = await progressRepository.GetAsync(session.Id, cancellationToken);
         return new GetCollectorSessionByMarketResponse(
-            session is null ? null : CollectorSessionResponse.FromSession(session));
+            CollectorSessionResponse.FromSession(session, progress));
     }
 
     private static Result<GetCollectorSessionByMarketResponse, ErrorList> Failure(params Error[] errors)

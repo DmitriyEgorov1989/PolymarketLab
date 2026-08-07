@@ -13,7 +13,8 @@ namespace PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetColl
 
 public sealed class GetCollectorSessionByIdHandler(
     IValidator<GetCollectorSessionByIdQuery> validator,
-    ICollectorSessionRepository sessionRepository)
+    ICollectorSessionRepository sessionRepository,
+    ICollectorSessionProgressRepository progressRepository)
     : IRequestHandler<GetCollectorSessionByIdQuery, Result<GetCollectorSessionByIdResponse, ErrorList>>
 {
     public async Task<Result<GetCollectorSessionByIdResponse, ErrorList>> Handle(
@@ -32,8 +33,9 @@ public sealed class GetCollectorSessionByIdHandler(
         if (session is null)
             return Failure(CollectorSessionQueryErrors.NotFound(request.SessionId));
 
+        var progress = await progressRepository.GetAsync(session.Id, cancellationToken);
         return new GetCollectorSessionByIdResponse(
-            CollectorSessionResponse.FromSession(session));
+            CollectorSessionResponse.FromSession(session, progress));
     }
 
     private static Result<GetCollectorSessionByIdResponse, ErrorList> Failure(params Error[] errors)

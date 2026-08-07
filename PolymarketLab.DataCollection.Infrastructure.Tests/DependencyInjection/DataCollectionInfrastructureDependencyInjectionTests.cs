@@ -41,6 +41,8 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
             NullLogger<CollectorRuntimeShutdownService>.Instance);
         services.AddSingleton<ILogger<CollectorSessionStartupReconciliationService>>(
             NullLogger<CollectorSessionStartupReconciliationService>.Instance);
+        services.AddSingleton<ILogger<CollectorSessionProgressCompletion>>(
+            NullLogger<CollectorSessionProgressCompletion>.Instance);
         services.AddDataCollectionInfrastructure(configuration);
 
         using var provider = services.BuildServiceProvider(new ServiceProviderOptions
@@ -54,9 +56,11 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
         AssertSingleton<ICollectorRuntime>(firstScope, secondScope);
         AssertSingleton<ICollectorWorkerFactory>(firstScope, secondScope);
         AssertSingleton<ICollectorRuntimeFailureDispatcher>(firstScope, secondScope);
+        AssertSingleton<ICollectorSessionProgressCompletion>(firstScope, secondScope);
         AssertSingleton<ICollectorWebSocketFactory>(firstScope, secondScope);
         AssertSingleton<IRawMarketMessageSink>(firstScope, secondScope);
         AssertScoped<IRawMarketMessageWriter>(firstScope, secondScope);
+        AssertScoped<ICollectorSessionProgressRepository>(firstScope, secondScope);
         provider.GetServices<IHostedService>()
             .Select(service => service.GetType())
             .Should()

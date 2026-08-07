@@ -9,6 +9,8 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres
         public DbSet<CollectorSession> CollectorSessions => Set<CollectorSession>();
         internal DbSet<RawMarketMessageRecord> RawMarketMessages =>
             Set<RawMarketMessageRecord>();
+        internal DbSet<CollectorSessionProgressRecord> CollectorSessionProgress =>
+            Set<CollectorSessionProgressRecord>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

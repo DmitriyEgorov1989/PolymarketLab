@@ -3,6 +3,7 @@ using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionByMarket;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
@@ -22,7 +23,14 @@ public sealed class GetCollectorSessionByMarketHandlerTests
         var session = CreateSession();
         session.MarkRunning(CreatedAt.AddSeconds(1));
         var repository = new StubRepository(session);
-        var handler = CreateHandler(repository);
+        var handler = CreateHandler(
+            repository,
+            new StubProgressRepository(new CollectorSessionProgress(
+                session.Id,
+                5,
+                4,
+                CreatedAt.AddSeconds(10),
+                1)));
 
         var result = await handler.Handle(
             new GetCollectorSessionByMarketQuery(session.MarketId.Value),
@@ -32,6 +40,10 @@ public sealed class GetCollectorSessionByMarketHandlerTests
         result.Value.Session!.SessionId.Should().Be(session.Id.Value);
         result.Value.Session.MarketId.Should().Be(session.MarketId.Value);
         result.Value.Session.Status.Should().Be("Running");
+        result.Value.Session.MessagesReceived.Should().Be(5);
+        result.Value.Session.MessagesPersisted.Should().Be(4);
+        result.Value.Session.LastMessageAt.Should().Be(CreatedAt.AddSeconds(10));
+        result.Value.Session.ReconnectCount.Should().Be(1);
         repository.RequestedMarketId.Should().Be(session.MarketId);
     }
 
@@ -64,11 +76,13 @@ public sealed class GetCollectorSessionByMarketHandlerTests
     }
 
     private static GetCollectorSessionByMarketHandler CreateHandler(
-        ICollectorSessionRepository repository)
+        ICollectorSessionRepository repository,
+        ICollectorSessionProgressRepository? progressRepository = null)
     {
         return new GetCollectorSessionByMarketHandler(
             new GetCollectorSessionByMarketValidator(),
-            repository);
+            repository,
+            progressRepository ?? new StubProgressRepository());
     }
 
     private static CollectorSessionAggregate CreateSession()
@@ -113,6 +127,21 @@ public sealed class GetCollectorSessionByMarketHandlerTests
         public Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
             CollectorSessionAggregate session,
             CollectorSessionStatus expectedStatus,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class StubProgressRepository(CollectorSessionProgress? progress = null)
+        : ICollectorSessionProgressRepository
+    {
+        public Task<CollectorSessionProgress> GetAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(progress ?? CollectorSessionProgress.Empty(sessionId));
+        }
+
+        public Task CheckpointAsync(
+            CollectorSessionProgressCheckpoint checkpoint,
             CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

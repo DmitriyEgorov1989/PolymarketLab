@@ -163,13 +163,19 @@ Request:
   "startedAt": "2026-08-06T12:00:01Z",
   "stoppedAt": null,
   "failureCode": null,
-  "failureMessage": null
+  "failureMessage": null,
+  "messagesReceived": 120,
+  "messagesPersisted": 118,
+  "lastMessageAt": "2026-08-06T12:29:59Z",
+  "reconnectCount": 0
 }
 ```
 
-`startedAt`, `stoppedAt`, `failureCode` и `failureMessage` могут быть `null`.
+`startedAt`, `stoppedAt`, `failureCode`, `failureMessage` и `lastMessageAt` могут быть `null`.
 Для `Failed` backend возвращает сохранённые `failureCode` и `failureMessage`.
-Counters в первый контракт не входят.
+`messagesReceived` считает полностью собранные text messages, а `messagesPersisted` —
+сообщения, подтверждённые PostgreSQL. Counters накопительные в пределах session.
+Reconnect пока не реализован, поэтому `reconnectCount` остаётся `0`.
 
 ## GET /api/Collector/{sessionId}
 
@@ -187,7 +193,11 @@ Counters в первый контракт не входят.
     "startedAt": "2026-08-06T12:00:01Z",
     "stoppedAt": null,
     "failureCode": null,
-    "failureMessage": null
+    "failureMessage": null,
+    "messagesReceived": 120,
+    "messagesPersisted": 118,
+    "lastMessageAt": "2026-08-06T12:29:59Z",
+    "reconnectCount": 0
   }
 }
 ```
@@ -254,7 +264,11 @@ Backend возвращает фактический сохранённый statu
     "startedAt": "2026-08-06T12:00:01Z",
     "stoppedAt": "2026-08-06T12:30:00Z",
     "failureCode": null,
-    "failureMessage": null
+    "failureMessage": null,
+    "messagesReceived": 120,
+    "messagesPersisted": 120,
+    "lastMessageAt": "2026-08-06T12:29:59Z",
+    "reconnectCount": 0
   }
 }
 ```

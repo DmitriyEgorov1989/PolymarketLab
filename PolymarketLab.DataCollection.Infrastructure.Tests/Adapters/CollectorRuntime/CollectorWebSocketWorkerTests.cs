@@ -88,7 +88,7 @@ public sealed class CollectorWebSocketWorkerTests
         message.ReceivedAt.Should().Be(receivedAt);
         message.Payload.Should().Equal("{\"price\":0.5}"u8.ToArray());
         telemetry.GetSnapshot(request.SessionId).Should().Be(
-            new RawMarketMessageCounters(1, 1, 0));
+            new RawMarketMessageCounters(1, 1, 0, receivedAt));
     }
 
     [Fact]
@@ -258,8 +258,11 @@ public sealed class CollectorWebSocketWorkerTests
         completion.Result.Error.Code.Should().Be(
             "collector.runtime.ingestion.enqueue_cancelled");
         completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Autonomous);
-        telemetry.GetSnapshot(request.SessionId).Should().Be(
-            new RawMarketMessageCounters(1, 0, 0));
+        var counters = telemetry.GetSnapshot(request.SessionId);
+        counters.ReceivedComplete.Should().Be(1);
+        counters.Enqueued.Should().Be(0);
+        counters.Persisted.Should().Be(0);
+        counters.LastMessageAt.Should().NotBeNull();
     }
 
     [Fact]

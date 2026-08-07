@@ -664,6 +664,23 @@ new BoundedChannelOptions(capacity)
 
 Пустой batch не вызывает writer.
 
+### Durable progress
+
+Для каждой collector session хранится отдельная строка
+`data_collection.collector_session_progress`. `messages_received` и
+`last_message_at` берутся из in-memory snapshot, а `messages_persisted`
+увеличивается в одной транзакции с raw batch. Поэтому read API обычно отстаёт
+от receive loop не более чем на `FlushInterval`.
+
+При пользовательском Stop runtime сначала прекращает receive/enqueue, затем
+ожидает `persisted >= enqueued`, выполняет финальный progress checkpoint и
+только после этого сохраняет `Stopped`. Ошибка или timeout persistence переводит
+session в `Failed/PersistenceFailure` вместо ложного `Stopped`.
+
+После аварийного завершения `messages_persisted` сохраняется точно, а
+`messages_received` является durable lower bound: хвост, оставшийся только в
+памяти процесса, восстановить невозможно.
+
 ### Один pending channel wait
 
 Consumer сохраняет не более одного pending `WaitToReadAsync` между timer ticks.
@@ -744,7 +761,21 @@ ON DELETE RESTRICT
 2. Создаёт EF records.
 3. Копирует payload.
 4. Выполняет `AddRange`.
-5. Вызывает один `SaveChangesAsync`.
+5. Обновляет progress каждой session.
+6. Вызывает один `SaveChangesAsync` для raw rows и counters.
+
+```text
+data_collection.collector_session_progress
+------------------------------------------
+session_id          uuid primary key
+messages_received   bigint not null
+messages_persisted  bigint not null
+last_message_at     timestamptz null
+reconnect_count     bigint not null
+```
+
+`reconnect_count` не включает initial connect. Он предназначен для успешных
+повторных connect + subscription и остаётся равным `0`, пока reconnect loop не реализован.
 
 Это не PostgreSQL `COPY` и не специализированный bulk insert.
 

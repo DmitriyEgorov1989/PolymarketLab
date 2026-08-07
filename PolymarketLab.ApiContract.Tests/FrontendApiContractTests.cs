@@ -114,13 +114,34 @@ public sealed class FrontendApiContractTests
             DateTimeOffset.Parse("2026-08-06T12:00:01Z"),
             DateTimeOffset.Parse("2026-08-06T12:30:00Z"),
             "collector.runtime.receive.failed",
-            "Receive failed.");
+            "Receive failed.",
+            120,
+            118,
+            DateTimeOffset.Parse("2026-08-06T12:29:59Z"),
+            2);
 
         var result = Serialize(new StopCollectorResponse(session));
 
         result["session"]!["status"]!.GetValue<string>().Should().Be("Failed");
         result["session"]!["failureCode"]!.GetValue<string>()
             .Should().Be("collector.runtime.receive.failed");
+        result["session"]!.AsObject().Select(property => property.Key)
+            .Should().BeEquivalentTo(
+                "sessionId",
+                "marketId",
+                "status",
+                "createdAt",
+                "startedAt",
+                "stoppedAt",
+                "failureCode",
+                "failureMessage",
+                "messagesReceived",
+                "messagesPersisted",
+                "lastMessageAt",
+                "reconnectCount");
+        result["session"]!["messagesReceived"]!.GetValue<long>().Should().Be(120);
+        result["session"]!["messagesPersisted"]!.GetValue<long>().Should().Be(118);
+        result["session"]!["reconnectCount"]!.GetValue<long>().Should().Be(2);
     }
 
     private static string? GetTemplate<TAttribute>(Type controllerType, string methodName)

@@ -86,6 +86,28 @@ public sealed class DataCollectionDbContextModelTests
         foreignKey.DeleteBehavior.Should().Be(DeleteBehavior.Restrict);
     }
 
+    [Fact]
+    public void Model_ShouldMapCollectorSessionProgress()
+    {
+        var progress = _model.FindEntityType(typeof(CollectorSessionProgressRecord));
+
+        progress.Should().NotBeNull();
+        progress!.GetTableName().Should().Be("collector_session_progress");
+        progress.GetSchema().Should().Be("data_collection");
+        AssertConverter<CollectorSessionId, Guid>(
+            progress,
+            nameof(CollectorSessionProgressRecord.SessionId));
+        progress.FindProperty(nameof(CollectorSessionProgressRecord.MessagesReceived))!
+            .GetColumnType().Should().Be("bigint");
+        progress.FindProperty(nameof(CollectorSessionProgressRecord.MessagesPersisted))!
+            .GetColumnType().Should().Be("bigint");
+        progress.FindProperty(nameof(CollectorSessionProgressRecord.LastMessageAt))!
+            .GetColumnType().Should().Be("timestamp with time zone");
+        progress.FindProperty(nameof(CollectorSessionProgressRecord.ReconnectCount))!
+            .GetColumnType().Should().Be("bigint");
+        progress.GetForeignKeys().Single().DeleteBehavior.Should().Be(DeleteBehavior.Cascade);
+    }
+
     private static DataCollectionDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<DataCollectionDbContext>()

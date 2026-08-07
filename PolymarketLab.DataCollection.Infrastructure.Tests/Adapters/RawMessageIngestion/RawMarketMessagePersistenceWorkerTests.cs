@@ -337,6 +337,7 @@ public sealed class RawMarketMessagePersistenceWorkerTests
 
         public Task WriteBatchAsync(
             IReadOnlyCollection<RawMarketMessage> messages,
+            IReadOnlyCollection<CollectorSessionProgressCheckpoint> checkpoints,
             CancellationToken cancellationToken)
         {
             return _state.WriteAsync(messages, cancellationToken);

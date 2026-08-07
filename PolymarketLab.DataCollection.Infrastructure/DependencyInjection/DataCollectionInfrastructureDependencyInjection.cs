@@ -102,6 +102,9 @@ public static class DataCollectionInfrastructureDependencyInjection
         });
 
         services.AddScoped<ICollectorSessionRepository, CollectorSessionRepository>();
+        services.AddScoped<
+            ICollectorSessionProgressRepository,
+            CollectorSessionProgressRepository>();
         services.AddScoped<IMarketCollectionSource, MarketCollectionSource>();
         services.AddScoped<IRawMarketMessageWriter, RawMarketMessageWriter>();
         services.AddSingleton<ICollectorWebSocketFactory, ClientWebSocketFactory>();
@@ -114,6 +117,9 @@ public static class DataCollectionInfrastructureDependencyInjection
             serviceProvider.GetRequiredService<CollectorRuntime>());
         services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton<RawMarketMessageTelemetry>();
+        services.AddSingleton<
+            ICollectorSessionProgressCompletion,
+            CollectorSessionProgressCompletion>();
         services.AddSingleton<RawMarketMessageChannel>();
         services.AddSingleton<IRawMarketMessageSink>(serviceProvider =>
             serviceProvider.GetRequiredService<RawMarketMessageChannel>());

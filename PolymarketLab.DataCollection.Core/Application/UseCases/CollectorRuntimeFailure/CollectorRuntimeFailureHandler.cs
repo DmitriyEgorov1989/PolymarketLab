@@ -10,7 +10,8 @@ using CollectorRuntimeFailureNotification = PolymarketLab.DataCollection.Core.Po
 namespace PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
 
 public sealed class CollectorRuntimeFailureHandler(
-    ICollectorSessionRepository sessionRepository)
+    ICollectorSessionRepository sessionRepository,
+    ICollectorSessionProgressCompletion progressCompletion)
     : ICollectorRuntimeFailureHandler
 {
     private const int MaximumUpdateAttempts = 2;
@@ -19,6 +20,10 @@ public sealed class CollectorRuntimeFailureHandler(
         CollectorRuntimeFailureNotification failure,
         CancellationToken cancellationToken)
     {
+        var progressResult = await progressCompletion.CompleteAsync(
+            failure.SessionId,
+            cancellationToken);
+
         for (var attempt = 0; attempt < MaximumUpdateAttempts; attempt++)
         {
             var session = await sessionRepository.GetByIdAsync(
@@ -55,7 +60,7 @@ public sealed class CollectorRuntimeFailureHandler(
                 return UnitResult.Failure(updateResult.Error);
 
             if (updateResult.Value == CollectorSessionUpdateStatus.Updated)
-                return UnitResult.Success<Error>();
+                return progressResult;
         }
 
         return UnitResult.Failure(

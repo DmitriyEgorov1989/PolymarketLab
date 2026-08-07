@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
+using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.CollectorSession;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
@@ -15,6 +16,36 @@ public sealed class CollectorSessionRepositoryTests
 {
     private static readonly DateTimeOffset Now =
         new(2026, 7, 29, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task TryAddAsync_ShouldCreateDurableProgressRow()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var options = CreateOptions(databaseRoot);
+        var session = CreateSession();
+        await using (var context = new DataCollectionDbContext(options))
+        {
+            var repository = new CollectorSessionRepository(context);
+            await repository.TryAddAsync(session, CancellationToken.None);
+            var progressRepository = new CollectorSessionProgressRepository(context);
+            await progressRepository.CheckpointAsync(
+                new CollectorSessionProgressCheckpoint(
+                    session.Id,
+                    4,
+                    Now.AddSeconds(1),
+                    2),
+                CancellationToken.None);
+        }
+
+        await using var verificationContext = new DataCollectionDbContext(options);
+        var progress = await new CollectorSessionProgressRepository(verificationContext)
+            .GetAsync(session.Id, CancellationToken.None);
+
+        progress.MessagesReceived.Should().Be(4);
+        progress.MessagesPersisted.Should().Be(0);
+        progress.LastMessageAt.Should().Be(Now.AddSeconds(1));
+        progress.ReconnectCount.Should().Be(2);
+    }
 
     [Fact]
     public async Task TryUpdateAsync_WhenExpectedStatusChanged_ShouldReturnConflict()

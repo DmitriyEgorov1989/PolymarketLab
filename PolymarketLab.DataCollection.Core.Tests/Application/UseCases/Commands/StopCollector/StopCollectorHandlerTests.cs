@@ -117,6 +117,13 @@ public sealed class StopCollectorHandlerTests
     public async Task Handle_WithRunningSession_ShouldMarkStoppingStopRuntimeAndMarkStopped()
     {
         var fixture = new Fixture();
+        fixture.ProgressRepository.Progress = fixture.ProgressRepository.Progress with
+        {
+            MessagesReceived = 8,
+            MessagesPersisted = 8,
+            LastMessageAt = Now.AddSeconds(-1),
+            ReconnectCount = 1
+        };
         var session = CreateRunningSession(fixture.SessionId);
         fixture.Repository.Sessions.Enqueue(session);
         fixture.Repository.Sessions.Enqueue(CloneRunningSession(session, CollectorSessionStatus.Stopping));
@@ -133,6 +140,35 @@ public sealed class StopCollectorHandlerTests
         fixture.Repository.UpdateCalls[1].Status.Should().Be(CollectorSessionStatus.Stopped);
         fixture.Repository.UpdateCalls[1].ExpectedStatus.Should().Be(CollectorSessionStatus.Stopping);
         fixture.Repository.UpdateCalls[1].StopReason.Should().Be(CollectorStopReason.Requested);
+        fixture.ProgressCompletion.CallCount.Should().Be(1);
+        result.Value.Session.MessagesReceived.Should().Be(8);
+        result.Value.Session.MessagesPersisted.Should().Be(8);
+        result.Value.Session.LastMessageAt.Should().Be(Now.AddSeconds(-1));
+        result.Value.Session.ReconnectCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Handle_WhenProgressCompletionFails_ShouldMarkFailedAndNotMarkStopped()
+    {
+        var progressError = new Error(
+            "collector.progress.persistence_failed",
+            "Collector session progress could not be persisted.",
+            ErrorType.Failure);
+        var fixture = new Fixture();
+        fixture.ProgressCompletion.Result = UnitResult.Failure(progressError);
+        var session = CreateRunningSession(fixture.SessionId);
+        fixture.Repository.Sessions.Enqueue(session);
+        fixture.Repository.Sessions.Enqueue(
+            CloneRunningSession(session, CollectorSessionStatus.Stopping));
+
+        var result = await fixture.HandleAsync();
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Should().Be(progressError);
+        fixture.Repository.UpdateCalls.Should().HaveCount(2);
+        fixture.Repository.UpdateCalls[1].Status.Should().Be(CollectorSessionStatus.Failed);
+        fixture.Repository.UpdateCalls[1].StopReason.Should().Be(
+            CollectorStopReason.PersistenceFailure);
     }
 
     [Fact]
@@ -144,15 +180,21 @@ public sealed class StopCollectorHandlerTests
             ErrorType.Failure);
         var fixture = new Fixture();
         fixture.Runtime.StopResult = UnitResult.Failure(runtimeError);
-        fixture.Repository.Sessions.Enqueue(CreateRunningSession(fixture.SessionId));
+        var session = CreateRunningSession(fixture.SessionId);
+        fixture.Repository.Sessions.Enqueue(session);
+        fixture.Repository.Sessions.Enqueue(
+            CloneRunningSession(session, CollectorSessionStatus.Stopping));
 
         var result = await fixture.HandleAsync();
 
         result.IsFailure.Should().BeTrue();
         result.Error.Single().Should().Be(runtimeError);
         fixture.Runtime.StopCallCount.Should().Be(1);
-        fixture.Repository.UpdateCalls.Should().ContainSingle();
+        fixture.Repository.UpdateCalls.Should().HaveCount(2);
         fixture.Repository.UpdateCalls[0].Status.Should().Be(CollectorSessionStatus.Stopping);
+        fixture.Repository.UpdateCalls[1].Status.Should().Be(CollectorSessionStatus.Failed);
+        fixture.Repository.UpdateCalls[1].StopReason.Should().Be(
+            CollectorStopReason.FatalWebSocketError);
     }
 
     [Fact]
@@ -258,6 +300,8 @@ public sealed class StopCollectorHandlerTests
 
         public StubRepository Repository { get; } = new();
         public StubRuntime Runtime { get; } = new();
+        public StubProgressRepository ProgressRepository { get; } = new();
+        public StubProgressCompletion ProgressCompletion { get; } = new();
 
         public Task<Result<StopCollectorResponse, Error.ErrorList>> HandleAsync(
             Guid? sessionId = null)
@@ -265,12 +309,49 @@ public sealed class StopCollectorHandlerTests
             var handler = new StopCollectorHandler(
                 new StopCollectorValidator(),
                 Repository,
+                ProgressRepository,
+                ProgressCompletion,
                 Runtime,
                 new FixedTimeProvider(Now));
 
             return handler.Handle(
                 new StopCollectorCommand(sessionId ?? SessionId.Value),
                 CancellationToken.None);
+        }
+    }
+
+    private sealed class StubProgressRepository : ICollectorSessionProgressRepository
+    {
+        public CollectorSessionProgress Progress { get; set; } = new(
+            CollectorSessionId.Create(Guid.NewGuid()).Value,
+            0,
+            0,
+            null,
+            0);
+
+        public Task<CollectorSessionProgress> GetAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(Progress with { SessionId = sessionId });
+        }
+
+        public Task CheckpointAsync(
+            CollectorSessionProgressCheckpoint checkpoint,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class StubProgressCompletion : ICollectorSessionProgressCompletion
+    {
+        public UnitResult<Error> Result { get; set; } = UnitResult.Success<Error>();
+        public int CallCount { get; private set; }
+
+        public Task<UnitResult<Error>> CompleteAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromResult(Result);
         }
     }
 

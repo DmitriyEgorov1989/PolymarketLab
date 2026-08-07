@@ -6,5 +6,6 @@ public interface IRawMarketMessageWriter
 {
     Task WriteBatchAsync(
         IReadOnlyCollection<RawMarketMessage> messages,
+        IReadOnlyCollection<CollectorSessionProgressCheckpoint> checkpoints,
         CancellationToken cancellationToken);
 }

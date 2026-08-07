@@ -4,6 +4,7 @@ using Npgsql;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Models;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using CollectorSessionAggregate = PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.CollectorSession;
@@ -63,6 +64,8 @@ internal sealed class CollectorSessionRepository(DataCollectionDbContext dbConte
         CancellationToken cancellationToken)
     {
         dbContext.CollectorSessions.Add(session);
+        var progress = new CollectorSessionProgressRecord(session.Id);
+        dbContext.CollectorSessionProgress.Add(progress);
 
         try
         {
@@ -72,6 +75,7 @@ internal sealed class CollectorSessionRepository(DataCollectionDbContext dbConte
         catch (DbUpdateException exception) when (IsActiveMarketConflict(exception))
         {
             dbContext.Entry(session).State = EntityState.Detached;
+            dbContext.Entry(progress).State = EntityState.Detached;
             return CollectorSessionInsertStatus.ActiveSessionConflict;
         }
     }

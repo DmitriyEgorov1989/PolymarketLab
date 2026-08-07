@@ -22,8 +22,13 @@ public sealed class RawMarketMessageWriterTests
             new(sessionId, DateTimeOffset.Parse("2026-07-27T10:00:00Z"), firstPayload),
             new(sessionId, DateTimeOffset.Parse("2026-07-27T10:00:01Z"), "second"u8.ToArray())
         };
+        var checkpoint = new CollectorSessionProgressCheckpoint(
+            sessionId,
+            3,
+            DateTimeOffset.Parse("2026-07-27T10:00:02Z"),
+            1);
 
-        await writer.WriteBatchAsync(messages, CancellationToken.None);
+        await writer.WriteBatchAsync(messages, [checkpoint], CancellationToken.None);
         firstPayload[0] = (byte)'X';
 
         var records = await context.RawMarketMessages
@@ -38,6 +43,11 @@ public sealed class RawMarketMessageWriterTests
             .BeInAscendingOrder();
         records[0].Payload.Should().Equal("first"u8.ToArray());
         records[1].Payload.Should().Equal("second"u8.ToArray());
+        var progress = await context.CollectorSessionProgress.SingleAsync();
+        progress.MessagesReceived.Should().Be(3);
+        progress.MessagesPersisted.Should().Be(2);
+        progress.LastMessageAt.Should().Be(checkpoint.LastMessageAt);
+        progress.ReconnectCount.Should().Be(1);
     }
 
     [Fact]
@@ -46,7 +56,7 @@ public sealed class RawMarketMessageWriterTests
         await using var context = CreateContext();
         var writer = new RawMarketMessageWriter(context);
 
-        await writer.WriteBatchAsync([], CancellationToken.None);
+        await writer.WriteBatchAsync([], [], CancellationToken.None);
 
         context.ChangeTracker.Entries().Should().BeEmpty();
     }
@@ -65,6 +75,7 @@ public sealed class RawMarketMessageWriterTests
 
         Func<Task> write = () => writer.WriteBatchAsync(
             [message],
+            [],
             cancellationTokenSource.Token);
 
         await write.Should().ThrowAsync<OperationCanceledException>();

@@ -201,7 +201,12 @@ internal sealed class RawMarketMessagePersistenceWorker(
         await using var scope = scopeFactory.CreateAsyncScope();
         var writer = scope.ServiceProvider
             .GetRequiredService<IRawMarketMessageWriter>();
-        await writer.WriteBatchAsync(messages, cancellationToken);
+        var checkpoints = messages
+            .Select(message => message.SessionId)
+            .Distinct()
+            .Select(telemetry.GetCheckpoint)
+            .ToArray();
+        await writer.WriteBatchAsync(messages, checkpoints, cancellationToken);
         foreach (var sessionGroup in messages.GroupBy(message => message.SessionId))
         {
             var counters = telemetry.RecordPersisted(

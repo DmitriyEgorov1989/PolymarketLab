@@ -3,6 +3,7 @@ using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionById;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
@@ -26,7 +27,15 @@ public sealed class GetCollectorSessionByIdHandlerTests
             CollectorStopReason.FatalWebSocketError,
             "collector.runtime.receive.failed",
             "Receive failed.");
-        var handler = CreateHandler(new StubRepository(session));
+        var lastMessageAt = CreatedAt.AddSeconds(30);
+        var handler = CreateHandler(
+            new StubRepository(session),
+            new StubProgressRepository(new CollectorSessionProgress(
+                session.Id,
+                12,
+                10,
+                lastMessageAt,
+                2)));
 
         var result = await handler.Handle(
             new GetCollectorSessionByIdQuery(session.Id.Value),
@@ -42,7 +51,11 @@ public sealed class GetCollectorSessionByIdHandlerTests
             StartedAt = (DateTimeOffset?)CreatedAt.AddSeconds(1),
             StoppedAt = (DateTimeOffset?)CreatedAt.AddMinutes(1),
             FailureCode = "collector.runtime.receive.failed",
-            FailureMessage = "Receive failed."
+            FailureMessage = "Receive failed.",
+            MessagesReceived = 12L,
+            MessagesPersisted = 10L,
+            LastMessageAt = (DateTimeOffset?)lastMessageAt,
+            ReconnectCount = 2L
         });
     }
 
@@ -76,11 +89,14 @@ public sealed class GetCollectorSessionByIdHandlerTests
         repository.GetByIdCallCount.Should().Be(0);
     }
 
-    private static GetCollectorSessionByIdHandler CreateHandler(ICollectorSessionRepository repository)
+    private static GetCollectorSessionByIdHandler CreateHandler(
+        ICollectorSessionRepository repository,
+        ICollectorSessionProgressRepository? progressRepository = null)
     {
         return new GetCollectorSessionByIdHandler(
             new GetCollectorSessionByIdValidator(),
-            repository);
+            repository,
+            progressRepository ?? new StubProgressRepository());
     }
 
     private static CollectorSessionAggregate CreateSession()
@@ -123,6 +139,21 @@ public sealed class GetCollectorSessionByIdHandlerTests
         public Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
             CollectorSessionAggregate session,
             CollectorSessionStatus expectedStatus,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class StubProgressRepository(CollectorSessionProgress? progress = null)
+        : ICollectorSessionProgressRepository
+    {
+        public Task<CollectorSessionProgress> GetAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(progress ?? CollectorSessionProgress.Empty(sessionId));
+        }
+
+        public Task CheckpointAsync(
+            CollectorSessionProgressCheckpoint checkpoint,
             CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

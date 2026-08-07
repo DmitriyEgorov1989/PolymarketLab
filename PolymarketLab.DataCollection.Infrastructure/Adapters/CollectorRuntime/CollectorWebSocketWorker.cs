@@ -433,7 +433,8 @@ internal sealed class CollectorWebSocketWorker(
                     timeProvider.GetUtcNow(),
                     messageBuffer.WrittenSpan.ToArray());
                 var receivedCounters = telemetry.RecordReceivedComplete(
-                    request.SessionId);
+                    request.SessionId,
+                    message.ReceivedAt);
                 logger.LogDebug(
                     "Collector WebSocket {SessionId} received complete message. ReceivedComplete: {ReceivedCompleteCount}, Enqueued: {EnqueuedCount}, Persisted: {PersistedCount}.",
                     request.SessionId.Value,
