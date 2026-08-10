@@ -93,9 +93,22 @@ Interrupted
 
 ## GET /api/Market
 
-Возвращает зарегистрированные рынки, доступные по сохранённому временному окну,
-отсортированные backend по slug. Рынок включается, если `startsAt` отсутствует или
-уже наступил, а `endsAt` отсутствует или ещё не наступил.
+Возвращает все зарегистрированные рынки, отсортированные backend по slug.
+`startsAt` и `endsAt` являются внешними метаданными и не используются для
+фильтрации: Gamma может продолжать принимать orders после формального `endDate`.
+
+Опциональный query parameter `tradingNow=true` оставляет только рынки, для которых
+свежий ответ Gamma одновременно содержит `active: true`, `closed: false`,
+`acceptingOrders: true` и `enableOrderBook: true`. Проверка выполняется для каждого
+зарегистрированного рынка. Если доступность хотя бы одного рынка проверить не
+удалось, endpoint возвращает integration error и не выдаёт частичный или устаревший
+список за актуальный.
+
+Frontend использует:
+
+```http
+GET /api/Market?tradingNow=true
+```
 
 Успешный `result`:
 
@@ -105,7 +118,7 @@ Interrupted
 }
 ```
 
-Отсутствие доступных рынков является успешным состоянием и возвращает пустой массив.
+Отсутствие подходящих рынков является успешным состоянием и возвращает пустой массив.
 
 ## GET /api/Market/{marketId}
 
@@ -155,8 +168,8 @@ Request:
 того же рынка возвращает тот же `marketId`, `created: false` и HTTP `200`.
 
 Новый рынок регистрируется только при актуальной доступности в Gamma:
-`active: true`, `closed: false`, `acceptingOrders: true`, `enableOrderBook: true`
-и попадании текущего времени в его временное окно. Недоступный новый рынок
+`active: true`, `closed: false`, `acceptingOrders: true`, `enableOrderBook: true`.
+Недоступный новый рынок
 возвращает `409` с кодом `market.registration.unavailable`; выключенный order book
 сохраняет более точный код `market.registration.order_book_disabled`. Для уже
 зарегистрированного slug возвращается идемпотентный ответ без повторного запроса
@@ -183,9 +196,12 @@ Gamma.
 
 `startedAt`, `stoppedAt`, `failureCode`, `failureMessage` и `lastMessageAt` могут быть `null`.
 Для `Failed` backend возвращает сохранённые `failureCode` и `failureMessage`.
-`messagesReceived` считает полностью собранные text messages, а `messagesPersisted` —
-сообщения, подтверждённые PostgreSQL. Counters накопительные в пределах session.
-Reconnect пока не реализован, поэтому `reconnectCount` остаётся `0`.
+`messagesReceived` считает полностью собранные text messages, а не сделки. В него
+входят `price_change`, `book`, `best_bid_ask`, `last_trade_price` и другие типы
+Polymarket WebSocket events. При `custom_feature_enabled: true` принимаются также
+глобальные события, например `new_market`. `messagesPersisted` считает сообщения,
+подтверждённые PostgreSQL. Counters накопительные в пределах session. Reconnect пока
+не реализован, поэтому `reconnectCount` остаётся `0`.
 
 ## GET /api/Collector/{sessionId}
 
@@ -260,15 +276,19 @@ Backend возвращает фактический сохранённый statu
 
 Перед созданием новой session backend повторно запрашивает Gamma. Рынок доступен
 для сбора только при `active: true`, `closed: false`, `acceptingOrders: true`,
-`enableOrderBook: true` и попадании текущего времени в его временное окно.
+`enableOrderBook: true`. Внешние даты не переопределяют эти status flags.
 Недоступный рынок возвращает `409` с кодом `market.collection.unavailable`;
 ошибка Gamma возвращается без замены исходного кода и сообщения.
 
 Для новой session проверка выполняется до её создания и запуска runtime. Повторный
 Start при существующей активной session остаётся идемпотентным и возвращает эту
-session без запроса Gamma. Live-проверка является авторитетной даже если рынок ещё
-присутствует в `GET /api/Market`, поскольку список фильтруется только по
-сохранённому временному окну.
+session без запроса Gamma. Live-проверка является авторитетной, даже если закрытый
+рынок ещё присутствует в нефильтрованном `GET /api/Market`.
+
+Удалённое закрытие WebSocket переводит session в `Failed` с кодом
+`collector.runtime.receive.closed`, в том числе если Polymarket закрывает connection
+после завершения краткосрочного рынка. Автоматическое преобразование такого случая
+в `Stopped` не выполняется.
 
 ## POST /api/Collector/{sessionId}/stop
 

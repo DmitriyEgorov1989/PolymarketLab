@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '../api/apiError';
 import {
   getCollectorByMarketId,
   startCollector,
@@ -123,11 +124,27 @@ describe('CollectorDashboardPage market selection', () => {
       .toBe(true);
   });
 
+  it('hides the selected market when its live refresh fails', async () => {
+    const market = createMarket('market');
+    getMarketsMock.mockResolvedValueOnce({ markets: [market] });
+    const queryClient = renderPage();
+    await screen.findByRole('heading', { name: market.question });
+
+    getMarketsMock.mockRejectedValue(new ApiError('Gamma API is unavailable.', 500));
+    await act(() => queryClient.invalidateQueries({ queryKey: marketKeys.list() }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Gamma API is unavailable.');
+    await waitFor(() => expect(screen.getByText('Выберите рынок из списка.')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /Question market/ })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Start collector' }) as HTMLButtonElement).disabled)
+      .toBe(true);
+  });
+
   it('does not auto-select after an initially empty result', async () => {
     const market = createMarket('later');
     getMarketsMock.mockResolvedValueOnce({ markets: [] });
     const queryClient = renderPage();
-    await screen.findByText(/Зарегистрированных рынков пока нет/);
+    await screen.findByText(/нет зарегистрированных рынков с активными торгами/);
 
     getMarketsMock.mockResolvedValue({ markets: [market] });
     await act(() => queryClient.invalidateQueries({ queryKey: marketKeys.list() }));
@@ -137,7 +154,7 @@ describe('CollectorDashboardPage market selection', () => {
     expect(screen.getByText('Выберите рынок из списка.')).toBeTruthy();
   });
 
-  it('selects the market returned by registration', async () => {
+  it('adds a registered market to the live list without bypassing selection', async () => {
     const first = createMarket('first');
     const registered = createMarket('registered');
     getMarketsMock
@@ -151,11 +168,10 @@ describe('CollectorDashboardPage market selection', () => {
     fireEvent.change(input, { target: { value: 'https://polymarket.com/event/registered' } });
     fireEvent.submit(input.closest('form')!);
 
-    await waitFor(() => {
-      expect(screen.getByRole('heading', { name: registered.question })).toBeTruthy();
-    });
     const registeredButton = await screen.findByRole('button', { name: /Question registered/ });
-    expect(registeredButton.getAttribute('aria-pressed')).toBe('true');
+    expect(registeredButton.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: /Question first/ }).getAttribute('aria-pressed'))
+      .toBe('true');
   });
 
   it('loads outcomes and token ids for the selected market', async () => {

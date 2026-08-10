@@ -14,8 +14,6 @@ namespace PolymarketLab.Markets.Domain.Tests.Application.UseCases.Commands;
 public sealed class RegisterMarketHandlerTests
 {
     private const string MarketUrl = "https://polymarket.com/event/will-it-rain";
-    private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-08-10T12:00:00Z");
-
     [Fact]
     public async Task Handle_WithInvalidUrl_ShouldReturnParserErrorWithoutCallingGateway()
     {
@@ -229,7 +227,7 @@ public sealed class RegisterMarketHandlerTests
         IExternalMarketGateway gateway,
         IMarketRepository repository)
     {
-        return new RegisterMarketHandler(gateway, repository, new FixedTimeProvider(Now));
+        return new RegisterMarketHandler(gateway, repository);
     }
 
     private static ExternalMarket CreateExternalMarket()
@@ -291,11 +289,6 @@ public sealed class RegisterMarketHandlerTests
             LastCancellationToken = cancellationToken;
             return Task.FromResult(_result);
         }
-    }
-
-    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private sealed class InMemoryMarketRepository(params MarketAggregate[] markets) : IMarketRepository

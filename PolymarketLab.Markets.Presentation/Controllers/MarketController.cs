@@ -13,9 +13,10 @@ namespace PolymarketLab.Markets.Presentation.Controllers
     {
         [HttpGet]
         public async Task<ActionResult<GetMarketsResponse>> GetMarkets(
+            [FromQuery] bool tradingNow,
             CancellationToken cancellationToken)
         {
-            var response = await mediator.Send(new GetMarketsQuery(), cancellationToken);
+            var response = await mediator.Send(new GetMarketsQuery(tradingNow), cancellationToken);
 
             return response.ToResponseErrorOrResult();
         }

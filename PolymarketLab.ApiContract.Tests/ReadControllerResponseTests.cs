@@ -33,12 +33,15 @@ public sealed class ReadControllerResponseTests
             .Returns(Result.Success<GetMarketsResponse, ErrorList>(response));
         var controller = new MarketController(mediator);
 
-        var action = await controller.GetMarkets(CancellationToken.None);
+        var action = await controller.GetMarkets(true, CancellationToken.None);
 
         var envelope = AssertOkEnvelope(action);
         envelope.Result.Should().BeSameAs(response);
         envelope.ListErrors.Should().BeEmpty();
         ((GetMarketsResponse)envelope.Result!).Markets.Should().BeEmpty();
+        await mediator.Received(1).Send(
+            Arg.Is<GetMarketsQuery>(query => query.TradingNow),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]

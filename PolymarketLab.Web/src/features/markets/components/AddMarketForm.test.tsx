@@ -26,8 +26,7 @@ describe('AddMarketForm', () => {
   });
 
   it('rejects an empty value without calling backend', () => {
-    const onMarketRegistered = vi.fn();
-    renderForm(onMarketRegistered);
+    renderForm();
 
     fireEvent.click(screen.getByRole('button', { name: 'Добавить рынок' }));
 
@@ -35,11 +34,10 @@ describe('AddMarketForm', () => {
     expect(screen.getByRole('alert').textContent).toBe(MARKET_URI_REQUIRED_MESSAGE);
     expect(input.getAttribute('aria-invalid')).toBe('true');
     expect(registerMarketMock).not.toHaveBeenCalled();
-    expect(onMarketRegistered).not.toHaveBeenCalled();
   });
 
   it('rejects an invalid Polymarket URL and keeps the input', () => {
-    renderForm(vi.fn());
+    renderForm();
     const input = screen.getByLabelText('Polymarket URL') as HTMLInputElement;
 
     fireEvent.change(input, { target: { value: 'https://example.com/event/example' } });
@@ -53,8 +51,7 @@ describe('AddMarketForm', () => {
 
   it('trims the URL, selects a newly created market and clears the input', async () => {
     registerMarketMock.mockResolvedValue({ marketId: 'registered-id', created: true });
-    const onMarketRegistered = vi.fn();
-    renderForm(onMarketRegistered);
+    renderForm();
     const input = screen.getByLabelText('Polymarket URL') as HTMLInputElement;
 
     fireEvent.change(input, {
@@ -62,7 +59,7 @@ describe('AddMarketForm', () => {
     });
     fireEvent.submit(input.closest('form')!);
 
-    await waitFor(() => expect(onMarketRegistered).toHaveBeenCalledWith('registered-id'));
+    await waitFor(() => expect(input.value).toBe(''));
     expect(registerMarketMock).toHaveBeenCalledWith({
       marketUri: 'https://polymarket.com/event/example',
     });
@@ -72,15 +69,14 @@ describe('AddMarketForm', () => {
     );
   });
 
-  it('reports and selects an already registered market', async () => {
+  it('reports an already registered market without selecting it directly', async () => {
     registerMarketMock.mockResolvedValue({ marketId: 'existing-id', created: false });
-    const onMarketRegistered = vi.fn();
-    renderForm(onMarketRegistered);
+    renderForm();
     submitValue('https://polymarket.com/event/existing');
 
-    await waitFor(() => expect(onMarketRegistered).toHaveBeenCalledWith('existing-id'));
+    await screen.findByRole('status');
     expect(screen.getByRole('status').textContent).toBe(
-      'Рынок уже был зарегистрирован. Выбран существующий рынок. Market ID: existing-id',
+      'Рынок уже был зарегистрирован. Market ID: existing-id',
     );
   });
 
@@ -94,8 +90,7 @@ describe('AddMarketForm', () => {
         },
       ],
     }));
-    const onMarketRegistered = vi.fn();
-    renderForm(onMarketRegistered);
+    renderForm();
     const input = screen.getByLabelText('Polymarket URL') as HTMLInputElement;
     const rawValue = 'https://polymarket.com/event/example';
 
@@ -107,12 +102,11 @@ describe('AddMarketForm', () => {
     expect(input.value).toBe(rawValue);
     expect(input.getAttribute('aria-invalid')).toBe('true');
     expect(input.getAttribute('aria-describedby')).toBe(alert.id);
-    expect(onMarketRegistered).not.toHaveBeenCalled();
   });
 
   it('shows an operation error without marking the URL invalid', async () => {
     registerMarketMock.mockRejectedValue(new ApiError('Gamma API is unavailable.', 500));
-    renderForm(vi.fn());
+    renderForm();
     const input = screen.getByLabelText('Polymarket URL') as HTMLInputElement;
 
     submitValue('https://polymarket.com/event/example');
@@ -125,8 +119,7 @@ describe('AddMarketForm', () => {
   it('disables the form while pending and clears only after success', async () => {
     const registration = deferred<RegisterMarketResponse>();
     registerMarketMock.mockReturnValue(registration.promise);
-    const onMarketRegistered = vi.fn();
-    renderForm(onMarketRegistered);
+    renderForm();
     const input = screen.getByLabelText('Polymarket URL') as HTMLInputElement;
     const submit = screen.getByRole('button', { name: 'Добавить рынок' }) as HTMLButtonElement;
 
@@ -145,7 +138,6 @@ describe('AddMarketForm', () => {
 
     await waitFor(() => expect(input.value).toBe(''));
     expect(input.disabled).toBe(false);
-    expect(onMarketRegistered).toHaveBeenCalledWith('registered-id');
   });
 });
 
@@ -155,7 +147,7 @@ function submitValue(value: string): void {
   fireEvent.submit(input.closest('form')!);
 }
 
-function renderForm(onMarketRegistered: (marketId: string) => void) {
+function renderForm() {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -163,7 +155,7 @@ function renderForm(onMarketRegistered: (marketId: string) => void) {
     },
   });
 
-  return render(<AddMarketForm onMarketRegistered={onMarketRegistered} />, {
+  return render(<AddMarketForm />, {
     wrapper: function Wrapper({ children }: PropsWithChildren) {
       return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
     },

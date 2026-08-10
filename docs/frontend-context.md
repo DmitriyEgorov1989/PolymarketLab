@@ -35,7 +35,7 @@ Frontend не собирает данные Polymarket самостоятель�
 Пользователь должен иметь возможность:
 
 - добавить рынок по Polymarket URL;
-- увидеть зарегистрированные рынки, доступные по сохранённому временному окну;
+- увидеть зарегистрированные рынки, на которых сейчас доступны торги;
 - выбрать рынок;
 - увидеть вопрос, slug, даты, outcomes и token ids;
 - запустить CollectorSession;
@@ -105,7 +105,7 @@ Collector panel
 `docs/frontend-api-contract.md`. Фактические endpoints:
 
 ```http
-GET  /api/Market
+GET  /api/Market?tradingNow=true
 GET  /api/Market/{marketId}
 POST /api/Market
 GET  /api/Collector/{sessionId}
@@ -116,14 +116,19 @@ POST /api/Collector/{sessionId}/stop
 
 Все ответы используют `Envelope`. Collector session read API возвращает durable
 received/persisted counters, время последнего сообщения и reconnect count.
+`messagesReceived` означает число полных WebSocket text messages, а не число сделок;
+активные краткосрочные рынки могут генерировать сотни таких сообщений в секунду.
 
-`GET /api/Market` не выполняет запрос к Gamma для каждого элемента. Он исключает
-рынки вне сохранённого временного окна: `startsAt <= now < endsAt`; отсутствующая
-граница не ограничивает окно. Frontend обновляет список каждые 30 секунд.
+`GET /api/Market` без query parameters возвращает все зарегистрированные рынки.
+Frontend использует `GET /api/Market?tradingNow=true`: backend проверяет каждый
+рынок через Gamma и возвращает только рынки с активными торгами. При ошибке live-
+проверки frontend скрывает устаревший список. Список обновляется каждые 30 секунд.
+`startsAt` и `endsAt` остаются отображаемыми метаданными: Gamma status flags имеют
+приоритет, поскольку orders могут приниматься после формального `endDate`.
 
 Перед созданием collector session backend выполняет live-проверку Gamma. Сбор
 доступен только при `active`, отсутствии `closed`, включённых `acceptingOrders` и
-order book, а также попадании текущего времени во внешнее временное окно. Ошибка
+order book. Ошибка
 доступности возвращается как `409 market.collection.unavailable`, а integration
 errors Gamma сохраняют исходные код и сообщение.
 
@@ -192,7 +197,7 @@ export interface CollectorSessionDto {
 - Приложение запускается локально.
 - TypeScript strict mode включён.
 - Список рынков загружается.
-- Список рынков периодически обновляется и скрывает рынки вне временного окна.
+- Список зарегистрированных рынков с активными торгами периодически обновляется.
 - Loading/empty/error states реализованы.
 - Рынок регистрируется по URL.
 - Backend errors отображаются корректно.

@@ -14,6 +14,11 @@ export function CollectorDashboardPage() {
   const marketQuery = useMarketQuery(selectedMarketId);
 
   useEffect(() => {
+    if (marketsQuery.error !== null) {
+      setSelectedMarketId(null);
+      return;
+    }
+
     if (!marketsQuery.isSuccess) {
       return;
     }
@@ -34,7 +39,7 @@ export function CollectorDashboardPage() {
         ? current
         : null;
     });
-  }, [marketsQuery.data, marketsQuery.isSuccess]);
+  }, [marketsQuery.data, marketsQuery.error, marketsQuery.isSuccess]);
 
   function retryMarkets() {
     void marketsQuery.refetch();
@@ -57,7 +62,7 @@ export function CollectorDashboardPage() {
       <section className="workspace-grid" aria-label="Collector workspace">
         <article className="card add-market-card">
           <h2>Добавить рынок</h2>
-          <AddMarketForm onMarketRegistered={setSelectedMarketId} />
+          <AddMarketForm />
         </article>
 
         <article className="card market-list-card" aria-labelledby="market-list-title">

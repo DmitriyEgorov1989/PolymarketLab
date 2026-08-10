@@ -4,6 +4,7 @@ using PolymarketLab.Markets.Core.Application.UseCases.Queries.GetMarkets;
 using PolymarketLab.Markets.Core.Domain.Models.Market.MarketAggregate;
 using PolymarketLab.Markets.Core.Domain.Models.Market.ValueObjects;
 using PolymarketLab.Markets.Core.Ports;
+using PolymarketLab.Markets.Core.Ports.Dto;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using Xunit;
@@ -12,15 +13,13 @@ namespace PolymarketLab.Markets.Domain.Tests.Application.UseCases.Queries;
 
 public sealed class GetMarketsHandlerTests
 {
-    private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-08-01T11:00:00Z");
-
     [Fact]
     public async Task Handle_WithStoredMarkets_ShouldReturnMappedMarkets()
     {
         var first = CreateMarket("alpha-market", "market-111", "0x111", "Alpha question?");
         var second = CreateMarket("beta-market", "market-222", "0x222", "Beta question?");
         var repository = new InMemoryMarketRepository(first, second);
-        var handler = new GetMarketsHandler(repository, new FixedTimeProvider(Now));
+        var handler = CreateHandler(repository);
 
         var result = await handler.Handle(new GetMarketsQuery(), CancellationToken.None);
         var markets = result.Value.Markets.ToArray();
@@ -62,9 +61,7 @@ public sealed class GetMarketsHandlerTests
     [Fact]
     public async Task Handle_WithoutStoredMarkets_ShouldReturnEmptyCollection()
     {
-        var handler = new GetMarketsHandler(
-            new InMemoryMarketRepository(),
-            new FixedTimeProvider(Now));
+        var handler = CreateHandler(new InMemoryMarketRepository());
 
         var result = await handler.Handle(new GetMarketsQuery(), CancellationToken.None);
 
@@ -73,21 +70,96 @@ public sealed class GetMarketsHandlerTests
     }
 
     [Fact]
-    public async Task Handle_ShouldHideMarketsOutsideCollectionWindow()
+    public async Task Handle_ShouldReturnMarketsRegardlessOfExternalDates()
     {
+        var now = DateTimeOffset.Parse("2026-08-01T11:00:00Z");
         var future = CreateMarket("future", "market-future", "0xfuture", "Future?",
-            startsAt: Now.AddMinutes(1), endsAt: Now.AddHours(1));
+            startsAt: now.AddMinutes(1), endsAt: now.AddHours(1));
         var ended = CreateMarket("ended", "market-ended", "0xended", "Ended?",
-            startsAt: Now.AddHours(-1), endsAt: Now);
+            startsAt: now.AddHours(-1), endsAt: now);
         var openEnded = CreateMarket("open", "market-open", "0xopen", "Open?",
             hasCollectionWindow: false);
-        var handler = new GetMarketsHandler(
-            new InMemoryMarketRepository(future, ended, openEnded),
-            new FixedTimeProvider(Now));
+        var handler = CreateHandler(new InMemoryMarketRepository(
+            future,
+            ended,
+            openEnded));
 
         var result = await handler.Handle(new GetMarketsQuery(), CancellationToken.None);
 
-        result.Value.Markets.Select(market => market.Slug).Should().Equal("open");
+        result.Value.Markets.Select(market => market.Slug)
+            .Should()
+            .Equal("future", "ended", "open");
+    }
+
+    [Fact]
+    public async Task Handle_TradingNow_ShouldReturnOnlyAvailableMarkets()
+    {
+        var available = CreateMarket("available", "market-available", "0xavailable", "Available?");
+        var closed = CreateMarket("closed", "market-closed", "0xclosed", "Closed?");
+        var notAcceptingOrders = CreateMarket(
+            "not-accepting",
+            "market-not-accepting",
+            "0xnot-accepting",
+            "Not accepting?");
+        var gateway = new StubExternalMarketGateway(new Dictionary<string, ExternalMarket>
+        {
+            ["available"] = CreateExternalMarket("available"),
+            ["closed"] = CreateExternalMarket("closed") with { Closed = true },
+            ["not-accepting"] = CreateExternalMarket("not-accepting") with
+            {
+                AcceptingOrders = false
+            }
+        });
+        var handler = new GetMarketsHandler(
+            new InMemoryMarketRepository(available, closed, notAcceptingOrders),
+            gateway);
+
+        var result = await handler.Handle(new GetMarketsQuery(true), CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Markets.Select(market => market.Slug).Should().Equal("available");
+        gateway.RequestedSlugs.Should().Equal("available", "closed", "not-accepting");
+    }
+
+    [Fact]
+    public async Task Handle_TradingNow_WhenGammaFails_ShouldReturnFailure()
+    {
+        var market = CreateMarket("market", "market-id", "0xmarket", "Market?");
+        var error = new Error(
+            "gamma.market.request_failed",
+            "Gamma request failed.",
+            ErrorType.Failure);
+        var handler = new GetMarketsHandler(
+            new InMemoryMarketRepository(market),
+            new StubExternalMarketGateway(error));
+
+        var result = await handler.Handle(new GetMarketsQuery(true), CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().ContainSingle().Which.Should().Be(error);
+    }
+
+    private static GetMarketsHandler CreateHandler(IMarketRepository repository)
+    {
+        return new GetMarketsHandler(
+            repository,
+            new StubExternalMarketGateway(new Dictionary<string, ExternalMarket>()));
+    }
+
+    private static ExternalMarket CreateExternalMarket(string slug)
+    {
+        return new ExternalMarket(
+            $"external-{slug}",
+            slug,
+            $"Question {slug}?",
+            $"condition-{slug}",
+            null,
+            null,
+            true,
+            false,
+            true,
+            true,
+            []);
     }
 
     private static Market CreateMarket(
@@ -116,11 +188,6 @@ public sealed class GetMarketsHandlerTests
         market.AddToken(TokenId.Create($"{slug}-no").Value, "No", 1);
 
         return market;
-    }
-
-    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private sealed class InMemoryMarketRepository(params Market[] markets) : IMarketRepository
@@ -160,6 +227,36 @@ public sealed class GetMarketsHandlerTests
         {
             _markets.Add(market);
             return Task.FromResult<Result<MarketInsertStatus, Error>>(MarketInsertStatus.Inserted);
+        }
+    }
+
+    private sealed class StubExternalMarketGateway : IExternalMarketGateway
+    {
+        private readonly IReadOnlyDictionary<string, ExternalMarket>? _markets;
+        private readonly Error? _error;
+
+        public StubExternalMarketGateway(IReadOnlyDictionary<string, ExternalMarket> markets)
+        {
+            _markets = markets;
+        }
+
+        public StubExternalMarketGateway(Error error)
+        {
+            _error = error;
+        }
+
+        public List<string> RequestedSlugs { get; } = [];
+
+        public Task<Result<ExternalMarket, Error>> GetBySlugAsync(
+            MarketSlug slug,
+            CancellationToken cancellationToken)
+        {
+            RequestedSlugs.Add(slug.Value);
+
+            Result<ExternalMarket, Error> result = _error is not null
+                ? _error
+                : _markets![slug.Value];
+            return Task.FromResult(result);
         }
     }
 }

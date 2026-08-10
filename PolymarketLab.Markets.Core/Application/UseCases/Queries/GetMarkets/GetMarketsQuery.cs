@@ -4,5 +4,5 @@ using ErrorList = PolymarketLab.SharedKernel.Errors.Error.ErrorList;
 
 namespace PolymarketLab.Markets.Core.Application.UseCases.Queries.GetMarkets;
 
-public sealed record GetMarketsQuery()
+public sealed record GetMarketsQuery(bool TradingNow = false)
     : IRequest<Result<GetMarketsResponse, ErrorList>>;

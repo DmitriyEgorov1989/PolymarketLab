@@ -14,8 +14,7 @@ namespace PolymarketLab.Markets.Core.Application.UseCases.Commands
 {
     public sealed class RegisterMarketHandler(
         IExternalMarketGateway externalMarketGateway,
-        IMarketRepository marketRepository,
-        TimeProvider timeProvider)
+        IMarketRepository marketRepository)
         : IRequestHandler<RegisterMarketCommand, Result<RegisterMarketResponse, ErrorList>>
     {
         public async Task<Result<RegisterMarketResponse, ErrorList>> Handle(
@@ -62,7 +61,7 @@ namespace PolymarketLab.Markets.Core.Application.UseCases.Commands
             if (!externalMarket.OrderBookEnabled)
                 return Failure(MarketRegistrationErrors.OrderBookDisabled);
 
-            if (!MarketAvailability.IsAvailable(externalMarket, timeProvider.GetUtcNow()))
+            if (!MarketAvailability.IsAvailable(externalMarket))
                 return Failure(MarketRegistrationErrors.Unavailable);
 
             if (externalMarket.Tokens is null || externalMarket.Tokens.Count == 0)

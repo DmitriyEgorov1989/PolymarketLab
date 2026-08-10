@@ -16,7 +16,7 @@ describe('MarketList', () => {
   it('renders empty state', () => {
     renderList({ markets: [] });
 
-    expect(screen.getByText(/Зарегистрированных рынков пока нет/)).toBeTruthy();
+    expect(screen.getByText(/нет зарегистрированных рынков с активными торгами/)).toBeTruthy();
   });
 
   it('renders backend error and retries', () => {
@@ -51,7 +51,7 @@ describe('MarketList', () => {
     expect(onSelectMarket).toHaveBeenCalledWith(second.marketId);
   });
 
-  it('keeps stale markets visible during a background refetch error', () => {
+  it('hides stale markets after a background live-check error', () => {
     const market = createMarket('first', 'First question?');
     renderList({
       markets: [market],
@@ -59,7 +59,7 @@ describe('MarketList', () => {
       error: new ApiError('Refresh failed.', 500),
     });
 
-    expect(screen.getByRole('button', { name: /First question/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /First question/ })).toBeNull();
     expect(screen.getByRole('alert').textContent).toContain('Refresh failed.');
   });
 });

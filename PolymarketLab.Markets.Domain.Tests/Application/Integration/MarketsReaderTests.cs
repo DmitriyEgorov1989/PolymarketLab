@@ -88,26 +88,22 @@ public sealed class MarketsReaderTests
         result.Error.Type.Should().Be(ErrorType.Conflict);
     }
 
-    [Theory]
-    [InlineData(-1, 0)]
-    [InlineData(1, 2)]
-    public async Task GetForCollectionAsync_OutsideCollectionWindow_ShouldReturnConflict(
-        int startsInMinutes,
-        int endsInMinutes)
+    [Fact]
+    public async Task GetForCollectionAsync_WithPastExternalEndDate_ShouldReturnContract()
     {
         var market = CreateMarket();
         var gateway = new StubExternalMarketGateway(CreateExternalMarket() with
         {
-            StartsAt = Now.AddMinutes(startsInMinutes),
-            EndsAt = Now.AddMinutes(endsInMinutes)
+            StartsAt = Now.AddDays(-2),
+            EndsAt = Now.AddDays(-1)
         });
         using var provider = CreateProvider(new StubMarketRepository(market), gateway);
         var reader = provider.GetRequiredService<IMarketsReader>();
 
         var result = await reader.GetForCollectionAsync(market.Id, CancellationToken.None);
 
-        result.IsFailure.Should().BeTrue();
-        result.Error.Code.Should().Be("market.collection.unavailable");
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().NotBeNull();
     }
 
     [Fact]
@@ -134,7 +130,6 @@ public sealed class MarketsReaderTests
         services.AddMarketsApplication();
         services.AddSingleton(repository);
         services.AddSingleton(gateway);
-        services.AddSingleton<TimeProvider>(new FixedTimeProvider(Now));
         return services.BuildServiceProvider();
     }
 
@@ -224,8 +219,4 @@ public sealed class MarketsReaderTests
         }
     }
 
-    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => now;
-    }
 }

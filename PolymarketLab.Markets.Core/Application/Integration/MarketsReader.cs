@@ -9,8 +9,7 @@ namespace PolymarketLab.Markets.Core.Application.Integration;
 
 internal sealed class MarketsReader(
     IMarketRepository repository,
-    IExternalMarketGateway externalMarketGateway,
-    TimeProvider timeProvider) : IMarketsReader
+    IExternalMarketGateway externalMarketGateway) : IMarketsReader
 {
     public async Task<Result<MarketForCollection?, Error>> GetForCollectionAsync(
         MarketId marketId,
@@ -27,9 +26,7 @@ internal sealed class MarketsReader(
         if (externalMarketResult.IsFailure)
             return externalMarketResult.Error;
 
-        if (!MarketAvailability.IsAvailable(
-            externalMarketResult.Value,
-            timeProvider.GetUtcNow()))
+        if (!MarketAvailability.IsAvailable(externalMarketResult.Value))
         {
             return MarketCollectionErrors.Unavailable(market.Id.Value);
         }

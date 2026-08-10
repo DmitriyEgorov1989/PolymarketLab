@@ -26,11 +26,7 @@ function getBackendMarketUriError(error: ApiError | null): string | null {
     || error.message;
 }
 
-interface AddMarketFormProps {
-  onMarketRegistered: (marketId: string) => void;
-}
-
-export function AddMarketForm({ onMarketRegistered }: AddMarketFormProps) {
+export function AddMarketForm() {
   const inputId = useId();
   const errorId = useId();
   const successId = useId();
@@ -46,7 +42,7 @@ export function AddMarketForm({ onMarketRegistered }: AddMarketFormProps) {
   const statusMessage = mutation.isSuccess
     ? mutation.data.created
       ? `Рынок добавлен. Market ID: ${mutation.data.marketId}`
-      : `Рынок уже был зарегистрирован. Выбран существующий рынок. Market ID: ${mutation.data.marketId}`
+      : `Рынок уже был зарегистрирован. Market ID: ${mutation.data.marketId}`
     : null;
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -64,8 +60,7 @@ export function AddMarketForm({ onMarketRegistered }: AddMarketFormProps) {
     mutation.mutate(
       { marketUri: validationResult.marketUri },
       {
-        onSuccess: (result) => {
-          onMarketRegistered(result.marketId);
+        onSuccess: () => {
           setMarketUri('');
         },
       },

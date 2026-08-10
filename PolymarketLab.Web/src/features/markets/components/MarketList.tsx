@@ -26,10 +26,10 @@ export function MarketList({
     return <p role="status">Загружаем рынки...</p>;
   }
 
-  if (markets === undefined) {
+  if (error !== null || markets === undefined) {
     return (
       <div className="market-list-state" role="alert">
-        <p>{error?.message ?? 'Не удалось загрузить рынки.'}</p>
+        <p>{error?.message ?? 'Не удалось проверить доступность рынков.'}</p>
         <button className="secondary-button" type="button" onClick={onRetry} disabled={isFetching}>
           {isFetching ? 'Повторяем...' : 'Повторить'}
         </button>
@@ -39,21 +39,14 @@ export function MarketList({
 
   return (
     <div className="market-list-content">
-      {error !== null ? (
-        <div className="market-list-warning" role="alert">
-          <span>{error.message}</span>
-          <button className="secondary-button" type="button" onClick={onRetry} disabled={isFetching}>
-            Повторить
-          </button>
-        </div>
-      ) : isFetching ? (
+      {isFetching ? (
         <p className="market-list-refresh" role="status">Обновляем список...</p>
       ) : null}
 
       {markets.length === 0 ? (
-        <p>Зарегистрированных рынков пока нет. Добавьте рынок по ссылке выше.</p>
+        <p>Сейчас нет зарегистрированных рынков с активными торгами.</p>
       ) : (
-        <ul className="market-list" aria-label="Зарегистрированные рынки">
+        <ul className="market-list" aria-label="Рынки с активными торгами">
           {markets.map((market) => (
             <MarketListItem
               key={market.marketId}
