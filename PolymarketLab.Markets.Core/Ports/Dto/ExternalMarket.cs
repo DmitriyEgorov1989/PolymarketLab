@@ -9,6 +9,7 @@
         DateTimeOffset? EndsAt,
         bool Active,
         bool Closed,
+        bool AcceptingOrders,
         bool OrderBookEnabled,
         IReadOnlyCollection<ExternalMarketToken> Tokens);
 

@@ -237,6 +237,10 @@ function createSession(): CollectorSessionResponse {
     stoppedAt: null,
     failureCode: null,
     failureMessage: null,
+    messagesReceived: 10,
+    messagesPersisted: 8,
+    lastMessageAt: '2026-08-06T12:00:05Z',
+    reconnectCount: 0,
   };
 }
 

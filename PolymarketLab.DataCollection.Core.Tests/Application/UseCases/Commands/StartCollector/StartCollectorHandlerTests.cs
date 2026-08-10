@@ -42,6 +42,23 @@ public sealed class StartCollectorHandlerTests
         fixture.Runtime.StartCallCount.Should().Be(0);
     }
 
+    [Fact]
+    public async Task Handle_WhenMarketCheckFails_ShouldReturnErrorWithoutCreatingSession()
+    {
+        var error = new Error(
+            "market.collection.unavailable",
+            "Market is unavailable.",
+            ErrorType.Conflict);
+        var fixture = new Fixture { MarketError = error };
+
+        var result = await fixture.HandleAsync();
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Should().Be(error);
+        fixture.Repository.TryAddCallCount.Should().Be(0);
+        fixture.Runtime.StartCallCount.Should().Be(0);
+    }
+
     [Theory]
     [InlineData(InvalidTokens.TooFew, "collector.start.tokens.insufficient")]
     [InlineData(InvalidTokens.EmptyOutcome, "collector.start.token.outcome.required")]
@@ -73,6 +90,7 @@ public sealed class StartCollectorHandlerTests
         result.IsSuccess.Should().BeTrue();
         result.Value.SessionId.Should().Be(activeSession.Id.Value);
         result.Value.Status.Should().Be("Starting");
+        fixture.MarketSource.CallCount.Should().Be(0);
         fixture.Repository.TryAddCallCount.Should().Be(0);
         fixture.Runtime.StartCallCount.Should().Be(0);
     }
@@ -282,7 +300,7 @@ public sealed class StartCollectorHandlerTests
 
         public Fixture()
         {
-            MarketSource = new StubMarketSource(() => _market);
+            MarketSource = new StubMarketSource(() => _market, () => MarketError);
             Handler = new StartCollectorHandler(
                 new StartCollectorValidator(),
                 MarketSource,
@@ -295,6 +313,7 @@ public sealed class StartCollectorHandlerTests
         public StubMarketSource MarketSource { get; }
         public StubCollectorSessionRepository Repository { get; } = new();
         public StubCollectorRuntime Runtime { get; } = new();
+        public Error? MarketError { get; init; }
 
         public CollectionMarket? Market
         {
@@ -315,18 +334,25 @@ public sealed class StartCollectorHandlerTests
         }
     }
 
-    private sealed class StubMarketSource(Func<CollectionMarket?> marketFactory)
+    private sealed class StubMarketSource(
+        Func<CollectionMarket?> marketFactory,
+        Func<Error?> errorFactory)
         : IMarketCollectionSource
     {
         public int CallCount { get; private set; }
 
-        public Task<CollectionMarket?> GetByIdAsync(
+        public Task<Result<CollectionMarket?, Error>> GetByIdAsync(
             MarketId marketId,
             CancellationToken cancellationToken)
         {
             CallCount++;
+            var error = errorFactory();
+            if (error is not null)
+                return Task.FromResult(Result.Failure<CollectionMarket?, Error>(error));
+
             var market = marketFactory();
-            return Task.FromResult(market?.MarketId.Equals(marketId) == true ? market : null);
+            return Task.FromResult<Result<CollectionMarket?, Error>>(
+                market?.MarketId.Equals(marketId) == true ? market : null);
         }
     }
 

@@ -77,6 +77,7 @@
 }
 
 .collector-session-heading h3,
+.collector-metrics h3,
 .collector-failure h3 {
   margin: 0;
   font-size: 1rem;
@@ -117,6 +118,7 @@
 }
 
 .collector-session-grid,
+.collector-metrics-grid,
 .collector-failure dl {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -125,6 +127,7 @@
 }
 
 .collector-session-grid > div,
+.collector-metrics-grid > div,
 .collector-failure dl > div {
   display: grid;
   min-width: 0;
@@ -136,18 +139,57 @@
 }
 
 .collector-session-grid dt,
+.collector-metrics-grid dt,
 .collector-failure dt {
   color: #94a3b8;
   font-size: 0.78rem;
 }
 
 .collector-session-grid dd,
+.collector-metrics-grid dd,
 .collector-failure dd {
   min-width: 0;
   margin: 0;
   color: #e2e8f0;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.collector-metrics {
+  display: grid;
+  gap: 12px;
+}
+
+.collector-metrics-grid {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.collector-metrics-grid .collector-metric-unpersisted {
+  border-color: rgba(251, 191, 36, 0.5);
+  background: rgba(146, 64, 14, 0.2);
+}
+
+.collector-metric-unpersisted dd,
+.collector-persistence-warning {
+  color: #fde68a;
+}
+
+.collector-persistence-warning,
+.collector-persistence-success {
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 0.88rem;
+}
+
+.collector-persistence-warning {
+  border: 1px solid rgba(251, 191, 36, 0.34);
+  background: rgba(146, 64, 14, 0.15);
+}
+
+.collector-persistence-success {
+  border: 1px solid rgba(74, 222, 128, 0.34);
+  color: #bbf7d0;
+  background: rgba(21, 128, 61, 0.15);
 }
 
 .collector-failure {
@@ -172,6 +214,7 @@
 
 @media (max-width: 600px) {
   .collector-session-grid,
+  .collector-metrics-grid,
   .collector-failure dl {
     grid-template-columns: 1fr;
   }

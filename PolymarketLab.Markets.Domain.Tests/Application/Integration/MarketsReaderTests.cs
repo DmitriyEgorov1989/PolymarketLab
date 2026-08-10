@@ -6,6 +6,7 @@ using PolymarketLab.Markets.Core.Application.DependencyInjection;
 using PolymarketLab.Markets.Core.Domain.Models.Market.MarketAggregate;
 using PolymarketLab.Markets.Core.Domain.Models.Market.ValueObjects;
 using PolymarketLab.Markets.Core.Ports;
+using PolymarketLab.Markets.Core.Ports.Dto;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using Xunit;
@@ -14,20 +15,24 @@ namespace PolymarketLab.Markets.Domain.Tests.Application.Integration;
 
 public sealed class MarketsReaderTests
 {
+    private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-08-10T12:00:00Z");
+
     [Fact]
     public async Task GetForCollectionAsync_WithStoredMarket_ShouldReturnContract()
     {
         var market = CreateMarket();
         var repository = new StubMarketRepository(market);
-        using var provider = CreateProvider(repository);
+        var gateway = new StubExternalMarketGateway(CreateExternalMarket());
+        using var provider = CreateProvider(repository, gateway);
         var reader = provider.GetRequiredService<IMarketsReader>();
 
         var result = await reader.GetForCollectionAsync(market.Id, CancellationToken.None);
 
-        result.Should().NotBeNull();
-        result!.MarketId.Should().Be(market.Id);
-        result.Slug.Should().Be("will-it-rain");
-        result.Tokens.Should().BeEquivalentTo(
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().NotBeNull();
+        result.Value!.MarketId.Should().Be(market.Id);
+        result.Value.Slug.Should().Be("will-it-rain");
+        result.Value.Tokens.Should().BeEquivalentTo(
         [
             new MarketTokenForCollection(TokenId.Create("token-yes").Value, "Yes", 0),
             new MarketTokenForCollection(TokenId.Create("token-no").Value, "No", 1)
@@ -38,7 +43,8 @@ public sealed class MarketsReaderTests
     public async Task GetForCollectionAsync_WithMissingMarket_ShouldReturnNullAndForwardCancellation()
     {
         var repository = new StubMarketRepository(null);
-        using var provider = CreateProvider(repository);
+        var gateway = new StubExternalMarketGateway(CreateExternalMarket());
+        using var provider = CreateProvider(repository, gateway);
         var reader = provider.GetRequiredService<IMarketsReader>();
         using var cancellationTokenSource = new CancellationTokenSource();
 
@@ -46,16 +52,109 @@ public sealed class MarketsReaderTests
             MarketId.Create(Guid.NewGuid()).Value,
             cancellationTokenSource.Token);
 
-        result.Should().BeNull();
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().BeNull();
         repository.LastCancellationToken.Should().Be(cancellationTokenSource.Token);
+        gateway.CallCount.Should().Be(0);
     }
 
-    private static ServiceProvider CreateProvider(IMarketRepository repository)
+    [Theory]
+    [InlineData(false, false, true, true)]
+    [InlineData(true, true, true, true)]
+    [InlineData(true, false, false, true)]
+    [InlineData(true, false, true, false)]
+    public async Task GetForCollectionAsync_WithUnavailableMarket_ShouldReturnConflict(
+        bool active,
+        bool closed,
+        bool acceptingOrders,
+        bool orderBookEnabled)
+    {
+        var market = CreateMarket();
+        var gateway = new StubExternalMarketGateway(
+            CreateExternalMarket() with
+            {
+                Active = active,
+                Closed = closed,
+                AcceptingOrders = acceptingOrders,
+                OrderBookEnabled = orderBookEnabled
+            });
+        using var provider = CreateProvider(new StubMarketRepository(market), gateway);
+        var reader = provider.GetRequiredService<IMarketsReader>();
+
+        var result = await reader.GetForCollectionAsync(market.Id, CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be("market.collection.unavailable");
+        result.Error.Type.Should().Be(ErrorType.Conflict);
+    }
+
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(1, 2)]
+    public async Task GetForCollectionAsync_OutsideCollectionWindow_ShouldReturnConflict(
+        int startsInMinutes,
+        int endsInMinutes)
+    {
+        var market = CreateMarket();
+        var gateway = new StubExternalMarketGateway(CreateExternalMarket() with
+        {
+            StartsAt = Now.AddMinutes(startsInMinutes),
+            EndsAt = Now.AddMinutes(endsInMinutes)
+        });
+        using var provider = CreateProvider(new StubMarketRepository(market), gateway);
+        var reader = provider.GetRequiredService<IMarketsReader>();
+
+        var result = await reader.GetForCollectionAsync(market.Id, CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be("market.collection.unavailable");
+    }
+
+    [Fact]
+    public async Task GetForCollectionAsync_WhenGammaFails_ShouldPreserveError()
+    {
+        var market = CreateMarket();
+        var error = new Error("gamma.market.timeout", "Gamma timed out.", ErrorType.Failure);
+        using var provider = CreateProvider(
+            new StubMarketRepository(market),
+            new StubExternalMarketGateway(error));
+        var reader = provider.GetRequiredService<IMarketsReader>();
+
+        var result = await reader.GetForCollectionAsync(market.Id, CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Be(error);
+    }
+
+    private static ServiceProvider CreateProvider(
+        IMarketRepository repository,
+        IExternalMarketGateway gateway)
     {
         var services = new ServiceCollection();
         services.AddMarketsApplication();
         services.AddSingleton(repository);
+        services.AddSingleton(gateway);
+        services.AddSingleton<TimeProvider>(new FixedTimeProvider(Now));
         return services.BuildServiceProvider();
+    }
+
+    private static ExternalMarket CreateExternalMarket()
+    {
+        return new ExternalMarket(
+            "market-123",
+            "will-it-rain",
+            "Will it rain?",
+            "0xcondition",
+            null,
+            null,
+            true,
+            false,
+            true,
+            true,
+            [
+                new ExternalMarketToken("Yes", "token-yes", 0),
+                new ExternalMarketToken("No", "token-no", 1)
+            ]);
     }
 
     private static Market CreateMarket()
@@ -105,5 +204,28 @@ public sealed class MarketsReaderTests
         public Task<Result<MarketInsertStatus, Error>> TryAddAsync(
             Market market,
             CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class StubExternalMarketGateway : IExternalMarketGateway
+    {
+        private readonly Result<ExternalMarket, Error> _result;
+
+        public StubExternalMarketGateway(ExternalMarket market) => _result = market;
+        public StubExternalMarketGateway(Error error) => _result = error;
+
+        public int CallCount { get; private set; }
+
+        public Task<Result<ExternalMarket, Error>> GetBySlugAsync(
+            MarketSlug slug,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromResult(_result);
+        }
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 }

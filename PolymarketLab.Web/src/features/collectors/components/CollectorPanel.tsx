@@ -6,6 +6,7 @@ import { useStopCollector } from '../hooks/useStopCollector';
 import { isActiveCollectorStatus } from '../model/collectorStatus';
 import { CollectorControls } from './CollectorControls';
 import { CollectorFailure } from './CollectorFailure';
+import { CollectorMetrics } from './CollectorMetrics';
 import { CollectorStatusBadge } from './CollectorStatusBadge';
 import './CollectorPanel.css';
 
@@ -153,6 +154,7 @@ export function CollectorPanel({ marketId }: CollectorPanelProps) {
                   <dd>{formatLocalDate(session.stoppedAt)}</dd>
                 </div>
               </dl>
+              <CollectorMetrics session={session} />
               {session.status === 'Failed'
                 || session.failureCode !== null
                 || session.failureMessage !== null ? (

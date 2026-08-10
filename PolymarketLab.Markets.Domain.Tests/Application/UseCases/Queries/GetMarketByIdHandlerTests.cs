@@ -21,9 +21,21 @@ public sealed class GetMarketByIdHandlerTests
         var result = await handler.Handle(new GetMarketByIdQuery(market.Id.Value), CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Market.MarketId.Should().Be(market.Id.Value);
-        result.Value.Market.Question.Should().Be("Will it rain?");
-        result.Value.Market.Tokens.Should().HaveCount(2);
+        result.Value.Market.Should().BeEquivalentTo(new
+        {
+            MarketId = market.Id.Value,
+            ExternalMarketId = "market-123",
+            Slug = "will-it-rain",
+            ConditionId = "0xcondition",
+            Question = "Will it rain?",
+            StartsAt = (DateTimeOffset?)DateTimeOffset.Parse("2026-08-01T10:00:00Z"),
+            EndsAt = (DateTimeOffset?)DateTimeOffset.Parse("2026-08-01T12:00:00Z")
+        });
+        result.Value.Market.Tokens.Should().BeEquivalentTo(
+        [
+            new { TokenId = "token-yes", Outcome = "Yes", OutcomeIndex = 0 },
+            new { TokenId = "token-no", Outcome = "No", OutcomeIndex = 1 }
+        ], options => options.WithStrictOrdering());
     }
 
     [Fact]

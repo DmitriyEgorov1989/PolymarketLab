@@ -13,8 +13,14 @@ describe('collector status', () => {
     },
   );
 
-  it('preserves known statuses and protects unknown values', () => {
-    expect(getCollectorStatusLabel('Running')).toBe('Running');
+  it.each(['Starting', 'Running', 'Stopping', 'Stopped', 'Failed', 'Interrupted'])(
+    'preserves the %s backend status',
+    (status) => {
+      expect(getCollectorStatusLabel(status)).toBe(status);
+    },
+  );
+
+  it('protects unknown status values', () => {
     expect(getCollectorStatusLabel('Unexpected')).toBe('Unknown');
   });
 });

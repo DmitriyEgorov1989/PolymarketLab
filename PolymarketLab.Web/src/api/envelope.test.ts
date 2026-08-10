@@ -29,7 +29,22 @@ describe('isEnvelope', () => {
     expect(isEnvelope({ result: {}, listErrors: [] })).toBe(false);
     expect(isEnvelope({
       result: {},
+      listErrors: 'not-an-array',
+      createdUtc: '2026-08-06T12:00:00Z',
+    })).toBe(false);
+    expect(isEnvelope({
+      result: {},
+      listErrors: [],
+      createdUtc: 1,
+    })).toBe(false);
+    expect(isEnvelope({
+      result: {},
       listErrors: [{ errorCode: 'error' }],
+      createdUtc: '2026-08-06T12:00:00Z',
+    })).toBe(false);
+    expect(isEnvelope({
+      result: null,
+      listErrors: [{ errorCode: 1, errorMessage: null, invalidField: null }],
       createdUtc: '2026-08-06T12:00:00Z',
     })).toBe(false);
   });
@@ -46,5 +61,12 @@ describe('getResponseErrorMessage', () => {
     ], 'Fallback.')).toBe('error.code');
 
     expect(getResponseErrorMessage([], 'Fallback.')).toBe('Fallback.');
+  });
+
+  it('uses the first non-empty message across backend errors', () => {
+    expect(getResponseErrorMessage([
+      { errorCode: null, errorMessage: ' ', invalidField: null },
+      { errorCode: 'second.code', errorMessage: 'Second message.', invalidField: null },
+    ], 'Fallback.')).toBe('Second message.');
   });
 });

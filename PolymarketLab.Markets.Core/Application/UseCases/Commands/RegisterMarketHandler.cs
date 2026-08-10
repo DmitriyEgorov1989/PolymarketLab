@@ -2,6 +2,7 @@
 using MediatR;
 using PolymarketLab.Markets.Core.Application.Errors;
 using PolymarketLab.Markets.Core.Application.Extensions;
+using PolymarketLab.Markets.Core.Application.Integration;
 using PolymarketLab.Markets.Core.Domain.Models.Market.ValueObjects;
 using PolymarketLab.Markets.Core.Ports;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
@@ -13,7 +14,8 @@ namespace PolymarketLab.Markets.Core.Application.UseCases.Commands
 {
     public sealed class RegisterMarketHandler(
         IExternalMarketGateway externalMarketGateway,
-        IMarketRepository marketRepository)
+        IMarketRepository marketRepository,
+        TimeProvider timeProvider)
         : IRequestHandler<RegisterMarketCommand, Result<RegisterMarketResponse, ErrorList>>
     {
         public async Task<Result<RegisterMarketResponse, ErrorList>> Handle(
@@ -59,6 +61,9 @@ namespace PolymarketLab.Markets.Core.Application.UseCases.Commands
 
             if (!externalMarket.OrderBookEnabled)
                 return Failure(MarketRegistrationErrors.OrderBookDisabled);
+
+            if (!MarketAvailability.IsAvailable(externalMarket, timeProvider.GetUtcNow()))
+                return Failure(MarketRegistrationErrors.Unavailable);
 
             if (externalMarket.Tokens is null || externalMarket.Tokens.Count == 0)
                 return Failure(MarketRegistrationErrors.TokensRequired);

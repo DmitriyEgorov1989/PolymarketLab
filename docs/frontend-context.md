@@ -35,7 +35,7 @@ Frontend не собирает данные Polymarket самостоятель�
 Пользователь должен иметь возможность:
 
 - добавить рынок по Polymarket URL;
-- увидеть зарегистрированные рынки;
+- увидеть зарегистрированные рынки, доступные по сохранённому временному окну;
 - выбрать рынок;
 - увидеть вопрос, slug, даты, outcomes и token ids;
 - запустить CollectorSession;
@@ -117,6 +117,22 @@ POST /api/Collector/{sessionId}/stop
 Все ответы используют `Envelope`. Collector session read API возвращает durable
 received/persisted counters, время последнего сообщения и reconnect count.
 
+`GET /api/Market` не выполняет запрос к Gamma для каждого элемента. Он исключает
+рынки вне сохранённого временного окна: `startsAt <= now < endsAt`; отсутствующая
+граница не ограничивает окно. Frontend обновляет список каждые 30 секунд.
+
+Перед созданием collector session backend выполняет live-проверку Gamma. Сбор
+доступен только при `active`, отсутствии `closed`, включённых `acceptingOrders` и
+order book, а также попадании текущего времени во внешнее временное окно. Ошибка
+доступности возвращается как `409 market.collection.unavailable`, а integration
+errors Gamma сохраняют исходные код и сообщение.
+
+При прямом обращении браузера к API допустимые origins задаются массивом
+`Cors:AllowedOrigins`. В Development разрешён `http://localhost:5173`.
+Для production список передаётся конфигурацией, например
+`Cors__AllowedOrigins__0=https://app.example.com`. Credentials не включены.
+Локальный Vite proxy `/api` продолжает работать без CORS.
+
 ## Минимальные frontend-модели
 
 Модели должны соответствовать реальным backend DTO. Ниже - целевая форма для проектирования, а не разрешение выдумывать контракт.
@@ -176,6 +192,7 @@ export interface CollectorSessionDto {
 - Приложение запускается локально.
 - TypeScript strict mode включён.
 - Список рынков загружается.
+- Список рынков периодически обновляется и скрывает рынки вне временного окна.
 - Loading/empty/error states реализованы.
 - Рынок регистрируется по URL.
 - Backend errors отображаются корректно.
@@ -183,6 +200,7 @@ export interface CollectorSessionDto {
 - Рынок можно выбрать.
 - Детали и token ids отображаются.
 - CollectorSession запускается.
+- Перед запуском CollectorSession backend проверяет актуальную доступность рынка.
 - Вторая активная сессия не запускается из UI.
 - Статусы отображаются без искажения смысла.
 - Polling работает для активной session.

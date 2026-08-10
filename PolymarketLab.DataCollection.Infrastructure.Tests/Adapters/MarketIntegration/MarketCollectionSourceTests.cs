@@ -1,3 +1,4 @@
+using CSharpFunctionalExtensions;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -5,6 +6,7 @@ using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Infrastructure.DependencyInjection;
 using PolymarketLab.Markets.Contracts;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
+using PolymarketLab.SharedKernel.Errors;
 using Xunit;
 
 namespace PolymarketLab.DataCollection.Infrastructure.Tests.Adapters.MarketIntegration;
@@ -28,19 +30,20 @@ public sealed class MarketCollectionSourceTests
 
         var result = await source.GetByIdAsync(marketId, CancellationToken.None);
 
-        result.Should().NotBeNull();
-        result!.MarketId.Should().Be(marketId);
-        result.Slug.Should().Be("will-it-rain");
-        result.Tokens.Should().ContainSingle();
-        result.Tokens.Single().TokenId.Should().Be(tokenId);
-        result.Tokens.Single().Outcome.Should().Be("Yes");
-        result.Tokens.Single().OutcomeIndex.Should().Be(0);
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().NotBeNull();
+        result.Value!.MarketId.Should().Be(marketId);
+        result.Value.Slug.Should().Be("will-it-rain");
+        result.Value.Tokens.Should().ContainSingle();
+        result.Value.Tokens.Single().TokenId.Should().Be(tokenId);
+        result.Value.Tokens.Single().Outcome.Should().Be("Yes");
+        result.Value.Tokens.Single().OutcomeIndex.Should().Be(0);
     }
 
     [Fact]
     public async Task GetByIdAsync_WithMissingMarket_ShouldReturnNullAndForwardCancellation()
     {
-        var reader = new StubMarketsReader(null);
+        var reader = new StubMarketsReader((MarketForCollection?)null);
         using var provider = CreateProvider(reader);
         var source = provider.GetRequiredService<IMarketCollectionSource>();
         using var cancellationTokenSource = new CancellationTokenSource();
@@ -49,8 +52,25 @@ public sealed class MarketCollectionSourceTests
             MarketId.Create(Guid.NewGuid()).Value,
             cancellationTokenSource.Token);
 
-        result.Should().BeNull();
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().BeNull();
         reader.LastCancellationToken.Should().Be(cancellationTokenSource.Token);
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_WhenMarketsReaderFails_ShouldPreserveError()
+    {
+        var error = new Error("gamma.market.timeout", "Gamma timed out.", ErrorType.Failure);
+        var reader = new StubMarketsReader(error);
+        using var provider = CreateProvider(reader);
+        var source = provider.GetRequiredService<IMarketCollectionSource>();
+
+        var result = await source.GetByIdAsync(
+            MarketId.Create(Guid.NewGuid()).Value,
+            CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Be(error);
     }
 
     private static ServiceProvider CreateProvider(IMarketsReader reader)
@@ -67,16 +87,26 @@ public sealed class MarketCollectionSourceTests
         return services.BuildServiceProvider();
     }
 
-    private sealed class StubMarketsReader(MarketForCollection? market) : IMarketsReader
+    private sealed class StubMarketsReader : IMarketsReader
     {
+        private readonly Result<MarketForCollection?, Error> _result;
+
+        public StubMarketsReader(MarketForCollection? market) => _result = market;
+        public StubMarketsReader(Error error) => _result = error;
+
         public CancellationToken LastCancellationToken { get; private set; }
 
-        public Task<MarketForCollection?> GetForCollectionAsync(
+        public Task<Result<MarketForCollection?, Error>> GetForCollectionAsync(
             MarketId marketId,
             CancellationToken cancellationToken)
         {
             LastCancellationToken = cancellationToken;
-            return Task.FromResult(market?.MarketId.Equals(marketId) == true ? market : null);
+            if (_result.IsFailure)
+                return Task.FromResult(_result);
+
+            var market = _result.Value;
+            return Task.FromResult<Result<MarketForCollection?, Error>>(
+                market?.MarketId.Equals(marketId) == true ? market : null);
         }
     }
 }

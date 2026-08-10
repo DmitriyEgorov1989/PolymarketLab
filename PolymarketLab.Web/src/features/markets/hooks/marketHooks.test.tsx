@@ -78,6 +78,32 @@ describe('market hooks', () => {
     expect(result.current.error).toBe(apiError);
   });
 
+  it('refreshes the market list every 30 seconds', async () => {
+    vi.useFakeTimers();
+    getMarketsMock.mockResolvedValue({ markets: [] });
+    const queryClient = createQueryClient();
+
+    try {
+      const { unmount } = renderHook(() => useMarketsQuery(), {
+        wrapper: createWrapper(queryClient),
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(getMarketsMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(getMarketsMock).toHaveBeenCalledTimes(2);
+      unmount();
+    } finally {
+      queryClient.clear();
+      vi.useRealTimers();
+    }
+  });
+
   it('does not fetch market details without an id', () => {
     const queryClient = createQueryClient();
 

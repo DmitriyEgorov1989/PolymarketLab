@@ -100,5 +100,9 @@ function createSession(status: CollectorSession['status']): CollectorSession {
     stoppedAt: null,
     failureCode: null,
     failureMessage: null,
+    messagesReceived: 0,
+    messagesPersisted: 0,
+    lastMessageAt: null,
+    reconnectCount: 0,
   };
 }

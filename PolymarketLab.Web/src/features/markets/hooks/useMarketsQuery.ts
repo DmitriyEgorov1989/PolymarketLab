@@ -9,5 +9,6 @@ export function useMarketsQuery() {
     queryKey: marketKeys.list(),
     queryFn: ({ signal }) => getMarkets(signal),
     select: (response) => response.markets,
+    refetchInterval: 30_000,
   });
 }

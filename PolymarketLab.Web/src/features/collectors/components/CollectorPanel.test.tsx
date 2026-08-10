@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getCollectorById,
   getCollectorByMarketId,
@@ -12,6 +12,7 @@ import {
   type CollectorSessionResponse,
 } from '../../../api/collectorsApi';
 import { ApiError } from '../../../api/apiError';
+import { ACTIVE_COLLECTOR_POLL_INTERVAL_MS } from '../model/collectorStatus';
 import { CollectorPanel } from './CollectorPanel';
 
 vi.mock('../../../api/collectorsApi', async (importOriginal) => {
@@ -34,6 +35,10 @@ const stopCollectorMock = vi.mocked(stopCollector);
 describe('CollectorPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('starts a collector for a market without sessions', async () => {
@@ -73,6 +78,58 @@ describe('CollectorPanel', () => {
       expect(stopCollectorMock).toHaveBeenCalledWith(session.sessionId);
     });
     expect(await screen.findByText('Stopped')).toBeTruthy();
+    expect(getCollectorByIdMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('updates counters while polling an active session', async () => {
+    vi.useFakeTimers();
+    const running = createSession('Running');
+    const updated = {
+      ...running,
+      messagesReceived: 125,
+      messagesPersisted: 124,
+    };
+    getCollectorByMarketIdMock.mockResolvedValue({ session: running });
+    getCollectorByIdMock
+      .mockResolvedValueOnce({ session: running })
+      .mockResolvedValue({ session: updated });
+    renderPanel(running.marketId);
+
+    await vi.waitFor(() => expect(getCollectorByIdMock).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('120')).toBeTruthy();
+    expect(screen.getByText('118')).toBeTruthy();
+
+    await act(() => vi.advanceTimersByTimeAsync(ACTIVE_COLLECTOR_POLL_INTERVAL_MS));
+
+    await vi.waitFor(() => expect(getCollectorByIdMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('125')).toBeTruthy();
+    expect(screen.getByText('124')).toBeTruthy();
+  });
+
+  it('polls Stopping until terminal status and then stops polling', async () => {
+    vi.useFakeTimers();
+    const stopping = createSession('Stopping');
+    const stopped = {
+      ...stopping,
+      status: 'Stopped' as const,
+      stoppedAt: '2026-08-06T12:10:00Z',
+      messagesPersisted: stopping.messagesReceived,
+    };
+    getCollectorByMarketIdMock.mockResolvedValue({ session: stopping });
+    getCollectorByIdMock
+      .mockResolvedValueOnce({ session: stopping })
+      .mockResolvedValue({ session: stopped });
+    renderPanel(stopping.marketId);
+
+    await vi.waitFor(() => expect(screen.getByText('Stopping')).toBeTruthy());
+    expect(getCollectorByIdMock).toHaveBeenCalledTimes(1);
+
+    await act(() => vi.advanceTimersByTimeAsync(ACTIVE_COLLECTOR_POLL_INTERVAL_MS));
+
+    await vi.waitFor(() => expect(screen.getByText('Stopped')).toBeTruthy());
+    expect(getCollectorByIdMock).toHaveBeenCalledTimes(2);
+
+    await act(() => vi.advanceTimersByTimeAsync(ACTIVE_COLLECTOR_POLL_INTERVAL_MS * 2));
     expect(getCollectorByIdMock).toHaveBeenCalledTimes(2);
   });
 
@@ -177,5 +234,9 @@ function createSession(status: CollectorSessionResponse['status']): CollectorSes
     stoppedAt: null,
     failureCode: null,
     failureMessage: null,
+    messagesReceived: 120,
+    messagesPersisted: 118,
+    lastMessageAt: '2026-08-06T12:09:59Z',
+    reconnectCount: 0,
   };
 }

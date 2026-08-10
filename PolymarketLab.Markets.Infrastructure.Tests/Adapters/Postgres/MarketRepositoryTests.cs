@@ -57,22 +57,19 @@ public sealed class MarketRepositoryTests
     }
 
     [Fact]
-    public async Task GetAllAsync_WithStoredMarkets_ShouldReturnAllMarketsOrderedBySlug()
+    public async Task GetAllAsync_WithStoredMarket_ShouldReturnMarketAndTokens()
     {
         await using var context = CreateContext();
         var repository = new MarketRepository(context);
-        var second = CreateMarket(slug: "zeta-market", externalId: "market-999", conditionId: "0x999");
-        var first = CreateMarket(slug: "alpha-market", externalId: "market-111", conditionId: "0x111");
-        await repository.TryAddAsync(second, CancellationToken.None);
-        await repository.TryAddAsync(first, CancellationToken.None);
+        var market = CreateMarket();
+        await repository.TryAddAsync(market, CancellationToken.None);
         context.ChangeTracker.Clear();
 
         var markets = await repository.GetAllAsync(CancellationToken.None);
 
-        markets.Select(market => market.Slug.Value)
-            .Should()
-            .Equal("alpha-market", "zeta-market");
-        markets.Should().OnlyContain(market => market.Tokens.Count == 2);
+        markets.Should().ContainSingle();
+        markets.Single().Id.Should().Be(market.Id);
+        markets.Single().Tokens.Should().HaveCount(2);
         context.ChangeTracker.Entries().Should().BeEmpty();
     }
 

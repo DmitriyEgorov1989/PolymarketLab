@@ -82,6 +82,9 @@ namespace PolymarketLab.Markets.Infrastructure.Adapters.GammaMarket
                 if (gammaMarket.Closed is null)
                     return GammaMarketErrors.RequiredField("closed");
 
+                if (gammaMarket.AcceptingOrders is null)
+                    return GammaMarketErrors.RequiredField("acceptingOrders");
+
                 if (gammaMarket.EnableOrderBook is null)
                     return GammaMarketErrors.RequiredField("enableOrderBook");
 
@@ -90,9 +93,6 @@ namespace PolymarketLab.Markets.Infrastructure.Adapters.GammaMarket
 
                 if (string.IsNullOrWhiteSpace(gammaMarket.ClobTokenIds))
                     return GammaMarketErrors.RequiredField("clobTokenIds");
-
-                if (!gammaMarket.EnableOrderBook.Value)
-                    return GammaMarketErrors.OrderBookDisabled;
 
                 string?[]? outcomes;
                 string?[]? tokenIds;
@@ -133,6 +133,7 @@ namespace PolymarketLab.Markets.Infrastructure.Adapters.GammaMarket
                     gammaMarket.EndDate,
                     gammaMarket.Active.Value,
                     gammaMarket.Closed.Value,
+                    gammaMarket.AcceptingOrders.Value,
                     gammaMarket.EnableOrderBook.Value,
                     tokens);
             }
@@ -147,6 +148,7 @@ namespace PolymarketLab.Markets.Infrastructure.Adapters.GammaMarket
             [property: JsonPropertyName("endDate")] DateTimeOffset? EndDate,
             [property: JsonPropertyName("active")] bool? Active,
             [property: JsonPropertyName("closed")] bool? Closed,
+            [property: JsonPropertyName("acceptingOrders")] bool? AcceptingOrders,
             [property: JsonPropertyName("enableOrderBook")] bool? EnableOrderBook,
             [property: JsonPropertyName("outcomes")] string? Outcomes,
             [property: JsonPropertyName("clobTokenIds")] string? ClobTokenIds);
@@ -195,10 +197,6 @@ namespace PolymarketLab.Markets.Infrastructure.Adapters.GammaMarket
                 ErrorType.ValueIsRequired,
                 $"clobTokenIds[{index}]");
 
-            public static Error OrderBookDisabled => new(
-                "gamma.market.order_book.disabled",
-                "The Gamma market order book is disabled.",
-                ErrorType.Conflict);
         }
     }
 }

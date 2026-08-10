@@ -41,6 +41,7 @@ public sealed class GammaMarketClientTests
             true,
             false,
             true,
+            true,
             [
                 new ExternalMarketToken("Yes", "token-yes", 0),
                 new ExternalMarketToken("No", "token-no", 1)
@@ -168,16 +169,28 @@ public sealed class GammaMarketClientTests
     }
 
     [Fact]
-    public async Task GetBySlugAsync_WithDisabledOrderBook_ShouldReturnDisabledError()
+    public async Task GetBySlugAsync_WithDisabledOrderBook_ShouldMapExternalState()
     {
         var client = CreateClient((_, _) =>
             Task.FromResult(JsonResponse(CreatePayload(enableOrderBook: false))));
 
         var result = await client.GetBySlugAsync(Slug, CancellationToken.None);
 
+        result.IsSuccess.Should().BeTrue();
+        result.Value.OrderBookEnabled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetBySlugAsync_WithoutAcceptingOrders_ShouldReturnRequiredFieldError()
+    {
+        var client = CreateClient((_, _) => Task.FromResult(JsonResponse(
+            CreatePayload(includeAcceptingOrders: false))));
+
+        var result = await client.GetBySlugAsync(Slug, CancellationToken.None);
+
         result.IsFailure.Should().BeTrue();
-        result.Error.Code.Should().Be("gamma.market.order_book.disabled");
-        result.Error.Type.Should().Be(ErrorType.Conflict);
+        result.Error.Code.Should().Be("gamma.market.field.required");
+        result.Error.InvalidField.Should().Be("acceptingOrders");
     }
 
     private static GammaMarketClient CreateClient(
@@ -198,7 +211,8 @@ public sealed class GammaMarketClientTests
         bool enableOrderBook = true,
         string outcomes = "[\"Yes\", \"No\"]",
         string tokenIds = "[\"token-yes\", \"token-no\"]",
-        bool includeQuestion = true)
+        bool includeQuestion = true,
+        bool includeAcceptingOrders = true)
     {
         var payload = new Dictionary<string, object?>
         {
@@ -216,6 +230,9 @@ public sealed class GammaMarketClientTests
 
         if (includeQuestion)
             payload["question"] = "Will it rain?";
+
+        if (includeAcceptingOrders)
+            payload["acceptingOrders"] = true;
 
         return JsonSerializer.Serialize(payload);
     }

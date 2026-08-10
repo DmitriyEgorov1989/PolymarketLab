@@ -35,20 +35,23 @@ public sealed class StartCollectorHandler(
             return Failure(marketIdResult.Error);
 
         var marketId = marketIdResult.Value;
-        var market = await marketSource.GetByIdAsync(marketId, cancellationToken);
+        var activeSession = await sessionRepository.GetActiveByMarketIdAsync(
+            marketId,
+            cancellationToken);
+        if (activeSession is not null)
+            return Existing(activeSession);
+
+        var marketResult = await marketSource.GetByIdAsync(marketId, cancellationToken);
+        if (marketResult.IsFailure)
+            return Failure(marketResult.Error);
+
+        var market = marketResult.Value;
         if (market is null)
             return Failure(StartCollectorErrors.MarketNotFound(command.MarketId));
 
         var tokenError = ValidateTokens(market);
         if (tokenError is not null)
             return Failure(tokenError);
-
-        var activeSession =
-            await sessionRepository.GetActiveByMarketIdAsync(
-               marketId,
-               cancellationToken);
-        if (activeSession is not null)
-            return Existing(activeSession);
 
         var sessionIdResult =
             CollectorSessionId.Create(Guid.NewGuid());

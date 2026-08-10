@@ -59,6 +59,20 @@ public sealed class MarketsDbContextModelTests
         navigation.ForeignKey.DeleteBehavior.Should().Be(DeleteBehavior.Cascade);
     }
 
+    [Fact]
+    public void MarketListQuery_ShouldTranslateSlugOrderingForNpgsql()
+    {
+        using var context = CreateContext();
+
+        var sql = context.Markets
+            .AsNoTracking()
+            .Include(market => market.Tokens)
+            .OrderBy(market => market.Slug)
+            .ToQueryString();
+
+        sql.Should().Contain("ORDER BY m.slug");
+    }
+
     private static MarketsDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<MarketsDbContext>()

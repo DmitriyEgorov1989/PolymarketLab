@@ -14,6 +14,11 @@ internal static class MarketRegistrationErrors
         "The market order book is disabled.",
         ErrorType.Conflict);
 
+    public static Error Unavailable => new(
+        "market.registration.unavailable",
+        "The market is not currently available for collection.",
+        ErrorType.Conflict);
+
     public static Error TokensRequired => new(
         "market.registration.tokens_required",
         "The market must contain at least one token.",

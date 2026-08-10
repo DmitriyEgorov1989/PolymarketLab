@@ -27,6 +27,10 @@ export interface CollectorSessionResponse {
   stoppedAt: string | null;
   failureCode: string | null;
   failureMessage: string | null;
+  messagesReceived: number;
+  messagesPersisted: number;
+  lastMessageAt: string | null;
+  reconnectCount: number;
 }
 
 export interface StopCollectorResponse {

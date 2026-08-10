@@ -14,6 +14,7 @@ namespace PolymarketLab.Markets.Domain.Tests.Application.UseCases.Commands;
 public sealed class RegisterMarketHandlerTests
 {
     private const string MarketUrl = "https://polymarket.com/event/will-it-rain";
+    private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-08-10T12:00:00Z");
 
     [Fact]
     public async Task Handle_WithInvalidUrl_ShouldReturnParserErrorWithoutCallingGateway()
@@ -101,6 +102,20 @@ public sealed class RegisterMarketHandlerTests
 
         result.IsFailure.Should().BeTrue();
         result.Error.Single().Code.Should().Be("market.registration.order_book_disabled");
+    }
+
+    [Fact]
+    public async Task Handle_WithUnavailableMarket_ShouldReturnConflict()
+    {
+        var externalMarket = CreateExternalMarket() with { AcceptingOrders = false };
+        var repository = new InMemoryMarketRepository();
+        var handler = CreateHandler(new StubExternalMarketGateway(externalMarket), repository);
+
+        var result = await handler.Handle(new RegisterMarketCommand(MarketUrl), CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Code.Should().Be("market.registration.unavailable");
+        repository.TryAddCallCount.Should().Be(0);
     }
 
     [Fact]
@@ -214,7 +229,7 @@ public sealed class RegisterMarketHandlerTests
         IExternalMarketGateway gateway,
         IMarketRepository repository)
     {
-        return new RegisterMarketHandler(gateway, repository);
+        return new RegisterMarketHandler(gateway, repository, new FixedTimeProvider(Now));
     }
 
     private static ExternalMarket CreateExternalMarket()
@@ -228,6 +243,7 @@ public sealed class RegisterMarketHandlerTests
             null,
             true,
             false,
+            true,
             true,
             [
                 new ExternalMarketToken("Yes", "token-yes", 0),
@@ -275,6 +291,11 @@ public sealed class RegisterMarketHandlerTests
             LastCancellationToken = cancellationToken;
             return Task.FromResult(_result);
         }
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private sealed class InMemoryMarketRepository(params MarketAggregate[] markets) : IMarketRepository

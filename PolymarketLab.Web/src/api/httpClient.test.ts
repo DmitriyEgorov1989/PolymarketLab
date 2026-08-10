@@ -31,6 +31,51 @@ describe('request', () => {
     }));
   });
 
+  it('rejects a successful response when the envelope contains backend errors', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({
+      result: null,
+      listErrors: [
+        {
+          errorCode: 'market.query.not_found',
+          errorMessage: 'Market was not found.',
+          invalidField: 'marketId',
+        },
+      ],
+      createdUtc: '2026-08-06T12:00:00Z',
+    }));
+
+    const error = await captureApiError(request({ method: 'GET', path: '/api/Market/id' }));
+
+    expect(error.message).toBe('Market was not found.');
+    expect(error.status).toBe(200);
+    expect(error.errors).toHaveLength(1);
+  });
+
+  it('rejects a successful envelope without a result payload', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({
+      result: null,
+      listErrors: [],
+      createdUtc: '2026-08-06T12:00:00Z',
+    }));
+
+    const error = await captureApiError(request({ method: 'GET', path: '/api/Market' }));
+
+    expect(error.message).toBe('Request succeeded without result payload.');
+    expect(error.status).toBe(200);
+  });
+
+  it('rejects a successful response with an invalid envelope', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({
+      result: { markets: [] },
+      listErrors: [],
+    }));
+
+    const error = await captureApiError(request({ method: 'GET', path: '/api/Market' }));
+
+    expect(error.message).toBe('Request succeeded with invalid response envelope.');
+    expect(error.status).toBe(200);
+  });
+
   it('extracts Problem Details detail and validation errors', async () => {
     fetchMock.mockResolvedValue(jsonResponse({
       title: 'Validation failed',

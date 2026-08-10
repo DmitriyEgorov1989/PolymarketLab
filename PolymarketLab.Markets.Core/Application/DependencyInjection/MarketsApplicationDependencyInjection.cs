@@ -1,5 +1,6 @@
 using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using PolymarketLab.Markets.Contracts;
 using PolymarketLab.Markets.Core.Application.Integration;
 
@@ -14,6 +15,7 @@ public static class MarketsApplicationDependencyInjection
         services.AddMediatR(configuration => configuration.RegisterServicesFromAssembly(assembly));
         services.AddValidatorsFromAssembly(assembly);
         services.AddScoped<IMarketsReader, MarketsReader>();
+        services.TryAddSingleton(TimeProvider.System);
 
         return services;
     }

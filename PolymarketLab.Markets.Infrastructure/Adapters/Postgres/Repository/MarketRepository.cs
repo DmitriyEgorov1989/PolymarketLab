@@ -16,7 +16,7 @@ internal sealed class MarketRepository(MarketsDbContext dbContext) : IMarketRepo
         CancellationToken cancellationToken)
     {
         return await QueryMarkets()
-            .OrderBy(market => market.Slug.Value)
+            .OrderBy(market => market.Slug)
             .ToArrayAsync(cancellationToken);
     }
 

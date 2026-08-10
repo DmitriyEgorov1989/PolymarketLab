@@ -14,13 +14,26 @@ export function CollectorDashboardPage() {
   const marketQuery = useMarketQuery(selectedMarketId);
 
   useEffect(() => {
-    if (!marketsQuery.isSuccess || didResolveInitialMarkets.current) {
+    if (!marketsQuery.isSuccess) {
       return;
     }
 
-    didResolveInitialMarkets.current = true;
-    const firstMarketId = marketsQuery.data[0]?.marketId ?? null;
-    setSelectedMarketId((current) => current ?? firstMarketId);
+    if (!didResolveInitialMarkets.current) {
+      didResolveInitialMarkets.current = true;
+      const firstMarketId = marketsQuery.data[0]?.marketId ?? null;
+      setSelectedMarketId((current) => current ?? firstMarketId);
+      return;
+    }
+
+    setSelectedMarketId((current) => {
+      if (current === null) {
+        return null;
+      }
+
+      return marketsQuery.data.some((market) => market.marketId === current)
+        ? current
+        : null;
+    });
   }, [marketsQuery.data, marketsQuery.isSuccess]);
 
   function retryMarkets() {

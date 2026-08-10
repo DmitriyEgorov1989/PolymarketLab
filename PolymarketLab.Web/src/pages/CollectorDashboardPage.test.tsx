@@ -66,6 +66,10 @@ describe('CollectorDashboardPage market selection', () => {
         stoppedAt: '2026-08-06T12:10:00Z',
         failureCode: null,
         failureMessage: null,
+        messagesReceived: 10,
+        messagesPersisted: 10,
+        lastMessageAt: '2026-08-06T12:09:59Z',
+        reconnectCount: 0,
       },
     });
     getMarketByIdMock.mockImplementation(async (marketId) => ({ market: createMarket(marketId) }));
@@ -99,6 +103,24 @@ describe('CollectorDashboardPage market selection', () => {
     expect(screen.getByRole('button', { name: /Question second/ }).getAttribute('aria-pressed'))
       .toBe('true');
     expect(await screen.findByRole('heading', { name: second.question })).toBeTruthy();
+  });
+
+  it('clears selection when the selected market disappears', async () => {
+    const first = createMarket('first');
+    const second = createMarket('second');
+    getMarketsMock.mockResolvedValueOnce({ markets: [first, second] });
+    const queryClient = renderPage();
+    const secondButton = await screen.findByRole('button', { name: /Question second/ });
+    fireEvent.click(secondButton);
+
+    getMarketsMock.mockResolvedValue({ markets: [first] });
+    await act(() => queryClient.invalidateQueries({ queryKey: marketKeys.list() }));
+
+    await waitFor(() => expect(screen.getByText('Выберите рынок из списка.')).toBeTruthy());
+    expect(screen.getByRole('button', { name: /Question first/ }).getAttribute('aria-pressed'))
+      .toBe('false');
+    expect((screen.getByRole('button', { name: 'Start collector' }) as HTMLButtonElement).disabled)
+      .toBe(true);
   });
 
   it('does not auto-select after an initially empty result', async () => {

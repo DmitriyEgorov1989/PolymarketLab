@@ -11,6 +11,8 @@ using PolymarketLab.Markets.Core.Application.DependencyInjection;
 using PolymarketLab.Markets.Infrastructure.DependencyInjection;
 using PolymarketLab.Markets.Presentation.Controllers;
 
+const string FrontendCorsPolicy = "Frontend";
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Logging.ClearProviders();
@@ -47,6 +49,19 @@ builder.Services.AddMarketsApplication();
 builder.Services.AddMarketsInfrastructure(builder.Configuration);
 builder.Services.AddDataCollectionApplication();
 builder.Services.AddDataCollectionInfrastructure(builder.Configuration);
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? [];
+builder.Services.AddCors(options => options.AddPolicy(
+    FrontendCorsPolicy,
+    policy =>
+    {
+        if (allowedOrigins.Length > 0)
+            policy.WithOrigins(allowedOrigins);
+
+        policy.AllowAnyHeader()
+            .AllowAnyMethod();
+    }));
 builder.Services.AddOpenTelemetry()
     .WithMetrics(metrics => metrics
         .AddMeter("PolymarketLab.DataCollection.RawMessages")
@@ -123,6 +138,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+app.UseCors(FrontendCorsPolicy);
 
 app.UseAuthorization();
 

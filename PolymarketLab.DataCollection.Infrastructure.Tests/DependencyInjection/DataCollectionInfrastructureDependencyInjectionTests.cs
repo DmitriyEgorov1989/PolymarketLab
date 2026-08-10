@@ -1,3 +1,4 @@
+using CSharpFunctionalExtensions;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,6 +13,7 @@ using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
 using PolymarketLab.DataCollection.Infrastructure.DependencyInjection;
 using PolymarketLab.Markets.Contracts;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
+using PolymarketLab.SharedKernel.Errors;
 using Xunit;
 
 namespace PolymarketLab.DataCollection.Infrastructure.Tests.DependencyInjection;
@@ -107,11 +109,12 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
 
     private sealed class StubMarketsReader : IMarketsReader
     {
-        public Task<MarketForCollection?> GetForCollectionAsync(
+        public Task<Result<MarketForCollection?, Error>> GetForCollectionAsync(
             MarketId marketId,
             CancellationToken cancellationToken)
         {
-            return Task.FromResult<MarketForCollection?>(null);
+            return Task.FromResult<Result<MarketForCollection?, Error>>(
+                (MarketForCollection?)null);
         }
     }
 }
