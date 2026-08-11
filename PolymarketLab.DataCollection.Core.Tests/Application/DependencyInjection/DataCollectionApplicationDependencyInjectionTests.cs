@@ -12,6 +12,7 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionSta
 using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionById;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionByMarket;
 using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.SharedKernel.Mediation;
 using static PolymarketLab.SharedKernel.Errors.Error;
 using Xunit;
 
@@ -34,6 +35,13 @@ public sealed class DataCollectionApplicationDependencyInjectionTests
         services.Should().Contain(descriptor =>
             descriptor.ServiceType == typeof(IValidator<StartCollectorCommand>)
             && descriptor.ImplementationType == typeof(StartCollectorValidator));
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(IPipelineBehavior<
+                StartCollectorCommand,
+                Result<StartCollectorResponse, ErrorList>>)
+            && descriptor.ImplementationType == typeof(ValidationBehavior<
+                StartCollectorCommand,
+                StartCollectorResponse>));
         services.Should().Contain(descriptor =>
             descriptor.ServiceType == typeof(IRequestHandler<
                 StopCollectorCommand,

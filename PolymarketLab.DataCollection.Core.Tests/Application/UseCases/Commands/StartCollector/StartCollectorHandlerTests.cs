@@ -18,18 +18,6 @@ public sealed class StartCollectorHandlerTests
     private static readonly DateTimeOffset Now = new(2026, 7, 23, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task Handle_WithInvalidCommand_ShouldReturnValidationError()
-    {
-        var fixture = new Fixture();
-
-        var result = await fixture.HandleAsync(Guid.Empty);
-
-        result.IsFailure.Should().BeTrue();
-        result.Error.Single().Should().Be(StartCollectorErrors.MarketIdRequired);
-        fixture.MarketSource.CallCount.Should().Be(0);
-    }
-
-    [Fact]
     public async Task Handle_WithMissingMarket_ShouldReturnNotFound()
     {
         var fixture = new Fixture { Market = null };
@@ -302,7 +290,6 @@ public sealed class StartCollectorHandlerTests
         {
             MarketSource = new StubMarketSource(() => _market, () => MarketError);
             Handler = new StartCollectorHandler(
-                new StartCollectorValidator(),
                 MarketSource,
                 Repository,
                 Runtime,

@@ -11,8 +11,8 @@
 
 - Единственный executable host — `PolymarketLab.Api/Program.cs`; папки `/src/...` в `PolymarketLab.slnx` виртуальные, физической `src` нет.
 - `PolymarketLab.Markets.Core/PolymarketLab.Markets.Core.csproj` содержит Domain, Application и Ports; имя папки, сборки и root namespace — `PolymarketLab.Markets.Core`.
-- `Program.cs` подключает Markets Application, Infrastructure и controllers из Presentation. Application DI сканирует MediatR handlers и FluentValidation validators; Infrastructure DI регистрирует Npgsql context, repository и Gamma typed client.
-- DataCollection Application и Infrastructure подключены к host; Presentation и HTTP endpoints пока не подключены. Infrastructure регистрирует `DataCollectionDbContext`, repositories, singleton collector runtime и bounded raw-message ingestion worker. При запуске активные сессии предыдущего процесса переводятся в `Interrupted/ProcessTerminated`; при штатной остановке текущие сессии проходят `Stopping -> Stopped/ApplicationShutdown`. WebSocket collector принимает text messages, собирает fragments и сохраняет исходные UTF-8 bytes batch-ами.
+- `Program.cs` подключает Markets Application, Infrastructure и controllers из Presentation. Application DI сканирует MediatR handlers и FluentValidation validators; общий validation pipeline возвращает ожидаемые ошибки как `ErrorList`. Infrastructure DI регистрирует Npgsql context, repository и Gamma typed client.
+- DataCollection Application, Infrastructure и Presentation подключены к host. `CollectorController` публикует read/start/stop endpoints; Infrastructure регистрирует `DataCollectionDbContext`, repositories, singleton collector runtime и bounded raw-message ingestion worker. При запуске активные сессии предыдущего процесса переводятся в `Interrupted/ProcessTerminated`; при штатной остановке текущие сессии проходят `Stopping -> Stopped/ApplicationShutdown`. WebSocket collector принимает text messages, собирает fragments и сохраняет исходные UTF-8 bytes batch-ами.
 - Все проекты используют `net10.0`; `global.json`, package lock и repo-local tool manifest отсутствуют.
 
 ## Проверка
@@ -69,7 +69,6 @@ dotnet ef database update --project .\PolymarketLab.DataCollection.Infrastructur
 
 ## Известные пробелы
 
-- Validators зарегистрированы, но MediatR validation pipeline отсутствует: `RegisterCommandValidation` автоматически перед handler не запускается.
 - Framework возвращает `Envelope`, не raw response DTO. HTTP mapping ошибок неполный: новые `ErrorType` могут уйти в 500, пока не обновлён `ResponseExtensions`.
 - Нет exception-handler/problem-details middleware и автоматического применения миграций.
 - Автономная ошибка сборщика переводит сохранённую активную сессию в `Failed` через обработчик прикладного слоя; ошибка этой записи останавливает приложение.

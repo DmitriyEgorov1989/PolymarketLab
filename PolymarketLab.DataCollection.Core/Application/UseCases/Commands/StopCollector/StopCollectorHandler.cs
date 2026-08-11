@@ -1,5 +1,4 @@
 using CSharpFunctionalExtensions;
-using FluentValidation;
 using MediatR;
 using PolymarketLab.DataCollection.Core.Application.Errors;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Common;
@@ -8,14 +7,12 @@ using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
-using PolymarketLab.SharedKernel.Extensions.Validations;
 using static PolymarketLab.SharedKernel.Errors.Error;
 using CollectorSessionAggregate = PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.CollectorSession;
 
 namespace PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
 
 public sealed class StopCollectorHandler(
-    IValidator<StopCollectorCommand> validator,
     ICollectorSessionRepository sessionRepository,
     ICollectorSessionProgressRepository progressRepository,
     ICollectorSessionProgressCompletion progressCompletion,
@@ -29,10 +26,6 @@ public sealed class StopCollectorHandler(
         StopCollectorCommand command,
         CancellationToken cancellationToken)
     {
-        var validationResult = await validator.ValidateAsync(command, cancellationToken);
-        if (!validationResult.IsValid)
-            return validationResult.ToValidationErrorResponse(command);
-
         var sessionIdResult = CollectorSessionId.Create(command.SessionId);
         if (sessionIdResult.IsFailure)
             return Failure(sessionIdResult.Error);

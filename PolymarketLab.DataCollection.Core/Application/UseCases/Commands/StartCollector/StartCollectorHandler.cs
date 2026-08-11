@@ -1,5 +1,4 @@
 ﻿using CSharpFunctionalExtensions;
-using FluentValidation;
 using MediatR;
 using PolymarketLab.DataCollection.Core.Application.Errors;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
@@ -8,14 +7,12 @@ using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
-using PolymarketLab.SharedKernel.Extensions.Validations;
 using static PolymarketLab.SharedKernel.Errors.Error;
 using CollectorSessionAggregate = PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.CollectorSession;
 
 namespace PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
 
 public sealed class StartCollectorHandler(
-    IValidator<StartCollectorCommand> validator,
     IMarketCollectionSource marketSource,
     ICollectorSessionRepository sessionRepository,
     ICollectorRuntime runtime,
@@ -26,10 +23,6 @@ public sealed class StartCollectorHandler(
         StartCollectorCommand command,
         CancellationToken cancellationToken)
     {
-        var validationResult = await validator.ValidateAsync(command, cancellationToken);
-        if (!validationResult.IsValid)
-            return validationResult.ToValidationErrorResponse(command);
-
         var marketIdResult = MarketId.Create(command.MarketId);
         if (marketIdResult.IsFailure)
             return Failure(marketIdResult.Error);

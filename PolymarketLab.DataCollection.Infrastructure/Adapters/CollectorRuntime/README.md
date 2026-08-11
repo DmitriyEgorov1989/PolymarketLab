@@ -230,15 +230,16 @@ Application flow находится в [`StartCollectorHandler`](../../../Polyma
 7. При startup failure перевести session в `Failed`.
 8. При ошибке сохранения `Running` остановить уже запущенный runtime как compensation.
 
-DataCollection Application подключён к API host для обработки runtime failure. DataCollection Presentation подключён к API host для пользовательской остановки collector session.
-
-Публичный endpoint ручной остановки:
+DataCollection Application и Presentation подключены к API host. Публичные endpoints collector session:
 
 ```http
+GET /api/Collector/{sessionId}
+GET /api/Collector/by-market/{marketId}
+POST /api/Collector
 POST /api/Collector/{sessionId}/stop
 ```
 
-Тело запроса отсутствует.
+Запуск принимает `marketId`; тело запроса остановки отсутствует.
 
 ## Registry и дедупликация start
 
@@ -1049,24 +1050,23 @@ Singleton runtime/factory не должны напрямую зависеть о
 1. Нет reconnect, exponential backoff и повторной subscription.
 2. Нет heartbeat и detection состояния «socket открыт, но данные не приходят».
 3. Между автономной ошибкой обработчика и записью сессии нет надёжного сохраняемого уведомления; после сбоя остаточная активная сессия исправляется только при следующем запуске.
-4. StartCollector application flow ещё не опубликован как HTTP endpoint.
-5. Остановка collector session опубликована только по `CollectorSessionId`, не по `MarketId`.
-6. Channel in-memory: process crash теряет непросохранённый tail.
-7. Shutdown timeout допускает потерю tail.
-8. Нет persistence retry и dead-letter queue.
-9. Нет raw-message deduplication или idempotency key.
-10. Нет exactly-once guarantee.
-11. Используется EF `SaveChangesAsync`, а не PostgreSQL `COPY`.
-12. Capacity измеряется количеством сообщений, а не bytes.
-13. При 10,000 больших сообщений channel может потреблять много памяти.
-14. Payload копируется несколько раз.
-15. JSON не валидируется; сохраняется любой text payload.
-16. Binary message завершает collector.
-17. Remote close считается failure, если local stop ещё не начался.
-18. Runtime uniqueness основана на `CollectorSessionId`, не на `MarketId`.
-19. Ошибка одного persistence batch останавливает всю ingestion subsystem.
-20. Миграции не применяются автоматически при запуске приложения.
-21. Согласование при запуске безопасно только при одном экземпляре приложения: идентификатор владельца и аренда сессии отсутствуют.
+4. Остановка collector session опубликована только по `CollectorSessionId`, не по `MarketId`.
+5. Channel in-memory: process crash теряет непросохранённый tail.
+6. Shutdown timeout допускает потерю tail.
+7. Нет persistence retry и dead-letter queue.
+8. Нет raw-message deduplication или idempotency key.
+9. Нет exactly-once guarantee.
+10. Используется EF `SaveChangesAsync`, а не PostgreSQL `COPY`.
+11. Capacity измеряется количеством сообщений, а не bytes.
+12. При 10,000 больших сообщений channel может потреблять много памяти.
+13. Payload копируется несколько раз.
+14. JSON не валидируется; сохраняется любой text payload.
+15. Binary message завершает collector.
+16. Remote close считается failure, если local stop ещё не начался.
+17. Runtime uniqueness основана на `CollectorSessionId`, не на `MarketId`.
+18. Ошибка одного persistence batch останавливает всю ingestion subsystem.
+19. Миграции не применяются автоматически при запуске приложения.
+20. Согласование при запуске безопасно только при одном экземпляре приложения: идентификатор владельца и аренда сессии отсутствуют.
 
 ## Что делать дальше
 
@@ -1079,4 +1079,4 @@ stop command
   -> session -> Stopped/Requested
 ```
 
-Следующий этап — опубликовать StartCollector flow через DataCollection Presentation и отдельно проектировать повторное подключение.
+Следующий этап — проектировать reconnect, повторную subscription и heartbeat.

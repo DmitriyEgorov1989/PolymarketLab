@@ -60,27 +60,11 @@ public sealed class GetCollectorSessionByMarketHandlerTests
         result.Value.Session.Should().BeNull();
     }
 
-    [Fact]
-    public async Task Handle_WithEmptyMarketId_ShouldNotCallRepository()
-    {
-        var repository = new StubRepository();
-        var handler = CreateHandler(repository);
-
-        var result = await handler.Handle(
-            new GetCollectorSessionByMarketQuery(Guid.Empty),
-            CancellationToken.None);
-
-        result.IsFailure.Should().BeTrue();
-        result.Error.Single().Code.Should().Be("collector.query.market_id.required");
-        repository.CallCount.Should().Be(0);
-    }
-
     private static GetCollectorSessionByMarketHandler CreateHandler(
         ICollectorSessionRepository repository,
         ICollectorSessionProgressRepository? progressRepository = null)
     {
         return new GetCollectorSessionByMarketHandler(
-            new GetCollectorSessionByMarketValidator(),
             repository,
             progressRepository ?? new StubProgressRepository());
     }

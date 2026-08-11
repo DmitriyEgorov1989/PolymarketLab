@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using PolymarketLab.Markets.Contracts;
 using PolymarketLab.Markets.Core.Application.DependencyInjection;
 using PolymarketLab.Markets.Core.Application.UseCases.Commands;
+using PolymarketLab.SharedKernel.Mediation;
 using static PolymarketLab.SharedKernel.Errors.Error;
 using Xunit;
 
@@ -28,6 +29,13 @@ public sealed class MarketsApplicationDependencyInjectionTests
         services.Should().Contain(descriptor =>
             descriptor.ServiceType == typeof(IValidator<RegisterMarketCommand>)
             && descriptor.ImplementationType == typeof(RegisterCommandValidation));
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(IPipelineBehavior<
+                RegisterMarketCommand,
+                Result<RegisterMarketResponse, ErrorList>>)
+            && descriptor.ImplementationType == typeof(ValidationBehavior<
+                RegisterMarketCommand,
+                RegisterMarketResponse>));
         services.Should().Contain(descriptor =>
             descriptor.ServiceType == typeof(IMarketsReader)
             && descriptor.Lifetime == ServiceLifetime.Scoped);

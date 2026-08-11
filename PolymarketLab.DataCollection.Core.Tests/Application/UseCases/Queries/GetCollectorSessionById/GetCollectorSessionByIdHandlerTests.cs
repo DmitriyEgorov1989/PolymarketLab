@@ -74,27 +74,11 @@ public sealed class GetCollectorSessionByIdHandlerTests
         result.Error.Single().Type.Should().Be(ErrorType.NotFound);
     }
 
-    [Fact]
-    public async Task Handle_WithEmptySessionId_ShouldNotCallRepository()
-    {
-        var repository = new StubRepository();
-        var handler = CreateHandler(repository);
-
-        var result = await handler.Handle(
-            new GetCollectorSessionByIdQuery(Guid.Empty),
-            CancellationToken.None);
-
-        result.IsFailure.Should().BeTrue();
-        result.Error.Single().Code.Should().Be("collector.query.session_id.required");
-        repository.GetByIdCallCount.Should().Be(0);
-    }
-
     private static GetCollectorSessionByIdHandler CreateHandler(
         ICollectorSessionRepository repository,
         ICollectorSessionProgressRepository? progressRepository = null)
     {
         return new GetCollectorSessionByIdHandler(
-            new GetCollectorSessionByIdValidator(),
             repository,
             progressRepository ?? new StubProgressRepository());
     }
@@ -110,13 +94,10 @@ public sealed class GetCollectorSessionByIdHandlerTests
     private sealed class StubRepository(CollectorSessionAggregate? session = null)
         : ICollectorSessionRepository
     {
-        public int GetByIdCallCount { get; private set; }
-
         public Task<CollectorSessionAggregate?> GetByIdAsync(
             CollectorSessionId sessionId,
             CancellationToken cancellationToken)
         {
-            GetByIdCallCount++;
             return Task.FromResult(
                 session?.Id == sessionId ? session : null);
         }

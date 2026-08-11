@@ -19,19 +19,6 @@ public sealed class StopCollectorHandlerTests
         new(2026, 7, 30, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task Handle_WithInvalidCommand_ShouldReturnValidationError()
-    {
-        var fixture = new Fixture();
-
-        var result = await fixture.HandleAsync(Guid.Empty);
-
-        result.IsFailure.Should().BeTrue();
-        result.Error.Single().Should().Be(StopCollectorErrors.SessionIdRequired);
-        fixture.Repository.GetByIdCallCount.Should().Be(0);
-        fixture.Runtime.StopCallCount.Should().Be(0);
-    }
-
-    [Fact]
     public async Task Handle_WithMissingSession_ShouldReturnNotFound()
     {
         var fixture = new Fixture();
@@ -307,7 +294,6 @@ public sealed class StopCollectorHandlerTests
             Guid? sessionId = null)
         {
             var handler = new StopCollectorHandler(
-                new StopCollectorValidator(),
                 Repository,
                 ProgressRepository,
                 ProgressCompletion,

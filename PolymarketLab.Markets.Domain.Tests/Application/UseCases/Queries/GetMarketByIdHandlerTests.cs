@@ -50,23 +50,9 @@ public sealed class GetMarketByIdHandlerTests
         result.Error.Single().Code.Should().Be("market.query.not_found");
     }
 
-    [Fact]
-    public async Task Handle_WithEmptyGuid_ShouldReturnRequiredErrorWithoutCallingRepository()
-    {
-        var repository = new InMemoryMarketRepository();
-        var handler = CreateHandler(repository);
-
-        var result = await handler.Handle(new GetMarketByIdQuery(Guid.Empty), CancellationToken.None);
-
-        result.IsFailure.Should().BeTrue();
-        result.Error.Single().Code.Should().Be("market.query.market_id.required");
-        result.Error.Single().Type.Should().Be(ErrorType.ValueIsRequired);
-        repository.GetByIdCallCount.Should().Be(0);
-    }
-
     private static GetMarketByIdHandler CreateHandler(IMarketRepository repository)
     {
-        return new GetMarketByIdHandler(new GetMarketByIdValidator(), repository);
+        return new GetMarketByIdHandler(repository);
     }
 
     private static Market CreateMarket()
@@ -90,8 +76,6 @@ public sealed class GetMarketByIdHandlerTests
     {
         private readonly List<Market> _markets = [.. markets];
 
-        public int GetByIdCallCount { get; private set; }
-
         public Task<IReadOnlyCollection<Market>> GetAllAsync(CancellationToken cancellationToken)
         {
             return Task.FromResult<IReadOnlyCollection<Market>>(_markets);
@@ -99,7 +83,6 @@ public sealed class GetMarketByIdHandlerTests
 
         public Task<Market?> GetByIdAsync(MarketId marketId, CancellationToken cancellationToken)
         {
-            GetByIdCallCount++;
             return Task.FromResult(_markets.SingleOrDefault(market => market.Id.Equals(marketId)));
         }
 
