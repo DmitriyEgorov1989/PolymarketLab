@@ -10,6 +10,7 @@ internal static class PolymarketJsonReader
     private const string RequiredCode = "normalization.field.required";
     private const string InvalidStringCode = "normalization.field.string.invalid";
     private const string InvalidDecimalCode = "normalization.field.decimal.invalid";
+    private const string InvalidBooleanCode = "normalization.field.boolean.invalid";
     private const string InvalidTimestampCode = "normalization.field.timestamp.invalid";
     private const string InvalidTradeSideCode = "normalization.field.trade_side.invalid";
 
@@ -53,6 +54,63 @@ internal static class PolymarketJsonReader
             return InvalidString(field);
 
         return value.GetString();
+    }
+
+    public static Result<string, NormalizationIssue> ReadRequiredStringAllowingEmpty(
+        JsonElement json,
+        string field)
+    {
+        ValidateArguments(json, field);
+
+        if (!json.TryGetProperty(field, out var value) || value.ValueKind == JsonValueKind.Null)
+            return Required(field);
+
+        return value.ValueKind == JsonValueKind.String
+            ? value.GetString()!
+            : InvalidString(field);
+    }
+
+    public static Result<bool, NormalizationIssue> ReadRequiredBoolean(
+        JsonElement json,
+        string field)
+    {
+        ValidateArguments(json, field);
+
+        if (!json.TryGetProperty(field, out var value) || value.ValueKind == JsonValueKind.Null)
+            return Required(field);
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => new NormalizationIssue(
+                InvalidBooleanCode,
+                "Field must be a JSON boolean.",
+                field)
+        };
+    }
+
+    public static Result<decimal?, NormalizationIssue> ReadRequiredDecimalAllowingEmpty(
+        JsonElement json,
+        string field)
+    {
+        var textResult = ReadRequiredStringAllowingEmpty(json, field);
+        if (textResult.IsFailure)
+            return textResult.Error;
+
+        if (textResult.Value.Length == 0)
+            return Result.Success<decimal?, NormalizationIssue>(null);
+
+        return decimal.TryParse(
+            textResult.Value,
+            DecimalStyles,
+            CultureInfo.InvariantCulture,
+            out var value)
+            ? Result.Success<decimal?, NormalizationIssue>(value)
+            : new NormalizationIssue(
+                InvalidDecimalCode,
+                "Field must be an empty or valid invariant decimal string.",
+                field);
     }
 
     public static Result<decimal, NormalizationIssue> ReadRequiredDecimal(

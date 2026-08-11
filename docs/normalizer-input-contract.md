@@ -48,6 +48,23 @@ one logical event. The Normalizer must assign a stable zero-based `raw_item_inde
 - Empty optional values in `new_market` can be empty strings rather than `null`.
 - Unknown additional properties must not invalidate a supported event.
 
+### Field presence profile
+
+The archive was profiled again read-only on 2026-08-11 before implementing the
+remaining normalizers.
+
+- all 8,450 `best_bid_ask` events contained non-empty string values for
+  `best_bid`, `best_ask` and `spread`; bids ranged from `0` to `0.999`, asks from
+  `0.001` to `1`, and spreads from `0.001` to `1`;
+- all 244 `new_market` events contained the confirmed scalar fields,
+  `assets_ids`, `outcomes`, `event_message` and `fee_schedule` with consistent
+  JSON types;
+- every `new_market` event contained two asset IDs and two outcomes, with no
+  length mismatches, null items or empty items;
+- all confirmed `event_message` and `fee_schedule` fields were present and
+  non-null; optional external string values were represented by empty strings
+  for `sports_market_type`, `line`, `game_start_time` and `group_item_title`.
+
 Observed financial ranges are evidence, not validation limits. Prices used up to
 three fractional digits, trade size up to six, and book/change size up to six integer
 digits and two fractional digits. Persistence precision must retain at least these

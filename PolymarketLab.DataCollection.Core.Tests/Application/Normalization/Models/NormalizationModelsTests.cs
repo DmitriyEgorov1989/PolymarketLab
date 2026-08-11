@@ -245,6 +245,239 @@ public sealed class NormalizationModelsTests
             .WithParameterName(expectedParameter);
     }
 
+    [Fact]
+    public void OrderBookSide_ShouldHaveStablePersistenceValues()
+    {
+        ((int)OrderBookSide.Bid).Should().Be(1);
+        ((int)OrderBookSide.Ask).Should().Be(2);
+    }
+
+    [Fact]
+    public void BookSnapshotRecord_ValidValues_ShouldPreserveConfirmedContract()
+    {
+        var record = new BookSnapshotRecord(
+            hash: "snapshot-hash",
+            tickSize: 0.01m,
+            lastTradePrice: 0.7m);
+
+        record.Hash.Should().Be("snapshot-hash");
+        record.TickSize.Should().Be(0.01m);
+        record.LastTradePrice.Should().Be(0.7m);
+    }
+
+    [Fact]
+    public void BookSnapshotRecord_MissingOptionalValues_ShouldPreserveNulls()
+    {
+        var record = new BookSnapshotRecord("snapshot-hash", null, null);
+
+        record.TickSize.Should().BeNull();
+        record.LastTradePrice.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("", "0.01", "0.5", "hash")]
+    [InlineData("hash", "0", "0.5", "tickSize")]
+    [InlineData("hash", "-0.01", "0.5", "tickSize")]
+    [InlineData("hash", "0.01", "-0.01", "lastTradePrice")]
+    [InlineData("hash", "0.01", "1.01", "lastTradePrice")]
+    public void BookSnapshotRecord_InvalidInvariant_ShouldRejectInvalidState(
+        string hash,
+        string tickSize,
+        string lastTradePrice,
+        string expectedParameter)
+    {
+        var action = () => new BookSnapshotRecord(
+            hash,
+            decimal.Parse(tickSize, System.Globalization.CultureInfo.InvariantCulture),
+            decimal.Parse(lastTradePrice, System.Globalization.CultureInfo.InvariantCulture));
+
+        action.Should().Throw<ArgumentException>()
+            .WithParameterName(expectedParameter);
+    }
+
+    [Fact]
+    public void BookLevelRecord_ValidValues_ShouldPreserveSourcePosition()
+    {
+        var record = new BookLevelRecord(
+            OrderBookSide.Ask,
+            levelIndex: 3,
+            price: 0.8m,
+            size: 12.5m);
+
+        record.Side.Should().Be(OrderBookSide.Ask);
+        record.LevelIndex.Should().Be(3);
+        record.Price.Should().Be(0.8m);
+        record.Size.Should().Be(12.5m);
+    }
+
+    [Theory]
+    [InlineData(0, -1, "0.5", "1", "side")]
+    [InlineData(1, -1, "0.5", "1", "levelIndex")]
+    [InlineData(1, 0, "-0.01", "1", "price")]
+    [InlineData(1, 0, "1.01", "1", "price")]
+    [InlineData(2, 0, "0.5", "-0.01", "size")]
+    public void BookLevelRecord_InvalidInvariant_ShouldRejectInvalidState(
+        int side,
+        int levelIndex,
+        string price,
+        string size,
+        string expectedParameter)
+    {
+        var action = () => new BookLevelRecord(
+            (OrderBookSide)side,
+            levelIndex,
+            decimal.Parse(price, System.Globalization.CultureInfo.InvariantCulture),
+            decimal.Parse(size, System.Globalization.CultureInfo.InvariantCulture));
+
+        action.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName(expectedParameter);
+    }
+
+    [Fact]
+    public void TickSizeChangeRecord_ShouldPreserveDecimalValues()
+    {
+        var record = new TickSizeChangeRecord(0.01m, 0.001m);
+
+        record.OldTickSize.Should().Be(0.01m);
+        record.NewTickSize.Should().Be(0.001m);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-0.001")]
+    public void TickSizeChangeRecord_NonPositiveNewValue_ShouldRejectInvalidState(string value)
+    {
+        var action = () => new TickSizeChangeRecord(
+            0.01m,
+            decimal.Parse(value, System.Globalization.CultureInfo.InvariantCulture));
+
+        action.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("newTickSize");
+    }
+
+    [Fact]
+    public void BestBidAskRecord_ShouldPreserveBoundaryValues()
+    {
+        var record = new BestBidAskRecord(0m, 1m, 1m);
+
+        record.BestBid.Should().Be(0m);
+        record.BestAsk.Should().Be(1m);
+        record.Spread.Should().Be(1m);
+    }
+
+    [Theory]
+    [InlineData("-0.001", "1", "1", "bestBid")]
+    [InlineData("0", "1.001", "1", "bestAsk")]
+    [InlineData("0", "1", "-0.001", "spread")]
+    public void BestBidAskRecord_InvalidValue_ShouldRejectInvalidState(
+        string bestBid,
+        string bestAsk,
+        string spread,
+        string expectedParameter)
+    {
+        var action = () => new BestBidAskRecord(
+            decimal.Parse(bestBid, System.Globalization.CultureInfo.InvariantCulture),
+            decimal.Parse(bestAsk, System.Globalization.CultureInfo.InvariantCulture),
+            decimal.Parse(spread, System.Globalization.CultureInfo.InvariantCulture));
+
+        action.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName(expectedParameter);
+    }
+
+    [Fact]
+    public void NewMarketRecords_ShouldPreserveConfirmedContractAndOrderedMapping()
+    {
+        var eventMessage = new NewMarketEventMessage(
+            "event-id", "ticker", "event-slug", "Event title", "Event description");
+        var feeSchedule = new NewMarketFeeSchedule(2m, 0.02m, 0.25m, true);
+        var market = new NewMarketRecord(
+            "market-id",
+            "Question?",
+            "market-slug",
+            "Description",
+            true,
+            "",
+            null,
+            "",
+            0.01m,
+            "",
+            0m,
+            false,
+            eventMessage,
+            feeSchedule);
+        var asset = new NewMarketAssetRecord(1, "asset-id", "Down");
+
+        market.ExternalId.Should().Be("market-id");
+        market.SportsMarketType.Should().BeEmpty();
+        market.Line.Should().BeNull();
+        market.GameStartTime.Should().BeEmpty();
+        market.GroupItemTitle.Should().BeEmpty();
+        market.EventMessage.Should().BeSameAs(eventMessage);
+        market.FeeSchedule.Should().BeSameAs(feeSchedule);
+        asset.ItemIndex.Should().Be(1);
+        asset.AssetId.Should().Be("asset-id");
+        asset.Outcome.Should().Be("Down");
+    }
+
+    [Theory]
+    [InlineData(-1, "asset", "Up", "itemIndex")]
+    [InlineData(0, "", "Up", "assetId")]
+    [InlineData(0, "asset", "", "outcome")]
+    public void NewMarketAssetRecord_InvalidMapping_ShouldRejectInvalidState(
+        int itemIndex,
+        string assetId,
+        string outcome,
+        string expectedParameter)
+    {
+        var action = () => new NewMarketAssetRecord(itemIndex, assetId, outcome);
+
+        action.Should().Throw<ArgumentException>()
+            .WithParameterName(expectedParameter);
+    }
+
+    [Fact]
+    public void MarketResolvedRecords_ShouldPreserveConfirmedContractAndOrderedAsset()
+    {
+        var resolution = new MarketResolvedRecord("market-id", "winning-asset-id", "Up");
+        var asset = new MarketResolvedAssetRecord(1, "asset-id");
+
+        resolution.ExternalMarketId.Should().Be("market-id");
+        resolution.WinningAssetId.Should().Be("winning-asset-id");
+        resolution.WinningOutcome.Should().Be("Up");
+        asset.ItemIndex.Should().Be(1);
+        asset.AssetId.Should().Be("asset-id");
+    }
+
+    [Theory]
+    [InlineData("", "asset", "Up", "externalMarketId")]
+    [InlineData("market", "", "Up", "winningAssetId")]
+    [InlineData("market", "asset", "", "winningOutcome")]
+    public void MarketResolvedRecord_EmptyRequiredValue_ShouldRejectInvalidState(
+        string externalMarketId,
+        string winningAssetId,
+        string winningOutcome,
+        string expectedParameter)
+    {
+        var action = () => new MarketResolvedRecord(externalMarketId, winningAssetId, winningOutcome);
+
+        action.Should().Throw<ArgumentException>()
+            .WithParameterName(expectedParameter);
+    }
+
+    [Theory]
+    [InlineData(-1, "asset", "itemIndex")]
+    [InlineData(0, "", "assetId")]
+    public void MarketResolvedAssetRecord_InvalidValue_ShouldRejectInvalidState(
+        int itemIndex,
+        string assetId,
+        string expectedParameter)
+    {
+        var action = () => new MarketResolvedAssetRecord(itemIndex, assetId);
+
+        action.Should().Throw<ArgumentException>()
+            .WithParameterName(expectedParameter);
+    }
+
     [Theory]
     [InlineData("[]")]
     [InlineData("null")]
