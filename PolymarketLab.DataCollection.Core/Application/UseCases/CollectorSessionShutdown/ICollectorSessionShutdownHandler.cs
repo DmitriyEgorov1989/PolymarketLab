@@ -2,7 +2,7 @@ using CSharpFunctionalExtensions;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 
-namespace PolymarketLab.DataCollection.Core.Ports;
+namespace PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
 
 public interface ICollectorSessionShutdownHandler
 {

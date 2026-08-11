@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Options;
 using PolymarketLab.Core.Options;
-using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using System.Threading.Channels;
 

@@ -3,7 +3,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PolymarketLab.Core.Options;
-using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.SharedKernel.Errors;
 

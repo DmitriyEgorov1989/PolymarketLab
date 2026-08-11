@@ -3,7 +3,7 @@ using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
-using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime;
 using PolymarketLab.SharedKernel.DomainModels.Ids;

@@ -140,9 +140,9 @@ sequenceDiagram
 |---|---|
 | [`ICollectorRuntime`](../../../PolymarketLab.DataCollection.Core/Ports/ICollectorRuntime.cs) | Application-facing start/stop port |
 | [`CollectorRuntimeStartRequest`](../../../PolymarketLab.DataCollection.Core/Ports/Dtos/CollectorRuntimeStartRequest.cs) | Session ID и snapshot рынка с tokens |
-| [`IRawMarketMessageSink`](../../../PolymarketLab.DataCollection.Core/Ports/IRawMarketMessageSink.cs) | Producer-side enqueue port |
+| [`IRawMarketMessageSink`](../RawMessageIngestion/IRawMarketMessageSink.cs) | Внутренний producer-side contract ingestion-конвейера |
 | [`RawMarketMessage`](../../../PolymarketLab.DataCollection.Core/Ports/Dtos/RawMarketMessage.cs) | Session ID, receive timestamp и payload |
-| [`IRawMarketMessageWriter`](../../../PolymarketLab.DataCollection.Core/Ports/IRawMarketMessageWriter.cs) | Batch persistence port |
+| [`IRawMarketMessageWriter`](../RawMessageIngestion/IRawMarketMessageWriter.cs) | Внутренний batch persistence contract ingestion-конвейера |
 
 ### Runtime orchestration
 

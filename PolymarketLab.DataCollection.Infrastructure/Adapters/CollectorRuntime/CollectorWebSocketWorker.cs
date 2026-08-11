@@ -2,7 +2,6 @@ using CSharpFunctionalExtensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PolymarketLab.Core.Options;
-using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime.WebSockets;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;

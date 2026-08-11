@@ -2,7 +2,7 @@ using CSharpFunctionalExtensions;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
-using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime;
 using PolymarketLab.SharedKernel.Errors;
 using Xunit;

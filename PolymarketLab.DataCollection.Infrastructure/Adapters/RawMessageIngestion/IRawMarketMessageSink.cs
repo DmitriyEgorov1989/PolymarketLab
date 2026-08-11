@@ -1,8 +1,8 @@
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 
-namespace PolymarketLab.DataCollection.Core.Ports;
+namespace PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
 
-public interface IRawMarketMessageSink
+internal interface IRawMarketMessageSink
 {
     ValueTask EnqueueAsync(
         RawMarketMessage message,

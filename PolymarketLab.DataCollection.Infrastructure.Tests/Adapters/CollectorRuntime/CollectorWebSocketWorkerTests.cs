@@ -3,7 +3,6 @@ using FluentAssertions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using PolymarketLab.Core.Options;
-using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime.WebSockets;

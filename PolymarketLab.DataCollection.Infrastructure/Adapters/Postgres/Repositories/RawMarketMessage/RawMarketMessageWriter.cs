@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Models;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
 using RawMessage = PolymarketLab.DataCollection.Core.Ports.Dtos.RawMarketMessage;
 
 namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.RawMarketMessage;

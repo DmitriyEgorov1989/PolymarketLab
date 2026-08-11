@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
 
 namespace PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime;
 

@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using PolymarketLab.Core.Options;
-using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;

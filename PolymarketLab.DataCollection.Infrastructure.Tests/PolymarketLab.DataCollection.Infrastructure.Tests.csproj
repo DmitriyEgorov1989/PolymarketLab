@@ -23,4 +23,8 @@
     <ProjectReference Include="..\PolymarketLab.DataCollection.Infrastructure\PolymarketLab.DataCollection.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Fixtures\Polymarket\*.json" />
+  </ItemGroup>
+
 </Project>

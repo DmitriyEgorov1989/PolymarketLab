@@ -1,7 +1,7 @@
 using CSharpFunctionalExtensions;
 using PolymarketLab.SharedKernel.Errors;
 
-namespace PolymarketLab.DataCollection.Core.Ports;
+namespace PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
 
 /// <summary>
 /// Согласует сохранённые сессии сбора данных с состоянием нового процесса приложения.

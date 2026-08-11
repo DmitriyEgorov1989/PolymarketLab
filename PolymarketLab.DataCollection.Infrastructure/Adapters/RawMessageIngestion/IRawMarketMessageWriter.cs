@@ -1,8 +1,8 @@
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 
-namespace PolymarketLab.DataCollection.Core.Ports;
+namespace PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
 
-public interface IRawMarketMessageWriter
+internal interface IRawMarketMessageWriter
 {
     Task WriteBatchAsync(
         IReadOnlyCollection<RawMarketMessage> messages,

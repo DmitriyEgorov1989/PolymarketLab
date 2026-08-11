@@ -4,7 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PolymarketLab.Core.Options;
-using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
