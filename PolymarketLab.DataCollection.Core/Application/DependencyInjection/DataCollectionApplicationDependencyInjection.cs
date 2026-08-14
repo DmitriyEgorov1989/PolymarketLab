@@ -3,11 +3,13 @@ using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using PolymarketLab.DataCollection.Core.Application.Normalization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
+using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.ReplayNormalization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionById;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionByMarket;
 using PolymarketLab.DataCollection.Core.Ports;
@@ -31,6 +33,9 @@ public static class DataCollectionApplicationDependencyInjection
             IPipelineBehavior<StopCollectorCommand, Result<StopCollectorResponse, ErrorList>>,
             ValidationBehavior<StopCollectorCommand, StopCollectorResponse>>());
         services.TryAddEnumerable(ServiceDescriptor.Transient<
+            IPipelineBehavior<ReplayNormalizationCommand, Result<ReplayNormalizationResponse, ErrorList>>,
+            ValidationBehavior<ReplayNormalizationCommand, ReplayNormalizationResponse>>());
+        services.TryAddEnumerable(ServiceDescriptor.Transient<
             IPipelineBehavior<GetCollectorSessionByIdQuery, Result<GetCollectorSessionByIdResponse, ErrorList>>,
             ValidationBehavior<GetCollectorSessionByIdQuery, GetCollectorSessionByIdResponse>>());
         services.TryAddEnumerable(ServiceDescriptor.Transient<
@@ -45,6 +50,7 @@ public static class DataCollectionApplicationDependencyInjection
         services.AddScoped<
             ICollectorSessionShutdownHandler,
             CollectorSessionShutdownHandler>();
+        services.AddSingleton<INormalizationDispatcher, NormalizationDispatcher>();
         services.TryAddSingleton(TimeProvider.System);
 
         return services;

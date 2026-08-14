@@ -1,7 +1,7 @@
-using System.Text.Json;
 using CSharpFunctionalExtensions;
 using PolymarketLab.DataCollection.Core.Application.Normalization;
 using PolymarketLab.DataCollection.Core.Application.Normalization.Models;
+using System.Text.Json;
 
 namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Normalization;
 
@@ -14,31 +14,36 @@ internal sealed class BookNormalizer : IRawMessageNormalizer
     {
         ArgumentNullException.ThrowIfNull(rawEvent);
 
-        var marketResult = PolymarketJsonReader.ReadRequiredString(
+        var marketResult =
+            PolymarketJsonReader.ReadRequiredString(
             rawEvent.Json,
             PolymarketJsonFields.Market);
         if (marketResult.IsFailure)
             return Invalid(rawEvent, marketResult.Error);
 
-        var assetIdResult = PolymarketJsonReader.ReadRequiredString(
+        var assetIdResult =
+            PolymarketJsonReader.ReadRequiredString(
             rawEvent.Json,
             PolymarketJsonFields.AssetId);
         if (assetIdResult.IsFailure)
             return Invalid(rawEvent, assetIdResult.Error);
 
-        var hashResult = PolymarketJsonReader.ReadRequiredString(
+        var hashResult =
+            PolymarketJsonReader.ReadRequiredString(
             rawEvent.Json,
             PolymarketJsonFields.Hash);
         if (hashResult.IsFailure)
             return Invalid(rawEvent, hashResult.Error);
 
-        var timestampResult = PolymarketJsonReader.ReadOptionalEpochMilliseconds(
+        var timestampResult =
+            PolymarketJsonReader.ReadOptionalEpochMilliseconds(
             rawEvent.Json,
             PolymarketJsonFields.Timestamp);
         if (timestampResult.IsFailure)
             return Invalid(rawEvent, timestampResult.Error);
 
-        var tickSizeResult = PolymarketJsonReader.ReadOptionalDecimal(
+        var tickSizeResult =
+            PolymarketJsonReader.ReadOptionalDecimal(
             rawEvent.Json,
             PolymarketJsonFields.TickSize);
         if (tickSizeResult.IsFailure)
@@ -54,7 +59,8 @@ internal sealed class BookNormalizer : IRawMessageNormalizer
                     PolymarketJsonFields.TickSize));
         }
 
-        var lastTradePriceResult = PolymarketJsonReader.ReadOptionalDecimal(
+        var lastTradePriceResult =
+            PolymarketJsonReader.ReadOptionalDecimal(
             rawEvent.Json,
             PolymarketJsonFields.LastTradePrice);
         if (lastTradePriceResult.IsFailure)
@@ -145,7 +151,8 @@ internal sealed class BookNormalizer : IRawMessageNormalizer
                     LevelPath(field, levelIndex));
             }
 
-            var priceResult = PolymarketJsonReader.ReadRequiredDecimal(
+            var priceResult =
+                PolymarketJsonReader.ReadRequiredDecimal(
                 level,
                 PolymarketJsonFields.Price);
             if (priceResult.IsFailure)
@@ -162,7 +169,8 @@ internal sealed class BookNormalizer : IRawMessageNormalizer
                         PolymarketJsonFields.Price));
             }
 
-            var sizeResult = PolymarketJsonReader.ReadRequiredDecimal(
+            var sizeResult =
+                PolymarketJsonReader.ReadRequiredDecimal(
                 level,
                 PolymarketJsonFields.Size);
             if (sizeResult.IsFailure)

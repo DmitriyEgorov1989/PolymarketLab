@@ -65,6 +65,7 @@ builder.Services.AddCors(options => options.AddPolicy(
 builder.Services.AddOpenTelemetry()
     .WithMetrics(metrics => metrics
         .AddMeter("PolymarketLab.DataCollection.RawMessages")
+        .AddMeter("PolymarketLab.DataCollection.Normalizer")
         .AddPrometheusExporter());
 builder.Services.AddOptions<HostOptions>()
     .Configure<

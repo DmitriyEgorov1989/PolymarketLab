@@ -184,7 +184,8 @@ internal sealed class VersionedNormalizedWriter(
         if (completion.Status is not (
             NormalizationStatus.Processed
             or NormalizationStatus.Invalid
-            or NormalizationStatus.Unsupported))
+            or NormalizationStatus.Unsupported
+            or NormalizationStatus.Failed))
         {
             throw new ArgumentException("Completion status is not supported.", nameof(completion));
         }

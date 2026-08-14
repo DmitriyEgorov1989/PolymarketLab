@@ -32,19 +32,22 @@ public sealed class NormalizationCompletionTests
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void NonProcessed_ShouldContainIssueWithoutEvents(bool invalid)
+    [InlineData(NormalizationStatus.Invalid)]
+    [InlineData(NormalizationStatus.Unsupported)]
+    [InlineData(NormalizationStatus.Failed)]
+    public void NonProcessed_ShouldContainIssueWithoutEvents(NormalizationStatus status)
     {
         var issue = new NormalizationIssue("normalization.issue", "Expected issue.");
 
-        var completion = invalid
-            ? NormalizationCompletion.Invalid(issue)
-            : NormalizationCompletion.Unsupported(issue);
+        var completion = status switch
+        {
+            NormalizationStatus.Invalid => NormalizationCompletion.Invalid(issue),
+            NormalizationStatus.Unsupported => NormalizationCompletion.Unsupported(issue),
+            NormalizationStatus.Failed => NormalizationCompletion.Failed(issue),
+            _ => throw new ArgumentOutOfRangeException(nameof(status))
+        };
 
-        completion.Status.Should().Be(invalid
-            ? NormalizationStatus.Invalid
-            : NormalizationStatus.Unsupported);
+        completion.Status.Should().Be(status);
         completion.Events.Should().BeEmpty();
         completion.Issue.Should().BeSameAs(issue);
     }

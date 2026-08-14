@@ -46,5 +46,8 @@ internal sealed class RawMarketMessageConfiguration
                 message.Id
             })
             .HasDatabaseName("ix_raw_market_messages_session_received_id");
+
+        builder.HasIndex(message => new { message.SessionId, message.Id })
+            .HasDatabaseName("ix_raw_market_messages_session_id");
     }
 }

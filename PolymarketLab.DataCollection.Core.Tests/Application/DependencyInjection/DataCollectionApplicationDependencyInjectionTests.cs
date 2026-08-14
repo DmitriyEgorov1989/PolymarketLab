@@ -4,8 +4,10 @@ using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using PolymarketLab.DataCollection.Core.Application.DependencyInjection;
+using PolymarketLab.DataCollection.Core.Application.Normalization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
+using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.ReplayNormalization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
@@ -78,5 +80,16 @@ public sealed class DataCollectionApplicationDependencyInjectionTests
             descriptor.ServiceType == typeof(ICollectorSessionShutdownHandler)
             && descriptor.ImplementationType == typeof(CollectorSessionShutdownHandler)
             && descriptor.Lifetime == ServiceLifetime.Scoped);
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(INormalizationDispatcher)
+            && descriptor.ImplementationType == typeof(NormalizationDispatcher)
+            && descriptor.Lifetime == ServiceLifetime.Singleton);
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(IPipelineBehavior<
+                ReplayNormalizationCommand,
+                Result<ReplayNormalizationResponse, ErrorList>>)
+            && descriptor.ImplementationType == typeof(ValidationBehavior<
+                ReplayNormalizationCommand,
+                ReplayNormalizationResponse>));
     }
 }

@@ -4,12 +4,15 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using PolymarketLab.Core.Options;
+using PolymarketLab.DataCollection.Core.Application.Normalization;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime.WebSockets;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.MarketIntegration;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.Normalization;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.CollectorSession;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.Normalization;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.RawMarketMessage;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
 
@@ -92,6 +95,25 @@ public static class DataCollectionInfrastructureDependencyInjection
                 "Collector lifecycle shutdown timeout must not be shorter than the WebSocket stop timeout.")
             .ValidateOnStart();
 
+        services.AddOptions<NormalizerOptions>()
+            .Bind(configuration.GetSection(NormalizerOptions.SectionName))
+            .Validate(
+                options => options.ProjectionVersion > 0,
+                "Normalizer projection version must be positive.")
+            .Validate(
+                options => options.BatchSize > 0,
+                "Normalizer batch size must be positive.")
+            .Validate(
+                options => options.IdleDelay >= TimeSpan.Zero,
+                "Normalizer idle delay cannot be negative.")
+            .Validate(
+                options => !options.Enabled || options.IdleDelay > TimeSpan.Zero,
+                "Enabled Normalizer requires a positive idle delay.")
+            .Validate(
+                options => options.ClaimTimeout > TimeSpan.Zero,
+                "Normalizer claim timeout must be positive.")
+            .ValidateOnStart();
+
         services.AddDbContext<DataCollectionDbContext>((serviceProvider, options) =>
         {
             var databaseOptions = serviceProvider
@@ -107,6 +129,55 @@ public static class DataCollectionInfrastructureDependencyInjection
             CollectorSessionProgressRepository>();
         services.AddScoped<IMarketCollectionSource, MarketCollectionSource>();
         services.AddScoped<IRawMarketMessageWriter, RawMarketMessageWriter>();
+        services.AddScoped<
+            IRawMessageNormalizationClaimRepository,
+            RawMessageNormalizationClaimRepository>();
+        services.AddScoped<
+            IRawMessageNormalizationReplayClaimRepository,
+            RawMessageNormalizationReplayClaimRepository>();
+        services.AddScoped<INormalizedMessageWriter, VersionedNormalizedWriter>();
+        services.AddScoped<INormalizationBacklogReader, NormalizationBacklogReader>();
+        services.AddScoped<NormalizationProcessor>(serviceProvider =>
+        {
+            var options = serviceProvider
+                .GetRequiredService<IOptions<NormalizerOptions>>()
+                .Value;
+            return new NormalizationProcessor(
+                serviceProvider.GetRequiredService<IRawMessageNormalizationClaimRepository>(),
+                serviceProvider.GetRequiredService<IRawMessageDecoder>(),
+                serviceProvider.GetRequiredService<INormalizationDispatcher>(),
+                serviceProvider.GetRequiredService<INormalizedMessageWriter>(),
+                options.ProjectionVersion,
+                options.BatchSize,
+                options.ClaimTimeout);
+        });
+        services.AddScoped<INormalizationProcessor>(serviceProvider =>
+            serviceProvider.GetRequiredService<NormalizationProcessor>());
+        services.AddScoped<IClaimedNormalizationBatchProcessor>(serviceProvider =>
+            serviceProvider.GetRequiredService<NormalizationProcessor>());
+        services.AddSingleton<INormalizationReplayService, NormalizationReplayService>();
+        services.TryAddSingleton<IRawMessageDecoder, RawMessageDecoder>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IRawMessageNormalizer,
+            LastTradePriceNormalizer>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IRawMessageNormalizer,
+            PriceChangeNormalizer>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IRawMessageNormalizer,
+            BookNormalizer>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IRawMessageNormalizer,
+            TickSizeChangeNormalizer>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IRawMessageNormalizer,
+            BestBidAskNormalizer>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IRawMessageNormalizer,
+            NewMarketNormalizer>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IRawMessageNormalizer,
+            MarketResolvedNormalizer>());
         services.AddSingleton<ICollectorWebSocketFactory, ClientWebSocketFactory>();
         services.AddSingleton<ICollectorWorkerFactory, CollectorWebSocketWorkerFactory>();
         services.AddSingleton<
@@ -116,6 +187,7 @@ public static class DataCollectionInfrastructureDependencyInjection
         services.AddSingleton<ICollectorRuntime>(serviceProvider =>
             serviceProvider.GetRequiredService<CollectorRuntime>());
         services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<NormalizerTelemetry>();
         services.AddSingleton<RawMarketMessageTelemetry>();
         services.AddSingleton<
             ICollectorSessionProgressCompletion,
@@ -130,6 +202,8 @@ public static class DataCollectionInfrastructureDependencyInjection
             serviceProvider.GetRequiredService<RawMarketMessagePersistenceWorker>());
         services.AddHostedService<CollectorRuntimeShutdownService>();
         services.AddHostedService<CollectorSessionStartupReconciliationService>();
+        services.AddHostedService<NormalizationBackgroundService>();
+        services.AddHostedService<NormalizationMetricsBackgroundService>();
 
         return services;
     }

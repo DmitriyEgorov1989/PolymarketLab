@@ -6,9 +6,14 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PolymarketLab.Core.Options;
+using PolymarketLab.DataCollection.Core.Application.DependencyInjection;
+using PolymarketLab.DataCollection.Core.Application.Normalization;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime.WebSockets;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.Normalization;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.Normalization;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
 using PolymarketLab.DataCollection.Infrastructure.DependencyInjection;
 using PolymarketLab.Markets.Contracts;
@@ -45,6 +50,11 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
             NullLogger<CollectorSessionStartupReconciliationService>.Instance);
         services.AddSingleton<ILogger<CollectorSessionProgressCompletion>>(
             NullLogger<CollectorSessionProgressCompletion>.Instance);
+        services.AddSingleton<ILogger<NormalizationBackgroundService>>(
+            NullLogger<NormalizationBackgroundService>.Instance);
+        services.AddSingleton<ILogger<NormalizationMetricsBackgroundService>>(
+            NullLogger<NormalizationMetricsBackgroundService>.Instance);
+        services.AddDataCollectionApplication();
         services.AddDataCollectionInfrastructure(configuration);
 
         using var provider = services.BuildServiceProvider(new ServiceProviderOptions
@@ -63,13 +73,40 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
         AssertSingleton<IRawMarketMessageSink>(firstScope, secondScope);
         AssertScoped<IRawMarketMessageWriter>(firstScope, secondScope);
         AssertScoped<ICollectorSessionProgressRepository>(firstScope, secondScope);
+        AssertScoped<IRawMessageNormalizationClaimRepository>(firstScope, secondScope);
+        AssertScoped<IRawMessageNormalizationReplayClaimRepository>(firstScope, secondScope);
+        AssertScoped<INormalizedMessageWriter>(firstScope, secondScope);
+        AssertScoped<INormalizationProcessor>(firstScope, secondScope);
+        AssertScoped<INormalizationBacklogReader>(firstScope, secondScope);
+        AssertScoped<DataCollectionDbContext>(firstScope, secondScope);
+        AssertSingleton<NormalizerTelemetry>(firstScope, secondScope);
+        AssertSingleton<IRawMessageDecoder>(firstScope, secondScope);
+        AssertSingleton<INormalizationDispatcher>(firstScope, secondScope);
+        AssertSingleton<INormalizationReplayService>(firstScope, secondScope);
+        var firstNormalizers = firstScope.ServiceProvider
+            .GetServices<IRawMessageNormalizer>()
+            .ToArray();
+        var secondNormalizers = secondScope.ServiceProvider
+            .GetServices<IRawMessageNormalizer>()
+            .ToArray();
+        firstNormalizers.Select(normalizer => normalizer.GetType()).Should().Equal(
+            typeof(LastTradePriceNormalizer),
+            typeof(PriceChangeNormalizer),
+            typeof(BookNormalizer),
+            typeof(TickSizeChangeNormalizer),
+            typeof(BestBidAskNormalizer),
+            typeof(NewMarketNormalizer),
+            typeof(MarketResolvedNormalizer));
+        firstNormalizers.Should().Equal(secondNormalizers);
         provider.GetServices<IHostedService>()
             .Select(service => service.GetType())
             .Should()
             .Equal(
                 typeof(RawMarketMessagePersistenceWorker),
                 typeof(CollectorRuntimeShutdownService),
-                typeof(CollectorSessionStartupReconciliationService));
+                typeof(CollectorSessionStartupReconciliationService),
+                typeof(NormalizationBackgroundService),
+                typeof(NormalizationMetricsBackgroundService));
     }
 
     private static void AssertSingleton<TService>(

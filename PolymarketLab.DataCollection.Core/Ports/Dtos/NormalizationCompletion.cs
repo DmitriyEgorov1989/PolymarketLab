@@ -59,4 +59,13 @@ public sealed record NormalizationCompletion
         ArgumentNullException.ThrowIfNull(issue);
         return new NormalizationCompletion(NormalizationStatus.Unsupported, [], issue);
     }
+
+    /// <summary>Создаёт завершение для непредвиденной технической ошибки.</summary>
+    /// <param name="issue">Безопасное описание технической ошибки.</param>
+    /// <returns>Завершение со статусом <see cref="NormalizationStatus.Failed" />.</returns>
+    public static NormalizationCompletion Failed(NormalizationIssue issue)
+    {
+        ArgumentNullException.ThrowIfNull(issue);
+        return new NormalizationCompletion(NormalizationStatus.Failed, [], issue);
+    }
 }

@@ -74,5 +74,13 @@ internal sealed class NormalizedEventConfiguration
             })
             .IsUnique()
             .HasDatabaseName("ux_normalized_events_raw_message_item_projection");
+
+        builder.HasIndex(normalizedEvent => new
+            {
+                normalizedEvent.ProjectionVersion,
+                normalizedEvent.EventType,
+                normalizedEvent.RawMessageId
+            })
+            .HasDatabaseName("ix_normalized_events_projection_event_raw_message");
     }
 }

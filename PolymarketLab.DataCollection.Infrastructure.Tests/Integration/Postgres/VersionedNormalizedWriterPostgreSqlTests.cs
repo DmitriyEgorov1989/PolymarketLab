@@ -75,13 +75,37 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
     }
 
     [Fact]
+    public async Task WriteProcessed_ArrayEventsShouldBeCommittedTogether()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        await SeedRawMessagesAsync(database.ConnectionString, 1);
+        var claim = (await ClaimAsync(database.ConnectionString, 1, 1)).Single();
+        var completion = NormalizationCompletion.Processed(
+        [
+            CreateEvent(claim, 0, "last_trade_price",
+                new LastTradeRecord(0.4m, 1m, TradeSide.Buy, null, null)),
+            CreateEvent(claim, 1, "last_trade_price",
+                new LastTradeRecord(0.6m, 2m, TradeSide.Sell, null, null))
+        ]);
+
+        var status = await WriteAsync(database.ConnectionString, claim, completion);
+
+        status.Should().Be(NormalizationWriteStatus.Written);
+        (await CountAsync(database.ConnectionString, "normalized_events")).Should().Be(2);
+        (await CountAsync(database.ConnectionString, "last_trade_price")).Should().Be(2);
+        var ledger = await ReadLedgerAsync(database.ConnectionString);
+        ledger[claim.Message.RawMessageId].Status.Should().Be((int)NormalizationStatus.Processed);
+    }
+
+    [Fact]
     public async Task WriteTerminalOutcomes_ShouldNotCreateProjectionRows()
     {
         await using var database = await CreateMigratedDatabaseAsync();
-        await SeedRawMessagesAsync(database.ConnectionString, 2);
-        var claims = await ClaimAsync(database.ConnectionString, 1, 2);
+        await SeedRawMessagesAsync(database.ConnectionString, 3);
+        var claims = await ClaimAsync(database.ConnectionString, 1, 3);
         var invalidIssue = new NormalizationIssue("json.invalid", "Malformed JSON.");
         var unsupportedIssue = new NormalizationIssue("event.unsupported", "Unknown event type.");
+        var failedIssue = new NormalizationIssue("processing.failed", "Technical failure.");
 
         var invalid = await WriteAsync(
             database.ConnectionString,
@@ -91,15 +115,22 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
             database.ConnectionString,
             claims[1],
             NormalizationCompletion.Unsupported(unsupportedIssue));
+        var failed = await WriteAsync(
+            database.ConnectionString,
+            claims[2],
+            NormalizationCompletion.Failed(failedIssue));
 
         invalid.Should().Be(NormalizationWriteStatus.Written);
         unsupported.Should().Be(NormalizationWriteStatus.Written);
+        failed.Should().Be(NormalizationWriteStatus.Written);
         (await CountAsync(database.ConnectionString, "normalized_events")).Should().Be(0);
         var ledger = await ReadLedgerAsync(database.ConnectionString);
         ledger[claims[0].Message.RawMessageId].Should().Be(
             new Ledger((int)NormalizationStatus.Invalid, "json.invalid", "Malformed JSON."));
         ledger[claims[1].Message.RawMessageId].Should().Be(
             new Ledger((int)NormalizationStatus.Unsupported, "event.unsupported", "Unknown event type."));
+        ledger[claims[2].Message.RawMessageId].Should().Be(
+            new Ledger((int)NormalizationStatus.Failed, "processing.failed", "Technical failure."));
     }
 
     [Fact]
