@@ -30,8 +30,8 @@ dotnet test .\PolymarketLab.Markets.Infrastructure.Tests\PolymarketLab.Markets.I
 ```
 
 - Во время разработки сначала запускай самый узкий тест, затем `dotnet test .\PolymarketLab.slnx`; при изменении project references, EF model или host wiring также запускай solution build.
-- Полный test suite не требует Docker, PostgreSQL или сети: repository использует EF InMemory, model tests только строят Npgsql metadata, Gamma tests используют stub `HttpMessageHandler`.
-- Реальных PostgreSQL/Testcontainers, migration-application и API end-to-end тестов пока нет.
+- PostgreSQL integration tests используют `Testcontainers.PostgreSql`, сами запускают изолированный контейнер и не требуют локально настроенной БД. Для полного test suite нужен доступный Docker daemon; repository unit tests используют EF InMemory, model tests только строят Npgsql metadata, Gamma tests используют stub `HttpMessageHandler`.
+- Отдельных migration-application и API end-to-end тестов пока нет.
 
 ## Локальный запуск
 
