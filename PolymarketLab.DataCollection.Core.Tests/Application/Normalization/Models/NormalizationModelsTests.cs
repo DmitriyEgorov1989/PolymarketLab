@@ -253,6 +253,13 @@ public sealed class NormalizationModelsTests
     }
 
     [Fact]
+    public void TradeSide_ShouldHaveStablePersistenceValues()
+    {
+        ((int)TradeSide.Buy).Should().Be(1);
+        ((int)TradeSide.Sell).Should().Be(2);
+    }
+
+    [Fact]
     public void BookSnapshotRecord_ValidValues_ShouldPreserveConfirmedContract()
     {
         var record = new BookSnapshotRecord(

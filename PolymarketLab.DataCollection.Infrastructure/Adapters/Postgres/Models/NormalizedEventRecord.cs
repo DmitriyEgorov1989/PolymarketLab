@@ -1,3 +1,4 @@
+using PolymarketLab.DataCollection.Core.Application.Normalization.Models;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 
 namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Models;
@@ -6,6 +7,21 @@ internal sealed class NormalizedEventRecord
 {
     private NormalizedEventRecord()
     {
+    }
+
+    public NormalizedEventRecord(NormalizedEvent normalizedEvent, DateTimeOffset normalizedAt)
+    {
+        RawMessageId = normalizedEvent.RawMessageId;
+        RawItemIndex = normalizedEvent.RawItemIndex;
+        ProjectionVersion = normalizedEvent.ProjectionVersion;
+        NormalizerVersion = normalizedEvent.NormalizerVersion;
+        EventType = normalizedEvent.EventType;
+        SessionId = normalizedEvent.SessionId;
+        ReceivedAt = normalizedEvent.ReceivedAt;
+        SourceTimestamp = normalizedEvent.SourceTimestamp;
+        MarketConditionId = normalizedEvent.MarketConditionId;
+        AssetId = normalizedEvent.AssetId;
+        NormalizedAt = normalizedAt;
     }
 
     public long Id { get; private set; }

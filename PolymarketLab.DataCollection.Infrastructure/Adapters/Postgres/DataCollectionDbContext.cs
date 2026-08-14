@@ -15,6 +15,26 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres
             Set<RawMessageNormalizationRecord>();
         internal DbSet<NormalizedEventRecord> NormalizedEvents =>
             Set<NormalizedEventRecord>();
+        internal DbSet<LastTradePriceEntity> LastTradePrices =>
+            Set<LastTradePriceEntity>();
+        internal DbSet<PriceChangeItemEntity> PriceChanges =>
+            Set<PriceChangeItemEntity>();
+        internal DbSet<BookSnapshotEntity> BookSnapshots =>
+            Set<BookSnapshotEntity>();
+        internal DbSet<BookLevelEntity> BookLevels =>
+            Set<BookLevelEntity>();
+        internal DbSet<TickSizeChangeEntity> TickSizeChanges =>
+            Set<TickSizeChangeEntity>();
+        internal DbSet<BestBidAskEntity> BestBidAsks =>
+            Set<BestBidAskEntity>();
+        internal DbSet<NewMarketEntity> NewMarkets =>
+            Set<NewMarketEntity>();
+        internal DbSet<NewMarketAssetEntity> NewMarketAssets =>
+            Set<NewMarketAssetEntity>();
+        internal DbSet<MarketResolutionEntity> MarketResolutions =>
+            Set<MarketResolutionEntity>();
+        internal DbSet<MarketResolutionAssetEntity> MarketResolutionAssets =>
+            Set<MarketResolutionAssetEntity>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
