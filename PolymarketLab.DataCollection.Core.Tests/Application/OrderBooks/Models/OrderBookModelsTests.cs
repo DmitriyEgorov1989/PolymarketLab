@@ -25,9 +25,33 @@ public sealed class OrderBookModelsTests
     }
 
     [Fact]
-    public void OrderBookIntegrityIssue_ShouldHaveStableValues()
+    public void OrderBookIntegrityIssueType_ShouldHaveStableValues()
     {
-        ((int)OrderBookIntegrityIssue.CrossedBook).Should().Be(1);
+        ((int)OrderBookIntegrityIssueType.BestBidMismatch).Should().Be(1);
+        ((int)OrderBookIntegrityIssueType.BestAskMismatch).Should().Be(2);
+        ((int)OrderBookIntegrityIssueType.SpreadMismatch).Should().Be(3);
+        ((int)OrderBookIntegrityIssueType.TickSizeMismatch).Should().Be(4);
+        ((int)OrderBookIntegrityIssueType.CrossedBook).Should().Be(5);
+        ((int)OrderBookIntegrityIssueType.UnexpectedAsset).Should().Be(6);
+        ((int)OrderBookIntegrityIssueType.EventOrderViolation).Should().Be(7);
+        ((int)OrderBookIntegrityIssueType.GapDetected).Should().Be(8);
+        ((int)OrderBookIntegrityIssueType.SnapshotHashMismatch).Should().Be(9);
+    }
+
+    [Fact]
+    public void OrderBookIntegrityIssue_ShouldPreserveDiagnosticDetails()
+    {
+        var detectedAt = new DateTimeOffset(2026, 8, 16, 12, 0, 0, TimeSpan.Zero);
+        var issue = new OrderBookIntegrityIssue(
+            OrderBookIntegrityIssueType.BestBidMismatch,
+            "Best bid mismatch.",
+            42,
+            detectedAt);
+
+        issue.Type.Should().Be(OrderBookIntegrityIssueType.BestBidMismatch);
+        issue.Message.Should().Be("Best bid mismatch.");
+        issue.NormalizedEventId.Should().Be(42);
+        issue.DetectedAt.Should().Be(detectedAt);
     }
 
     [Fact]

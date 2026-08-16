@@ -7,6 +7,8 @@ namespace PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection.Mo
 public sealed record BookSnapshotRecord
 {
     /// <summary>Создаёт входную модель полного снимка стакана.</summary>
+    /// <param name="rawMessageId">Идентификатор исходного сообщения в архиве.</param>
+    /// <param name="rawItemIndex">Позиция логического события внутри исходного сообщения.</param>
     /// <param name="normalizedEventId">Идентификатор сохранённого нормализованного события.</param>
     /// <param name="assetId">Идентификатор актива.</param>
     /// <param name="marketConditionId">Идентификатор условия рынка.</param>
@@ -16,6 +18,8 @@ public sealed record BookSnapshotRecord
     /// <param name="bids">Уровни стороны покупки в исходном порядке.</param>
     /// <param name="asks">Уровни стороны продажи в исходном порядке.</param>
     public BookSnapshotRecord(
+        long rawMessageId,
+        int rawItemIndex,
         long normalizedEventId,
         string assetId,
         string marketConditionId,
@@ -25,7 +29,6 @@ public sealed record BookSnapshotRecord
         IReadOnlyCollection<NormalizedBookLevelRecord> bids,
         IReadOnlyCollection<NormalizedBookLevelRecord> asks)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(normalizedEventId);
         ArgumentException.ThrowIfNullOrWhiteSpace(assetId);
         ArgumentException.ThrowIfNullOrWhiteSpace(marketConditionId);
         ArgumentException.ThrowIfNullOrWhiteSpace(hash);
@@ -39,7 +42,7 @@ public sealed record BookSnapshotRecord
         if (asks.Any(level => level.Side != OrderBookSide.Ask))
             throw new ArgumentException("Asks must contain only ask levels.", nameof(asks));
 
-        NormalizedEventId = normalizedEventId;
+        Position = new OrderBookEventPosition(rawMessageId, rawItemIndex, normalizedEventId);
         AssetId = assetId;
         MarketConditionId = marketConditionId;
         SourceTimestamp = sourceTimestamp;
@@ -49,8 +52,11 @@ public sealed record BookSnapshotRecord
         Asks = asks.ToArray();
     }
 
+    /// <summary>Позиция события в нормализованном архиве.</summary>
+    public OrderBookEventPosition Position { get; }
+
     /// <summary>Идентификатор сохранённого нормализованного события.</summary>
-    public long NormalizedEventId { get; }
+    public long NormalizedEventId => Position.NormalizedEventId;
 
     /// <summary>Идентификатор актива, к которому относится стакан.</summary>
     public string AssetId { get; }

@@ -6,6 +6,8 @@ namespace PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection.Mo
 public sealed record PriceChangeRecord
 {
     /// <summary>Создаёт входную модель изменения одного уровня стакана.</summary>
+    /// <param name="rawMessageId">Идентификатор исходного сообщения в архиве.</param>
+    /// <param name="rawItemIndex">Позиция логического события внутри исходного сообщения.</param>
     /// <param name="normalizedEventId">Идентификатор сохранённого нормализованного события.</param>
     /// <param name="assetId">Идентификатор актива.</param>
     /// <param name="sourceTimestamp">Epoch milliseconds из исходного события или <see langword="null" />.</param>
@@ -17,6 +19,8 @@ public sealed record PriceChangeRecord
     /// <param name="bestAsk">Лучшая цена продажи или <see langword="null" />.</param>
     /// <param name="itemIndex">Позиция изменения внутри исходного события.</param>
     public PriceChangeRecord(
+        long rawMessageId,
+        int rawItemIndex,
         long normalizedEventId,
         string assetId,
         long? sourceTimestamp,
@@ -28,7 +32,6 @@ public sealed record PriceChangeRecord
         decimal? bestAsk,
         int itemIndex)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(normalizedEventId);
         ArgumentException.ThrowIfNullOrWhiteSpace(assetId);
 
         if (!Enum.IsDefined(side))
@@ -44,7 +47,7 @@ public sealed record PriceChangeRecord
         if (itemIndex < 0)
             throw new ArgumentOutOfRangeException(nameof(itemIndex), "Item index cannot be negative.");
 
-        NormalizedEventId = normalizedEventId;
+        Position = new OrderBookEventPosition(rawMessageId, rawItemIndex, normalizedEventId);
         AssetId = assetId;
         SourceTimestamp = sourceTimestamp;
         Side = side;
@@ -56,8 +59,11 @@ public sealed record PriceChangeRecord
         ItemIndex = itemIndex;
     }
 
+    /// <summary>Позиция события в нормализованном архиве.</summary>
+    public OrderBookEventPosition Position { get; }
+
     /// <summary>Идентификатор сохранённого нормализованного события.</summary>
-    public long NormalizedEventId { get; }
+    public long NormalizedEventId => Position.NormalizedEventId;
 
     /// <summary>Идентификатор актива.</summary>
     public string AssetId { get; }

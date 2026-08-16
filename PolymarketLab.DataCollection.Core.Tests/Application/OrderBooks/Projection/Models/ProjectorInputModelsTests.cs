@@ -24,6 +24,8 @@ public sealed class ProjectorInputModelsTests
         var asks = new List<NormalizationModels.BookLevelRecord> { ask };
 
         var record = new ProjectionModels.BookSnapshotRecord(
+            rawMessageId: 10,
+            rawItemIndex: 1,
             normalizedEventId: 42,
             assetId: "asset",
             marketConditionId: "condition",
@@ -36,6 +38,7 @@ public sealed class ProjectorInputModelsTests
         asks.Clear();
 
         record.NormalizedEventId.Should().Be(42);
+        record.Position.Should().Be(new ProjectionModels.OrderBookEventPosition(10, 1, 42));
         record.AssetId.Should().Be("asset");
         record.MarketConditionId.Should().Be("condition");
         record.SourceTimestamp.Should().BeNull();
@@ -56,6 +59,8 @@ public sealed class ProjectorInputModelsTests
 
         var action = () => new ProjectionModels.BookSnapshotRecord(
             1,
+            0,
+            1,
             "asset",
             "condition",
             1000,
@@ -75,6 +80,8 @@ public sealed class ProjectorInputModelsTests
     {
         var action = () => new ProjectionModels.BookSnapshotRecord(
             1,
+            0,
+            1,
             "asset",
             "condition",
             1000,
@@ -91,6 +98,8 @@ public sealed class ProjectorInputModelsTests
     public void PriceChangeRecord_ShouldPreserveNormalizedProjection()
     {
         var record = new ProjectionModels.PriceChangeRecord(
+            rawMessageId: 11,
+            rawItemIndex: 0,
             normalizedEventId: 43,
             assetId: "asset",
             sourceTimestamp: 1001,
@@ -103,6 +112,7 @@ public sealed class ProjectorInputModelsTests
             itemIndex: 2);
 
         record.NormalizedEventId.Should().Be(43);
+        record.Position.Should().Be(new ProjectionModels.OrderBookEventPosition(11, 0, 43));
         record.AssetId.Should().Be("asset");
         record.SourceTimestamp.Should().Be(1001);
         record.Side.Should().Be(NormalizationModels.TradeSide.Buy);
@@ -118,6 +128,8 @@ public sealed class ProjectorInputModelsTests
     public void TickSizeChangeRecord_ShouldPreserveNormalizedProjection()
     {
         var record = new ProjectionModels.TickSizeChangeRecord(
+            rawMessageId: 12,
+            rawItemIndex: 2,
             normalizedEventId: 44,
             assetId: "asset",
             sourceTimestamp: 1002,
@@ -125,6 +137,7 @@ public sealed class ProjectorInputModelsTests
             newTickSize: 0.001m);
 
         record.NormalizedEventId.Should().Be(44);
+        record.Position.Should().Be(new ProjectionModels.OrderBookEventPosition(12, 2, 44));
         record.AssetId.Should().Be("asset");
         record.SourceTimestamp.Should().Be(1002);
         record.OldTickSize.Should().Be(0m);
@@ -135,6 +148,8 @@ public sealed class ProjectorInputModelsTests
     public void BestBidAskRecord_ShouldPreserveNormalizedProjection()
     {
         var record = new ProjectionModels.BestBidAskRecord(
+            rawMessageId: 13,
+            rawItemIndex: 0,
             normalizedEventId: 45,
             assetId: "asset",
             sourceTimestamp: null,
@@ -143,6 +158,7 @@ public sealed class ProjectorInputModelsTests
             spread: 0.2m);
 
         record.NormalizedEventId.Should().Be(45);
+        record.Position.Should().Be(new ProjectionModels.OrderBookEventPosition(13, 0, 45));
         record.AssetId.Should().Be("asset");
         record.SourceTimestamp.Should().BeNull();
         record.BestBid.Should().Be(0.4m);
@@ -154,6 +170,8 @@ public sealed class ProjectorInputModelsTests
     public void ProjectorInputRecord_NonPositiveNormalizedEventId_ShouldRejectInvalidState()
     {
         var action = () => new ProjectionModels.TickSizeChangeRecord(
+            1,
+            0,
             0,
             "asset",
             null,
@@ -169,6 +187,8 @@ public sealed class ProjectorInputModelsTests
     {
         var action = () => new ProjectionModels.PriceChangeRecord(
             1,
+            0,
+            1,
             "asset",
             null,
             NormalizationModels.TradeSide.Sell,
@@ -181,5 +201,35 @@ public sealed class ProjectorInputModelsTests
 
         action.Should().Throw<ArgumentOutOfRangeException>()
             .WithParameterName("itemIndex");
+    }
+
+    [Fact]
+    public void OrderBookEventPosition_ShouldSortByArchiveOrderWithStableTieBreaker()
+    {
+        var positions = new[]
+        {
+            new ProjectionModels.OrderBookEventPosition(11, 0, 5),
+            new ProjectionModels.OrderBookEventPosition(10, 1, 9),
+            new ProjectionModels.OrderBookEventPosition(10, 0, 20),
+            new ProjectionModels.OrderBookEventPosition(9, 2, 30)
+        };
+
+        var ordered = positions.Order().ToArray();
+
+        ordered.Should().Equal(
+            new ProjectionModels.OrderBookEventPosition(9, 2, 30),
+            new ProjectionModels.OrderBookEventPosition(10, 0, 20),
+            new ProjectionModels.OrderBookEventPosition(10, 1, 9),
+            new ProjectionModels.OrderBookEventPosition(11, 0, 5));
+    }
+
+    [Fact]
+    public void OrderBookEventPosition_SameArchivePosition_ShouldIgnoreGeneratedEventId()
+    {
+        var firstProjection = new ProjectionModels.OrderBookEventPosition(10, 1, 100);
+        var replayProjection = new ProjectionModels.OrderBookEventPosition(10, 1, 200);
+
+        firstProjection.CompareTo(replayProjection).Should().Be(0);
+        replayProjection.CompareTo(firstProjection).Should().Be(0);
     }
 }

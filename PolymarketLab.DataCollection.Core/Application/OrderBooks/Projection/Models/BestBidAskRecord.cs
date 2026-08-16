@@ -4,6 +4,8 @@ namespace PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection.Mo
 public sealed record BestBidAskRecord
 {
     /// <summary>Создаёт входную модель лучших цен актива.</summary>
+    /// <param name="rawMessageId">Идентификатор исходного сообщения в архиве.</param>
+    /// <param name="rawItemIndex">Позиция логического события внутри исходного сообщения.</param>
     /// <param name="normalizedEventId">Идентификатор сохранённого нормализованного события.</param>
     /// <param name="assetId">Идентификатор актива.</param>
     /// <param name="sourceTimestamp">Epoch milliseconds из исходного события или <see langword="null" />.</param>
@@ -11,6 +13,8 @@ public sealed record BestBidAskRecord
     /// <param name="bestAsk">Лучшая цена продажи.</param>
     /// <param name="spread">Спред из нормализованной проекции.</param>
     public BestBidAskRecord(
+        long rawMessageId,
+        int rawItemIndex,
         long normalizedEventId,
         string assetId,
         long? sourceTimestamp,
@@ -18,7 +22,6 @@ public sealed record BestBidAskRecord
         decimal bestAsk,
         decimal spread)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(normalizedEventId);
         ArgumentException.ThrowIfNullOrWhiteSpace(assetId);
 
         if (bestBid is < 0 or > 1)
@@ -28,7 +31,7 @@ public sealed record BestBidAskRecord
         if (spread < 0)
             throw new ArgumentOutOfRangeException(nameof(spread), "Spread cannot be negative.");
 
-        NormalizedEventId = normalizedEventId;
+        Position = new OrderBookEventPosition(rawMessageId, rawItemIndex, normalizedEventId);
         AssetId = assetId;
         SourceTimestamp = sourceTimestamp;
         BestBid = bestBid;
@@ -36,8 +39,11 @@ public sealed record BestBidAskRecord
         Spread = spread;
     }
 
+    /// <summary>Позиция события в нормализованном архиве.</summary>
+    public OrderBookEventPosition Position { get; }
+
     /// <summary>Идентификатор сохранённого нормализованного события.</summary>
-    public long NormalizedEventId { get; }
+    public long NormalizedEventId => Position.NormalizedEventId;
 
     /// <summary>Идентификатор актива.</summary>
     public string AssetId { get; }
