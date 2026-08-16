@@ -21,7 +21,10 @@ public sealed class NormalizationProcessorTests
         var claims = new[] { CreateClaim(100), CreateClaim(101), CreateClaim(102) };
         var claimRepository = new StubClaimRepository(claims);
         var decoder = new StubDecoder(claim => claim.RawMessageId == 101
-            ? RawMessageDecodeResult.Invalid(new NormalizationIssue("json.invalid", "Invalid JSON."))
+            ? RawMessageDecodeResult.Invalid(new NormalizationIssue(
+                "json.invalid",
+                "Invalid JSON.",
+                "$"))
             : DecodedObject(0));
         var dispatcher = new StubDispatcher(rawEvent =>
             NormalizationResult.Processed(CreateEvent(rawEvent)));
@@ -41,7 +44,8 @@ public sealed class NormalizationProcessorTests
                 1,
                 null,
                 NormalizationStatus.Invalid,
-                "json.invalid"));
+                "json.invalid",
+                "$"));
         writer.Calls.Select(call => call.Completion.Status).Should().Equal(
             NormalizationStatus.Processed,
             NormalizationStatus.Invalid,
@@ -165,6 +169,8 @@ public sealed class NormalizationProcessorTests
             2, 1, 0, 0, 1, 1, 2, result.Errors));
         result.Errors.Should().ContainSingle().Which.ErrorCode.Should()
             .Be("normalization.processing.failed");
+        result.Errors.Single().Exception.Should().BeOfType<InvalidOperationException>()
+            .Which.Message.Should().Be("Technical details must not be persisted.");
         writer.Calls.Select(call => call.Completion.Status).Should().Equal(
             NormalizationStatus.Failed,
             NormalizationStatus.Processed);
@@ -216,6 +222,8 @@ public sealed class NormalizationProcessorTests
             2, 1, 0, 0, 1, 1, 2, result.Errors));
         result.Errors.Should().ContainSingle().Which.ErrorCode.Should()
             .Be("normalization.processing.failed");
+        result.Errors.Single().Exception.Should().BeOfType<InvalidOperationException>()
+            .Which.Message.Should().Be("Database failure.");
         writer.Calls.Select(call => call.Completion.Status).Should().Equal(
             NormalizationStatus.Processed,
             NormalizationStatus.Failed,

@@ -16,4 +16,5 @@ internal sealed class RawMessageNormalizationRecord
     public DateTimeOffset? CompletedAt { get; private set; }
     public string? ErrorCode { get; private set; }
     public string? ErrorMessage { get; private set; }
+    public string? ErrorField { get; private set; }
 }

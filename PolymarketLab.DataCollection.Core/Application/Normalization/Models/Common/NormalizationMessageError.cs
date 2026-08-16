@@ -11,4 +11,6 @@ public sealed record NormalizationMessageError(
     int ProjectionVersion,
     int? NormalizerVersion,
     NormalizationStatus Status,
-    string ErrorCode);
+    string ErrorCode,
+    string? ErrorField = null,
+    Exception? Exception = null);

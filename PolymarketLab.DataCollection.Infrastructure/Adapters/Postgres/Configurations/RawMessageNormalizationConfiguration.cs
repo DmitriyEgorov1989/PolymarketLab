@@ -47,6 +47,10 @@ internal sealed class RawMessageNormalizationConfiguration
             .HasColumnName("error_message")
             .HasMaxLength(2000);
 
+        builder.Property(normalization => normalization.ErrorField)
+            .HasColumnName("error_field")
+            .HasMaxLength(500);
+
         builder.HasOne<RawMarketMessageRecord>()
             .WithMany()
             .HasForeignKey(normalization => normalization.RawMessageId)

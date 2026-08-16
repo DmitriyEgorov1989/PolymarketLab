@@ -131,7 +131,8 @@ public sealed class DataCollectionDbContextModelTests
             [nameof(RawMessageNormalizationRecord.ClaimedAt)] = "claimed_at",
             [nameof(RawMessageNormalizationRecord.CompletedAt)] = "completed_at",
             [nameof(RawMessageNormalizationRecord.ErrorCode)] = "error_code",
-            [nameof(RawMessageNormalizationRecord.ErrorMessage)] = "error_message"
+            [nameof(RawMessageNormalizationRecord.ErrorMessage)] = "error_message",
+            [nameof(RawMessageNormalizationRecord.ErrorField)] = "error_field"
         };
 
         normalization.GetProperties()
@@ -154,6 +155,8 @@ public sealed class DataCollectionDbContextModelTests
         normalization.FindProperty(nameof(RawMessageNormalizationRecord.ErrorCode))!
             .IsNullable.Should().BeTrue();
         normalization.FindProperty(nameof(RawMessageNormalizationRecord.ErrorMessage))!
+            .IsNullable.Should().BeTrue();
+        normalization.FindProperty(nameof(RawMessageNormalizationRecord.ErrorField))!
             .IsNullable.Should().BeTrue();
         AssertConverter<NormalizationStatus, int>(
             normalization,

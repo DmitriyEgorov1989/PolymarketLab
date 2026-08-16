@@ -138,6 +138,52 @@ public sealed class NormalizationReplayPostgreSqlTests(PostgreSqlFixture fixture
         claims.Should().NotContain(claim => claim.Message.RawMessageId == newRawId);
     }
 
+    [Fact]
+    public async Task ReplayClaim_StaleTargetShouldClearPreviousError()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var sessionId = Guid.NewGuid();
+        await SeedSessionAsync(
+            database.ConnectionString,
+            sessionId,
+            [ReadFixture("last-trade-price.json")]);
+        await using var provider = CreateProvider(database.ConnectionString);
+        await ProcessSourceAsync(provider);
+        await using var scope = provider.CreateAsyncScope();
+        var repository = scope.ServiceProvider
+            .GetRequiredService<IRawMessageNormalizationReplayClaimRepository>();
+        var snapshot = await repository.CaptureSnapshotAsync(default);
+        await ExecuteAsync(
+            database.ConnectionString,
+            """
+            INSERT INTO data_collection.raw_message_normalizations
+                (raw_message_id, projection_version, status, attempt_count, claimed_at,
+                 error_code, error_message, error_field)
+            SELECT id, 2, 2, 1, CURRENT_TIMESTAMP - interval '1 hour',
+                   'old.error', 'Old error.', 'old.field'
+            FROM data_collection.raw_market_messages
+            """);
+
+        var claims = await repository.ClaimBatchAsync(
+            new NormalizationReplayFilter(1, 2, null, null),
+            snapshot,
+            100,
+            TimeSpan.FromMinutes(5),
+            default);
+
+        claims.Should().ContainSingle().Which.AttemptCount.Should().Be(2);
+        (await ExecuteScalarAsync<int>(
+            database.ConnectionString,
+            """
+            SELECT count(*)::integer
+            FROM data_collection.raw_message_normalizations
+            WHERE projection_version = 2
+              AND error_code IS NULL
+              AND error_message IS NULL
+              AND error_field IS NULL
+            """)).Should().Be(1);
+    }
+
     private async Task<PostgreSqlTestDatabase> CreateMigratedDatabaseAsync()
     {
         var database = await fixture.CreateDatabaseAsync();

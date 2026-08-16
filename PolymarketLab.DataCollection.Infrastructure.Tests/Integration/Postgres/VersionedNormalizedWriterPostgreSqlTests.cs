@@ -103,7 +103,7 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
         await using var database = await CreateMigratedDatabaseAsync();
         await SeedRawMessagesAsync(database.ConnectionString, 3);
         var claims = await ClaimAsync(database.ConnectionString, 1, 3);
-        var invalidIssue = new NormalizationIssue("json.invalid", "Malformed JSON.");
+        var invalidIssue = new NormalizationIssue("json.invalid", "Malformed JSON.", "$[1]");
         var unsupportedIssue = new NormalizationIssue("event.unsupported", "Unknown event type.");
         var failedIssue = new NormalizationIssue("processing.failed", "Technical failure.");
 
@@ -126,11 +126,11 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
         (await CountAsync(database.ConnectionString, "normalized_events")).Should().Be(0);
         var ledger = await ReadLedgerAsync(database.ConnectionString);
         ledger[claims[0].Message.RawMessageId].Should().Be(
-            new Ledger((int)NormalizationStatus.Invalid, "json.invalid", "Malformed JSON."));
+            new Ledger((int)NormalizationStatus.Invalid, "json.invalid", "Malformed JSON.", "$[1]"));
         ledger[claims[1].Message.RawMessageId].Should().Be(
-            new Ledger((int)NormalizationStatus.Unsupported, "event.unsupported", "Unknown event type."));
+            new Ledger((int)NormalizationStatus.Unsupported, "event.unsupported", "Unknown event type.", null));
         ledger[claims[2].Message.RawMessageId].Should().Be(
-            new Ledger((int)NormalizationStatus.Failed, "processing.failed", "Technical failure."));
+            new Ledger((int)NormalizationStatus.Failed, "processing.failed", "Technical failure.", null));
     }
 
     [Fact]
@@ -366,7 +366,7 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(
             """
-            SELECT raw_message_id, status, error_code, error_message
+            SELECT raw_message_id, status, error_code, error_message, error_field
             FROM data_collection.raw_message_normalizations
             ORDER BY raw_message_id
             """,
@@ -380,7 +380,8 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
                 new Ledger(
                     reader.GetInt32(1),
                     reader.IsDBNull(2) ? null : reader.GetString(2),
-                    reader.IsDBNull(3) ? null : reader.GetString(3)));
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetString(4)));
         }
 
         return result;
@@ -441,5 +442,9 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
         return (T)(await command.ExecuteScalarAsync())!;
     }
 
-    private sealed record Ledger(int Status, string? ErrorCode, string? ErrorMessage);
+    private sealed record Ledger(
+        int Status,
+        string? ErrorCode,
+        string? ErrorMessage,
+        string? ErrorField);
 }

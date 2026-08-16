@@ -101,7 +101,8 @@ internal sealed class RawMessageNormalizationReplayClaimRepository(
                 claimed_at = CURRENT_TIMESTAMP,
                 completed_at = NULL,
                 error_code = NULL,
-                error_message = NULL
+                error_message = NULL,
+                error_field = NULL
             WHERE target.status = @pending_status
                OR (
                    target.status = @processing_status

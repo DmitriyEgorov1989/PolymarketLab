@@ -49,7 +49,8 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
                 claimed_at = CURRENT_TIMESTAMP,
                 completed_at = NULL,
                 error_code = NULL,
-                error_message = NULL
+                error_message = NULL,
+                error_field = NULL
             WHERE normalization.status = @pending_status
                OR (
                     normalization.status = @processing_status

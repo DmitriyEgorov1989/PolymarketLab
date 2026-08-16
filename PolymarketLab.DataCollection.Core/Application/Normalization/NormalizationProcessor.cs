@@ -133,9 +133,12 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
         {
             throw;
         }
-        catch
+        catch (Exception exception)
         {
-            await TryCompleteFailedAsync(claim, cancellationToken);
+            var completionException = await TryCompleteFailedAsync(claim, cancellationToken);
+            var diagnosticException = completionException is null
+                ? exception
+                : new AggregateException(exception, completionException);
             return new MessageProcessingResult(
                 NormalizationStatus.Failed,
                 CreateError(
@@ -144,7 +147,8 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
                     null,
                     null,
                     NormalizationStatus.Failed,
-                    ProcessingFailure.Code));
+                    ProcessingFailure.Code,
+                    exception: diagnosticException));
         }
     }
 
@@ -161,9 +165,10 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
                     claim,
                     null,
                     null,
-                    null,
-                    NormalizationStatus.Invalid,
-                    decoded.Issue!.Code));
+                        null,
+                        NormalizationStatus.Invalid,
+                        decoded.Issue!.Code,
+                        decoded.Issue.Field));
         }
 
         var events = new List<NormalizedEvent>(decoded.Items.Count);
@@ -183,7 +188,8 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
                         null,
                         null,
                         NormalizationStatus.Invalid,
-                        item.Issue!.Code));
+                        item.Issue!.Code,
+                        item.Issue.Field));
                 continue;
             }
 
@@ -211,7 +217,8 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
                             eventType,
                             result.NormalizerVersion,
                             NormalizationStatus.Invalid,
-                            result.Issue!.Code));
+                            result.Issue!.Code,
+                            result.Issue.Field));
                     break;
                 case NormalizationOutcome.Unsupported:
                     firstUnsupported ??= (
@@ -222,7 +229,8 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
                             eventType,
                             result.NormalizerVersion,
                             NormalizationStatus.Unsupported,
-                            result.Issue!.Code));
+                            result.Issue!.Code,
+                            result.Issue.Field));
                     break;
                 default:
                     throw new InvalidOperationException(
@@ -246,7 +254,7 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
         return new CompletionBuild(NormalizationCompletion.Processed(events), null);
     }
 
-    private async Task TryCompleteFailedAsync(
+    private async Task<Exception?> TryCompleteFailedAsync(
         ClaimedRawMessage claim,
         CancellationToken cancellationToken)
     {
@@ -256,14 +264,16 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
                 claim,
                 NormalizationCompletion.Failed(ProcessingFailure),
                 cancellationToken);
+            return null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch
+        catch (Exception exception)
         {
             // Захват останется восстанавливаемым по timeout, а пакет продолжит обработку.
+            return exception;
         }
 
     }
@@ -274,7 +284,9 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
         string? eventType,
         int? normalizerVersion,
         NormalizationStatus status,
-        string errorCode) =>
+        string errorCode,
+        string? errorField = null,
+        Exception? exception = null) =>
         new(
             claim.Message.RawMessageId,
             claim.Message.SessionId,
@@ -283,7 +295,9 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
             claim.ProjectionVersion,
             normalizerVersion,
             status,
-            errorCode);
+            errorCode,
+            errorField,
+            exception);
 
     private static string? ReadEventType(System.Text.Json.JsonElement json)
     {

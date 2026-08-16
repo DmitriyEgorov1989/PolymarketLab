@@ -15,6 +15,7 @@ internal sealed class VersionedNormalizedWriter(
 {
     private const int MaximumErrorCodeLength = 200;
     private const int MaximumErrorMessageLength = 2000;
+    private const int MaximumErrorFieldLength = 500;
 
     public async Task<NormalizationWriteStatus> WriteAsync(
         ClaimedRawMessage claim,
@@ -108,7 +109,8 @@ internal sealed class VersionedNormalizedWriter(
             SET status = {(int)completion.Status},
                 completed_at = CURRENT_TIMESTAMP,
                 error_code = {(completion.Issue == null ? null : completion.Issue.Code)},
-                error_message = {(completion.Issue == null ? null : completion.Issue.Message)}
+                error_message = {(completion.Issue == null ? null : completion.Issue.Message)},
+                error_field = {(completion.Issue == null ? null : completion.Issue.Field)}
             WHERE raw_message_id = {claim.Message.RawMessageId}
               AND projection_version = {claim.ProjectionVersion}
               AND status = {(int)NormalizationStatus.Processing}
@@ -192,7 +194,8 @@ internal sealed class VersionedNormalizedWriter(
 
         if (completion.Issue is not null
             && (completion.Issue.Code.Length > MaximumErrorCodeLength
-                || completion.Issue.Message.Length > MaximumErrorMessageLength))
+                || completion.Issue.Message.Length > MaximumErrorMessageLength
+                || completion.Issue.Field?.Length > MaximumErrorFieldLength))
         {
             throw new ArgumentException(
                 "Normalization issue exceeds persistence limits.",

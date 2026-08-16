@@ -109,8 +109,11 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
         var leases = await ReadLeasesAsync(database.ConnectionString, 1);
         leases[rawMessageIds[0]].AttemptCount.Should().Be(1);
         leases[rawMessageIds[0]].ClaimedAt.Should().BeCloseTo(now, TimeSpan.FromSeconds(1));
+        leases[rawMessageIds[0]].ErrorField.Should().Be("old.field");
         leases[rawMessageIds[1]].ClaimedAt.Should().BeAfter(now);
+        leases[rawMessageIds[1]].ErrorField.Should().BeNull();
         leases[rawMessageIds[2]].ClaimedAt.Should().NotBeNull();
+        leases[rawMessageIds[2]].ErrorField.Should().BeNull();
     }
 
     [Fact]
@@ -198,8 +201,10 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
             connectionString,
             """
             INSERT INTO data_collection.raw_message_normalizations
-                (raw_message_id, projection_version, status, attempt_count, claimed_at)
-            VALUES (@raw_id, @projection_version, @status, @attempt_count, @claimed_at)
+                (raw_message_id, projection_version, status, attempt_count, claimed_at,
+                 error_code, error_message, error_field)
+            VALUES (@raw_id, @projection_version, @status, @attempt_count, @claimed_at,
+                    'old.error', 'Old error.', 'old.field')
             """,
             new NpgsqlParameter("raw_id", rawMessageId),
             new NpgsqlParameter("projection_version", projectionVersion),
@@ -215,7 +220,7 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(
             """
-            SELECT raw_message_id, attempt_count, claimed_at
+            SELECT raw_message_id, attempt_count, claimed_at, error_field
             FROM data_collection.raw_message_normalizations
             WHERE projection_version = @projection_version
             ORDER BY raw_message_id
@@ -230,7 +235,8 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
                 reader.GetInt64(0),
                 new Lease(
                     reader.GetInt32(1),
-                    reader.IsDBNull(2) ? null : reader.GetFieldValue<DateTimeOffset>(2)));
+                    reader.IsDBNull(2) ? null : reader.GetFieldValue<DateTimeOffset>(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3)));
         }
 
         return leases;
@@ -260,5 +266,8 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
         return (T)(await command.ExecuteScalarAsync())!;
     }
 
-    private sealed record Lease(int AttemptCount, DateTimeOffset? ClaimedAt);
+    private sealed record Lease(
+        int AttemptCount,
+        DateTimeOffset? ClaimedAt,
+        string? ErrorField);
 }
