@@ -27,7 +27,8 @@ dotnet user-secrets set "Database:ConnectionString" "Host=localhost;Port=5433;Da
     "ProjectionVersion": 1,
     "BatchSize": 500,
     "IdleDelay": "00:00:00.250",
-    "ClaimTimeout": "00:05:00"
+    "ClaimTimeout": "00:05:00",
+    "ShutdownTimeout": "00:00:30"
   }
 }
 ```
@@ -39,6 +40,7 @@ dotnet user-secrets set "Database:ConnectionString" "Host=localhost;Port=5433;Da
 | `BatchSize` | Максимальное число raw-сообщений в одном batch. Должно быть больше нуля. |
 | `IdleDelay` | Пауза после пустого batch. При включённом worker должна быть больше нуля. |
 | `ClaimTimeout` | Время, после которого незавершённый `Processing` считается устаревшим и может быть захвачен повторно. |
+| `ShutdownTimeout` | Максимальное время на завершение уже захваченного пакета после начала остановки. Новые пакеты при этом не захватываются. |
 
 Любой параметр можно переопределить переменной окружения, например:
 
@@ -65,8 +67,9 @@ dotnet ef database update --project .\PolymarketLab.Markets.Infrastructure\Polym
 dotnet ef database update --project .\PolymarketLab.DataCollection.Infrastructure\PolymarketLab.DataCollection.Infrastructure.csproj --startup-project .\PolymarketLab.Api\PolymarketLab.Api.csproj --context DataCollectionDbContext -- --environment Development
 ```
 
-Для нормализатора обязательны миграции `AddNormalizationSchema` и
-`AddNormalizationReplayIndexes`. Проверить применённые миграции можно так:
+Для нормализатора обязательны миграции `AddNormalizationSchema`,
+`AddNormalizationReplayIndexes` и `PersistNormalizationErrorField`. Проверить
+применённые миграции можно так:
 
 ```powershell
 docker compose exec postgres psql -U postgres -d polymarket_lab -c 'SELECT "MigrationId" FROM public."__EFMigrationsHistory" ORDER BY "MigrationId";'
@@ -175,7 +178,8 @@ SELECT
     normalization.attempt_count,
     normalization.completed_at,
     normalization.error_code,
-    normalization.error_message
+    normalization.error_message,
+    normalization.error_field
 FROM data_collection.raw_message_normalizations AS normalization
 JOIN data_collection.raw_market_messages AS raw
   ON raw.id = normalization.raw_message_id
@@ -201,7 +205,8 @@ SELECT
     normalization.attempt_count,
     normalization.completed_at,
     normalization.error_code,
-    normalization.error_message
+    normalization.error_message,
+    normalization.error_field
 FROM data_collection.raw_message_normalizations AS normalization
 JOIN data_collection.raw_market_messages AS raw
   ON raw.id = normalization.raw_message_id
@@ -229,7 +234,8 @@ SELECT
     normalization.claimed_at,
     normalization.completed_at,
     normalization.error_code,
-    normalization.error_message
+    normalization.error_message,
+    normalization.error_field
 FROM data_collection.raw_message_normalizations AS normalization
 JOIN data_collection.raw_market_messages AS raw
   ON raw.id = normalization.raw_message_id

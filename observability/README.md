@@ -55,10 +55,11 @@ Dashboard находится в folder `PolymarketLab`.
 
 API публикует Prometheus endpoint `/metrics` через OpenTelemetry.
 
-Текущий meter:
+Текущие meters:
 
 ```text
 PolymarketLab.DataCollection.RawMessages
+PolymarketLab.DataCollection.Normalizer
 ```
 
 Session id не должен добавляться в metric labels. Используй session id только в structured logs.
