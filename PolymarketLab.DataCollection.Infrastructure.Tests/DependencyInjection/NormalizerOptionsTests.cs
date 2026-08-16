@@ -30,6 +30,7 @@ public sealed class NormalizerOptionsTests
         options.BatchSize.Should().Be(500);
         options.IdleDelay.Should().Be(TimeSpan.FromMilliseconds(250));
         options.ClaimTimeout.Should().Be(TimeSpan.FromMinutes(5));
+        options.ShutdownTimeout.Should().Be(TimeSpan.FromSeconds(30));
     }
 
     [Fact]
@@ -41,7 +42,8 @@ public sealed class NormalizerOptionsTests
             [$"{NormalizerOptions.SectionName}:ProjectionVersion"] = "2",
             [$"{NormalizerOptions.SectionName}:BatchSize"] = "25",
             [$"{NormalizerOptions.SectionName}:IdleDelay"] = "00:00:00",
-            [$"{NormalizerOptions.SectionName}:ClaimTimeout"] = "00:10:00"
+            [$"{NormalizerOptions.SectionName}:ClaimTimeout"] = "00:10:00",
+            [$"{NormalizerOptions.SectionName}:ShutdownTimeout"] = "00:00:45"
         });
 
         var options = provider.GetRequiredService<IOptions<NormalizerOptions>>().Value;
@@ -51,6 +53,7 @@ public sealed class NormalizerOptionsTests
         options.BatchSize.Should().Be(25);
         options.IdleDelay.Should().Be(TimeSpan.Zero);
         options.ClaimTimeout.Should().Be(TimeSpan.FromMinutes(10));
+        options.ShutdownTimeout.Should().Be(TimeSpan.FromSeconds(45));
     }
 
     [Fact]
@@ -75,6 +78,8 @@ public sealed class NormalizerOptionsTests
     [InlineData("IdleDelay", "-00:00:00.001")]
     [InlineData("ClaimTimeout", "00:00:00")]
     [InlineData("ClaimTimeout", "-00:00:01")]
+    [InlineData("ShutdownTimeout", "00:00:00")]
+    [InlineData("ShutdownTimeout", "00:05:01")]
     public void AddDataCollectionInfrastructure_WithInvalidOptions_ShouldFailAtStartup(
         string option,
         string value)

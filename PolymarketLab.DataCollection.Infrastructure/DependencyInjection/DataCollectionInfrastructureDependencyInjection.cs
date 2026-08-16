@@ -112,6 +112,10 @@ public static class DataCollectionInfrastructureDependencyInjection
             .Validate(
                 options => options.ClaimTimeout > TimeSpan.Zero,
                 "Normalizer claim timeout must be positive.")
+            .Validate(
+                options => options.ShutdownTimeout > TimeSpan.Zero
+                           && options.ShutdownTimeout <= NormalizerOptions.MaximumShutdownTimeout,
+                "Normalizer shutdown timeout must be positive and not exceed five minutes.")
             .ValidateOnStart();
 
         services.AddDbContext<DataCollectionDbContext>((serviceProvider, options) =>

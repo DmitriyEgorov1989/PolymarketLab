@@ -33,12 +33,21 @@ internal sealed class NormalizationBackgroundService(
             try
             {
                 var startedAt = timeProvider.GetTimestamp();
-                var result = await ProcessBatchAsync(stoppingToken);
+                using var batchCancellation = new CancellationTokenSource();
+                using var stopRegistration = stoppingToken.Register(
+                    () => batchCancellation.CancelAfter(options.ShutdownTimeout));
+                if (stoppingToken.IsCancellationRequested)
+                    return;
+
+                var result = await ProcessBatchAsync(batchCancellation.Token);
                 var duration = timeProvider.GetElapsedTime(startedAt);
                 telemetry.RecordBatch(options.ProjectionVersion, result, duration);
                 LogBatch(result, duration);
                 LogMessageErrors(result.Errors);
                 consecutiveFailures = 0;
+                if (stoppingToken.IsCancellationRequested)
+                    return;
+
                 if (result.Total == 0)
                     await Task.Delay(options.IdleDelay, timeProvider, stoppingToken);
             }
@@ -108,14 +117,17 @@ internal sealed class NormalizationBackgroundService(
                 error.Status == NormalizationStatus.Failed
                     ? LogLevel.Error
                     : LogLevel.Warning,
-                "Normalizer message failed. RawMessageId: {RawMessageId}, SessionId: {SessionId}, RawItemIndex: {RawItemIndex}, EventType: {EventType}, ProjectionVersion: {ProjectionVersion}, NormalizerVersion: {NormalizerVersion}, ErrorCode: {ErrorCode}.",
+                default,
+                error.Exception,
+                "Normalizer message failed. RawMessageId: {RawMessageId}, SessionId: {SessionId}, RawItemIndex: {RawItemIndex}, EventType: {EventType}, ProjectionVersion: {ProjectionVersion}, NormalizerVersion: {NormalizerVersion}, ErrorCode: {ErrorCode}, ErrorField: {ErrorField}.",
                 error.RawMessageId,
                 error.SessionId.Value,
                 error.RawItemIndex,
                 error.EventType,
                 error.ProjectionVersion,
                 error.NormalizerVersion,
-                error.ErrorCode);
+                error.ErrorCode,
+                error.ErrorField);
         }
     }
 }

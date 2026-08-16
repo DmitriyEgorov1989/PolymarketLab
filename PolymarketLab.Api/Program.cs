@@ -70,13 +70,15 @@ builder.Services.AddOpenTelemetry()
 builder.Services.AddOptions<HostOptions>()
     .Configure<
         IOptions<CollectorLifecycleOptions>,
-        IOptions<RawMessageIngestionOptions>>((hostOptions, lifecycle, ingestion) =>
+        IOptions<RawMessageIngestionOptions>,
+        IOptions<NormalizerOptions>>((hostOptions, lifecycle, ingestion, normalizer) =>
         {
             hostOptions.ServicesStartConcurrently = false;
             hostOptions.ServicesStopConcurrently = false;
             hostOptions.ShutdownTimeout = TimeSpan.FromTicks(checked(
                 lifecycle.Value.ShutdownTimeout.Ticks * 3
                 + ingestion.Value.ShutdownTimeout.Ticks
+                + normalizer.Value.ShutdownTimeout.Ticks
                 + TimeSpan.FromSeconds(5).Ticks));
         });
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi

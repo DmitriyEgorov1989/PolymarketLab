@@ -79,12 +79,40 @@ public sealed class NormalizationBackgroundServiceTests
     }
 
     [Fact]
-    public async Task StopAsync_DuringActiveBatch_ShouldCancelProcessorAndDisposeScope()
+    public async Task StopAsync_DuringActiveBatch_ShouldDrainBatchAndDisposeScope()
+    {
+        var releaseBatch = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var batchCancellationRequested = false;
+        await using var fixture = CreateFixture(
+            new NormalizerOptions(),
+            async (_, cancellationToken) =>
+            {
+                using var registration = cancellationToken.Register(
+                    () => batchCancellationRequested = true);
+                await releaseBatch.Task;
+                return ProcessedBatch();
+            });
+        await fixture.Worker.StartAsync(default);
+        await fixture.State.WaitForCallAsync();
+
+        var stop = fixture.Worker.StopAsync(default);
+        await Task.Delay(100);
+
+        stop.IsCompleted.Should().BeFalse();
+        batchCancellationRequested.Should().BeFalse();
+        releaseBatch.TrySetResult();
+        await stop.WaitAsync(TimeSpan.FromSeconds(1));
+        fixture.State.DisposeCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task StopAsync_WhenDrainTimesOut_ShouldCancelProcessorAndDisposeScope()
     {
         var cancellationObserved = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         await using var fixture = CreateFixture(
-            new NormalizerOptions(),
+            new NormalizerOptions { ShutdownTimeout = TimeSpan.FromMilliseconds(50) },
             async (_, cancellationToken) =>
             {
                 try
@@ -101,7 +129,7 @@ public sealed class NormalizationBackgroundServiceTests
         await fixture.Worker.StartAsync(default);
         await fixture.State.WaitForCallAsync();
 
-        await fixture.Worker.StopAsync(default);
+        await fixture.Worker.StopAsync(default).WaitAsync(TimeSpan.FromSeconds(1));
 
         await cancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(1));
         fixture.State.DisposeCount.Should().Be(1);
@@ -185,7 +213,8 @@ public sealed class NormalizationBackgroundServiceTests
                     3,
                     1,
                     NormalizationStatus.Invalid,
-                    "normalization.book.invalid")
+                    "normalization.book.invalid",
+                    "bids[2].price")
             ]);
         await using var fixture = CreateFixture(
             new NormalizerOptions
@@ -223,9 +252,63 @@ public sealed class NormalizationBackgroundServiceTests
         messageError.Should().Contain(new KeyValuePair<string, object?>(
             "ErrorCode",
             "normalization.book.invalid"));
+        messageError.Should().Contain(new KeyValuePair<string, object?>(
+            "ErrorField",
+            "bids[2].price"));
         logger.Entries.Select(entry => entry.Message).Should().NotContain(message =>
             message.Contains("payload", StringComparison.OrdinalIgnoreCase)
             || message.Contains("{\"", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FailedMessage_ShouldLogTechnicalException()
+    {
+        var logger = new CapturingLogger<NormalizationBackgroundService>();
+        var exception = new InvalidOperationException("Database write failed.");
+        var sessionId = CollectorSessionId.Create(Guid.NewGuid()).Value;
+        var result = new NormalizationBatchResult(
+            1,
+            0,
+            0,
+            0,
+            1,
+            10,
+            10,
+            [
+                new NormalizationMessageError(
+                    10,
+                    sessionId,
+                    null,
+                    null,
+                    1,
+                    null,
+                    NormalizationStatus.Failed,
+                    "normalization.processing.failed",
+                    null,
+                    exception)
+            ]);
+        await using var fixture = CreateFixture(
+            new NormalizerOptions { IdleDelay = TimeSpan.FromHours(1) },
+            (call, cancellationToken) => call == 1
+                ? Task.FromResult(result)
+                : Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken)
+                    .ContinueWith(
+                        _ => EmptyBatch(),
+                        CancellationToken.None,
+                        TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default),
+            logger);
+
+        await fixture.Worker.StartAsync(default);
+        await fixture.State.WaitForCallAsync();
+        await fixture.State.WaitForCallAsync();
+
+        var error = logger.Entries.Should().ContainSingle(entry =>
+            entry.Level == LogLevel.Error).Which;
+        error.Exception.Should().BeSameAs(exception);
+        error.Properties.Should().Contain(new KeyValuePair<string, object?>(
+            "ErrorCode",
+            "normalization.processing.failed"));
     }
 
     private static WorkerFixture CreateFixture(
@@ -327,12 +410,17 @@ public sealed class NormalizationBackgroundServiceTests
             var properties = state is IEnumerable<KeyValuePair<string, object?>> values
                 ? values.Where(value => value.Key != "{OriginalFormat}").ToDictionary()
                 : [];
-            Entries.Add(new LogEntry(logLevel, formatter(state, exception), properties));
+            Entries.Add(new LogEntry(
+                logLevel,
+                formatter(state, exception),
+                properties,
+                exception));
         }
     }
 
     private sealed record LogEntry(
         LogLevel Level,
         string Message,
-        IReadOnlyDictionary<string, object?> Properties);
+        IReadOnlyDictionary<string, object?> Properties,
+        Exception? Exception);
 }
