@@ -1,5 +1,6 @@
 using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.OrderBooks.Models;
+using PolymarketLab.DataCollection.Core.Application.OrderBooks.Resynchronization.Models;
 using Xunit;
 
 namespace PolymarketLab.DataCollection.Core.Tests.Application.OrderBooks.Models;
@@ -36,6 +37,23 @@ public sealed class OrderBookModelsTests
         ((int)OrderBookIntegrityIssueType.EventOrderViolation).Should().Be(7);
         ((int)OrderBookIntegrityIssueType.GapDetected).Should().Be(8);
         ((int)OrderBookIntegrityIssueType.SnapshotHashMismatch).Should().Be(9);
+    }
+
+    [Fact]
+    public void OrderBookResynchronizationEnums_ShouldHaveStableValues()
+    {
+        ((int)OrderBookResyncReason.Manual).Should().Be(1);
+        ((int)OrderBookResyncReason.Reconnect).Should().Be(2);
+        ((int)OrderBookResyncReason.BestBidMismatch).Should().Be(3);
+        ((int)OrderBookResyncReason.BestAskMismatch).Should().Be(4);
+        ((int)OrderBookResyncReason.SpreadMismatch).Should().Be(5);
+        ((int)OrderBookResyncReason.TickSizeMismatch).Should().Be(6);
+        ((int)OrderBookResyncReason.CrossedBook).Should().Be(7);
+        ((int)OrderBookResyncReason.GapDetected).Should().Be(8);
+        ((int)OrderBookResyncReason.StaleState).Should().Be(9);
+        ((int)OrderBookResyncReason.HashMismatch).Should().Be(10);
+        ((int)OrderBookResyncOutcome.Synchronized).Should().Be(1);
+        ((int)OrderBookResyncOutcome.Failed).Should().Be(2);
     }
 
     [Fact]

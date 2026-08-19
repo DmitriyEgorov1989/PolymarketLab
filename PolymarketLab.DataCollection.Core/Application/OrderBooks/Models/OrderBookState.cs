@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using PolymarketLab.DataCollection.Core.Application.OrderBooks.Resynchronization.Models;
 using BestBidAskRecord = PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection.Models.BestBidAskRecord;
 using BookSnapshotRecord = PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection.Models.BookSnapshotRecord;
 using OrderBookEventPosition = PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection.Models.OrderBookEventPosition;
@@ -13,10 +14,15 @@ namespace PolymarketLab.DataCollection.Core.Application.OrderBooks.Models;
 /// <summary>Текущее состояние стакана одного актива.</summary>
 public sealed class OrderBookState
 {
-    private readonly SortedDictionary<decimal, OrderBookLevel> _bids = [];
-    private readonly SortedDictionary<decimal, OrderBookLevel> _asks = [];
+    private SortedDictionary<decimal, OrderBookLevel> _bids = [];
+    private SortedDictionary<decimal, OrderBookLevel> _asks = [];
+    private readonly object _syncRoot = new();
     private readonly TimeProvider _timeProvider;
     private long? _lastKnownSourceTimestamp;
+    private long _version;
+    private long _resynchronizationSequence;
+    private long? _activeResynchronizationId;
+    private bool _hasFullSnapshot;
 
     /// <summary>Создаёт состояние, для которого полный снимок ещё не получен.</summary>
     /// <param name="assetId">Идентификатор актива, которому принадлежит состояние.</param>
@@ -35,11 +41,17 @@ public sealed class OrderBookState
     /// <summary>Идентификатор актива, которому принадлежит состояние.</summary>
     public string AssetId { get; }
 
+    /// <summary>Идентификатор условия рынка из последнего полного снимка.</summary>
+    public string? MarketConditionId { get; private set; }
+
+    /// <summary>Внешний hash последнего применённого изменения стакана.</summary>
+    public string? Hash { get; private set; }
+
     /// <summary>Уровни покупки, индексированные по цене.</summary>
-    public IReadOnlyDictionary<decimal, OrderBookLevel> Bids { get; }
+    public IReadOnlyDictionary<decimal, OrderBookLevel> Bids { get; private set; }
 
     /// <summary>Уровни продажи, индексированные по цене.</summary>
-    public IReadOnlyDictionary<decimal, OrderBookLevel> Asks { get; }
+    public IReadOnlyDictionary<decimal, OrderBookLevel> Asks { get; private set; }
 
     /// <summary>Последний известный шаг цены или <see langword="null" />.</summary>
     public decimal? TickSize { get; private set; }
@@ -68,9 +80,18 @@ public sealed class OrderBookState
     /// <summary>Степень доверия к актуальности состояния.</summary>
     public OrderBookSyncStatus Status { get; private set; }
 
+    /// <summary>Монотонная версия локального состояния для обнаружения конкурентных изменений.</summary>
+    public long Version => Interlocked.Read(ref _version);
+
     /// <summary>Полностью заменяет состояние данными нормализованного снимка стакана.</summary>
     /// <param name="book">Нормализованный полный снимок.</param>
     public void Apply(BookSnapshotRecord book)
+    {
+        lock (_syncRoot)
+            ApplyCore(book);
+    }
+
+    private void ApplyCore(BookSnapshotRecord book)
     {
         ArgumentNullException.ThrowIfNull(book);
         if (!string.Equals(AssetId, book.AssetId, StringComparison.Ordinal))
@@ -86,24 +107,34 @@ public sealed class OrderBookState
         if (!AcceptSourceTimestamp(book.SourceTimestamp, book.NormalizedEventId))
             return;
 
-        _bids.Clear();
-        _asks.Clear();
-        AddLevels(_bids, bids);
-        AddLevels(_asks, asks);
+        ReplaceLevels(bids, asks);
 
+        MarketConditionId = book.MarketConditionId;
+        Hash = book.Hash;
         TickSize = book.TickSize;
+        _hasFullSnapshot = true;
         CommitEvent(book.Position, book.SourceTimestamp);
-        RecalculateDerivedState(preserveIntegrityMismatch: false);
+        RecalculateDerivedState(
+            preserveIntegrityMismatch: false,
+            preserveResynchronizing: false);
+        if (Status == OrderBookSyncStatus.Synchronized)
+            _activeResynchronizationId = null;
     }
 
     /// <summary>Атомарно применяет изменения уровней одного нормализованного события.</summary>
     /// <param name="changes">Изменения уровней, принадлежащие одному событию.</param>
     public void Apply(IReadOnlyCollection<PriceChangeRecord> changes)
     {
+        lock (_syncRoot)
+            ApplyCore(changes);
+    }
+
+    private void ApplyCore(IReadOnlyCollection<PriceChangeRecord> changes)
+    {
         ArgumentNullException.ThrowIfNull(changes);
         if (changes.Count == 0)
             throw new ArgumentException("Price change group cannot be empty.", nameof(changes));
-        if (Status == OrderBookSyncStatus.Uninitialized)
+        if (!_hasFullSnapshot)
         {
             throw new InvalidOperationException(
                 "A full snapshot must be applied before price changes.");
@@ -156,12 +187,14 @@ public sealed class OrderBookState
         if (!AcceptSourceTimestamp(first.SourceTimestamp, first.NormalizedEventId))
             return;
 
+        var bids = new SortedDictionary<decimal, OrderBookLevel>(_bids);
+        var asks = new SortedDictionary<decimal, OrderBookLevel>(_asks);
         foreach (var change in orderedChanges)
         {
             var levels = change.Side switch
             {
-                TradeSide.Buy => _bids,
-                TradeSide.Sell => _asks,
+                TradeSide.Buy => bids,
+                TradeSide.Sell => asks,
                 _ => throw new ArgumentOutOfRangeException(
                     nameof(changes),
                     "Price change side is not supported.")
@@ -173,6 +206,8 @@ public sealed class OrderBookState
                 levels[change.Price] = new OrderBookLevel(change.Price, change.Size);
         }
 
+        ReplaceLevels(bids, asks);
+        Hash = orderedChanges.LastOrDefault(change => change.Hash is not null)?.Hash ?? Hash;
         CommitEvent(first.Position, first.SourceTimestamp);
         RecalculateDerivedState();
     }
@@ -181,8 +216,14 @@ public sealed class OrderBookState
     /// <param name="change">Нормализованное изменение шага цены.</param>
     public void Apply(TickSizeChangeRecord change)
     {
+        lock (_syncRoot)
+            ApplyCore(change);
+    }
+
+    private void ApplyCore(TickSizeChangeRecord change)
+    {
         ArgumentNullException.ThrowIfNull(change);
-        if (Status == OrderBookSyncStatus.Uninitialized || !TickSize.HasValue)
+        if (!_hasFullSnapshot || !TickSize.HasValue)
         {
             throw new InvalidOperationException(
                 "A full snapshot with a tick size must be applied before tick size changes.");
@@ -204,7 +245,7 @@ public sealed class OrderBookState
             IntegrityIssue = CreateIssue(
                 OrderBookIntegrityIssueType.TickSizeMismatch,
                 $"Local tick size '{Format(TickSize)}' does not match event old tick size '{Format(change.OldTickSize)}'.");
-            Status = OrderBookSyncStatus.Suspect;
+            SetSuspectOrResynchronizingStatus();
             return;
         }
 
@@ -216,8 +257,14 @@ public sealed class OrderBookState
     /// <param name="quote">Нормализованные лучшие цены актива.</param>
     public void Apply(BestBidAskRecord quote)
     {
+        lock (_syncRoot)
+            ApplyCore(quote);
+    }
+
+    private void ApplyCore(BestBidAskRecord quote)
+    {
         ArgumentNullException.ThrowIfNull(quote);
-        if (Status == OrderBookSyncStatus.Uninitialized)
+        if (!_hasFullSnapshot)
         {
             throw new InvalidOperationException(
                 "A full snapshot must be applied before best bid and ask checks.");
@@ -239,11 +286,176 @@ public sealed class OrderBookState
             return;
 
         IntegrityIssue = issue;
-        Status = OrderBookSyncStatus.Suspect;
+        SetSuspectOrResynchronizingStatus();
     }
 
-    private void RecalculateDerivedState(bool preserveIntegrityMismatch = true)
+    internal bool TryBeginResynchronization(
+        OrderBookResyncReason reason,
+        out OrderBookResynchronizationToken token)
     {
+        if (!Enum.IsDefined(reason))
+            throw new ArgumentOutOfRangeException(nameof(reason));
+
+        lock (_syncRoot)
+        {
+            var canBegin = reason switch
+            {
+                OrderBookResyncReason.Manual or OrderBookResyncReason.Reconnect =>
+                    Status != OrderBookSyncStatus.Resynchronizing,
+                OrderBookResyncReason.BestBidMismatch
+                    or OrderBookResyncReason.BestAskMismatch
+                    or OrderBookResyncReason.SpreadMismatch
+                    or OrderBookResyncReason.TickSizeMismatch
+                    or OrderBookResyncReason.CrossedBook =>
+                    Status == OrderBookSyncStatus.Suspect,
+                OrderBookResyncReason.GapDetected or OrderBookResyncReason.StaleState =>
+                    Status == OrderBookSyncStatus.Stale,
+                OrderBookResyncReason.HashMismatch =>
+                    Status is OrderBookSyncStatus.Suspect or OrderBookSyncStatus.Stale,
+                _ => throw new ArgumentOutOfRangeException(nameof(reason))
+            };
+            if (!canBegin || _activeResynchronizationId.HasValue)
+            {
+                token = default;
+                return false;
+            }
+
+            var operationId = ++_resynchronizationSequence;
+            var initialStatus = Status;
+            var initialIntegrityIssue = IntegrityIssue;
+            _activeResynchronizationId = operationId;
+            Status = OrderBookSyncStatus.Resynchronizing;
+            token = new OrderBookResynchronizationToken(
+                operationId,
+                ++_version,
+                initialStatus,
+                initialIntegrityIssue);
+            return true;
+        }
+    }
+
+    /// <summary>Помечает состояние неактуальным до получения нового полного снимка.</summary>
+    public void MarkStale(OrderBookIntegrityIssue issue)
+    {
+        ArgumentNullException.ThrowIfNull(issue);
+
+        lock (_syncRoot)
+        {
+            IntegrityIssue = issue;
+            Status = _activeResynchronizationId.HasValue
+                ? OrderBookSyncStatus.Resynchronizing
+                : OrderBookSyncStatus.Stale;
+            ++_version;
+        }
+    }
+
+    internal bool TryRestartResynchronization(
+        OrderBookResynchronizationToken currentToken,
+        out OrderBookResynchronizationToken nextToken)
+    {
+        lock (_syncRoot)
+        {
+            if (_activeResynchronizationId != currentToken.OperationId)
+            {
+                nextToken = default;
+                return false;
+            }
+
+            Status = OrderBookSyncStatus.Resynchronizing;
+            nextToken = new OrderBookResynchronizationToken(
+                currentToken.OperationId,
+                ++_version,
+                currentToken.InitialStatus,
+                currentToken.InitialIntegrityIssue);
+            return true;
+        }
+    }
+
+    internal bool TryReplaceFromSnapshot(
+        OrderBookSnapshot snapshot,
+        OrderBookResynchronizationToken token)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (!string.Equals(AssetId, snapshot.AssetId, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "Snapshot asset id does not match the order book state.",
+                nameof(snapshot));
+        }
+
+        var bids = BuildSnapshotLevels(snapshot.Bids, nameof(snapshot));
+        var asks = BuildSnapshotLevels(snapshot.Asks, nameof(snapshot));
+        var bestBid = bids.Count == 0 ? (decimal?)null : bids.Last().Key;
+        var bestAsk = asks.Count == 0 ? (decimal?)null : asks.First().Key;
+        if (bestBid.HasValue && bestAsk.HasValue && bestBid.Value > bestAsk.Value)
+        {
+            throw new ArgumentException(
+                "Snapshot is crossed and cannot replace the order book state.",
+                nameof(snapshot));
+        }
+
+        lock (_syncRoot)
+        {
+            if (_activeResynchronizationId != token.OperationId
+                || _version != token.ExpectedVersion
+                || Status != OrderBookSyncStatus.Resynchronizing)
+            {
+                return false;
+            }
+            if (_lastKnownSourceTimestamp.HasValue
+                && snapshot.SourceTimestamp < _lastKnownSourceTimestamp.Value)
+            {
+                throw new ArgumentException(
+                    "Snapshot source timestamp is older than the local order book state.",
+                    nameof(snapshot));
+            }
+
+            ReplaceLevels(bids, asks);
+            MarketConditionId = snapshot.MarketConditionId;
+            Hash = snapshot.Hash;
+            TickSize = snapshot.TickSize;
+            SourceTimestamp = snapshot.SourceTimestamp;
+            _lastKnownSourceTimestamp = snapshot.SourceTimestamp;
+            _hasFullSnapshot = true;
+            RecalculateDerivedState(
+                preserveIntegrityMismatch: false,
+                preserveResynchronizing: false);
+            _activeResynchronizationId = null;
+            ++_version;
+            return true;
+        }
+    }
+
+    internal bool TryCompleteResynchronizationFailure(
+        OrderBookResynchronizationToken token,
+        OrderBookResyncReason reason)
+    {
+        lock (_syncRoot)
+        {
+            if (_activeResynchronizationId != token.OperationId)
+                return false;
+
+            _activeResynchronizationId = null;
+            if (reason == OrderBookResyncReason.Manual)
+            {
+                Status = token.InitialStatus;
+                IntegrityIssue = token.InitialIntegrityIssue;
+            }
+            else
+            {
+                Status = OrderBookSyncStatus.Stale;
+            }
+            ++_version;
+            return true;
+        }
+    }
+
+    private void RecalculateDerivedState(
+        bool preserveIntegrityMismatch = true,
+        bool preserveResynchronizing = true)
+    {
+        var preserveStale = Status == OrderBookSyncStatus.Stale
+            && IsPersistentMismatch(IntegrityIssue);
         BestBid = _bids.Count == 0 ? null : _bids.Last().Key;
         BestAsk = _asks.Count == 0 ? null : _asks.First().Key;
         Spread = BestBid.HasValue && BestAsk.HasValue
@@ -262,7 +474,11 @@ public sealed class OrderBookState
                     OrderBookIntegrityIssueType.CrossedBook,
                     $"Local best bid '{Format(BestBid)}' is greater than local best ask '{Format(BestAsk)}'.")
             : null;
-        Status = IntegrityIssue is not null
+        Status = preserveResynchronizing && _activeResynchronizationId.HasValue
+            ? OrderBookSyncStatus.Resynchronizing
+            : preserveStale
+            ? OrderBookSyncStatus.Stale
+            : IntegrityIssue is not null
             ? OrderBookSyncStatus.Suspect
             : OrderBookSyncStatus.Synchronized;
     }
@@ -326,7 +542,8 @@ public sealed class OrderBookState
                 OrderBookIntegrityIssueType.EventOrderViolation,
                 $"Event source timestamp '{sourceTimestamp.Value}' is less than the last known timestamp '{_lastKnownSourceTimestamp.Value}'.",
                 normalizedEventId);
-            Status = OrderBookSyncStatus.Suspect;
+            SetSuspectOrResynchronizingStatus();
+            ++_version;
             return false;
         }
 
@@ -344,6 +561,7 @@ public sealed class OrderBookState
         {
             _lastKnownSourceTimestamp = sourceTimestamp.Value;
         }
+        ++_version;
     }
 
     private static bool IsPersistentMismatch(OrderBookIntegrityIssue? issue)
@@ -352,7 +570,18 @@ public sealed class OrderBookState
             or OrderBookIntegrityIssueType.BestAskMismatch
             or OrderBookIntegrityIssueType.SpreadMismatch
             or OrderBookIntegrityIssueType.TickSizeMismatch
-            or OrderBookIntegrityIssueType.EventOrderViolation;
+            or OrderBookIntegrityIssueType.EventOrderViolation
+            or OrderBookIntegrityIssueType.GapDetected
+            or OrderBookIntegrityIssueType.SnapshotHashMismatch;
+    }
+
+    private void SetSuspectOrResynchronizingStatus()
+    {
+        Status = _activeResynchronizationId.HasValue
+            ? OrderBookSyncStatus.Resynchronizing
+            : Status == OrderBookSyncStatus.Stale
+            ? OrderBookSyncStatus.Stale
+            : OrderBookSyncStatus.Suspect;
     }
 
     private static string Format(decimal? value)
@@ -379,11 +608,32 @@ public sealed class OrderBookState
         return levels;
     }
 
-    private static void AddLevels(
-        SortedDictionary<decimal, OrderBookLevel> target,
-        IEnumerable<KeyValuePair<decimal, OrderBookLevel>> source)
+    private static SortedDictionary<decimal, OrderBookLevel> BuildSnapshotLevels(
+        IEnumerable<OrderBookSnapshotLevel> source,
+        string parameterName)
     {
-        foreach (var level in source)
-            target.Add(level.Key, level.Value);
+        var levels = new SortedDictionary<decimal, OrderBookLevel>();
+        foreach (var sourceLevel in source)
+        {
+            var level = new OrderBookLevel(sourceLevel.Price, sourceLevel.Size);
+            if (!levels.TryAdd(level.Price, level))
+            {
+                throw new ArgumentException(
+                    $"Snapshot contains duplicate price '{level.Price}'.",
+                    parameterName);
+            }
+        }
+
+        return levels;
+    }
+
+    private void ReplaceLevels(
+        SortedDictionary<decimal, OrderBookLevel> bids,
+        SortedDictionary<decimal, OrderBookLevel> asks)
+    {
+        _bids = bids;
+        _asks = asks;
+        Bids = new ReadOnlyDictionary<decimal, OrderBookLevel>(_bids);
+        Asks = new ReadOnlyDictionary<decimal, OrderBookLevel>(_asks);
     }
 }

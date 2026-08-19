@@ -5,6 +5,7 @@ using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using PolymarketLab.DataCollection.Core.Application.DependencyInjection;
 using PolymarketLab.DataCollection.Core.Application.Normalization;
+using PolymarketLab.DataCollection.Core.Application.OrderBooks.Resynchronization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.ReplayNormalization;
@@ -84,6 +85,14 @@ public sealed class DataCollectionApplicationDependencyInjectionTests
             descriptor.ServiceType == typeof(INormalizationDispatcher)
             && descriptor.ImplementationType == typeof(NormalizationDispatcher)
             && descriptor.Lifetime == ServiceLifetime.Singleton);
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(IOrderBookStateRegistry)
+            && descriptor.ImplementationType == typeof(OrderBookStateRegistry)
+            && descriptor.Lifetime == ServiceLifetime.Singleton);
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(IOrderBookResynchronizer)
+            && descriptor.ImplementationType == typeof(OrderBookResynchronizer)
+            && descriptor.Lifetime == ServiceLifetime.Transient);
         services.Should().ContainSingle(descriptor =>
             descriptor.ServiceType == typeof(IPipelineBehavior<
                 ReplayNormalizationCommand,
