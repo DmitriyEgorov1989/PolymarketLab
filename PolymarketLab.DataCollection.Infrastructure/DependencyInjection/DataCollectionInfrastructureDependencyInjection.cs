@@ -10,6 +10,7 @@ using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime.WebSockets;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.MarketIntegration;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Normalization;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.OrderBookRest;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.CollectorSession;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.Normalization;
@@ -132,6 +133,7 @@ public static class DataCollectionInfrastructureDependencyInjection
             ICollectorSessionProgressRepository,
             CollectorSessionProgressRepository>();
         services.AddScoped<IMarketCollectionSource, MarketCollectionSource>();
+        services.AddHttpClient<IOrderBookSnapshotSource, PolymarketOrderBookClient>();
         services.AddScoped<IRawMarketMessageWriter, RawMarketMessageWriter>();
         services.AddScoped<
             IRawMessageNormalizationClaimRepository,

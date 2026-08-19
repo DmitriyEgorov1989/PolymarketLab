@@ -37,6 +37,7 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
             .Build();
         var services = new ServiceCollection();
         services.AddSingleton<IHostApplicationLifetime, StubHostApplicationLifetime>();
+        services.AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance);
         services.AddSingleton<IMarketsReader, StubMarketsReader>();
         services.AddSingleton<ILogger<CollectorWebSocketWorker>>(
             NullLogger<CollectorWebSocketWorker>.Instance);
@@ -78,6 +79,7 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
         AssertScoped<INormalizedMessageWriter>(firstScope, secondScope);
         AssertScoped<INormalizationProcessor>(firstScope, secondScope);
         AssertScoped<INormalizationBacklogReader>(firstScope, secondScope);
+        AssertTransient<IOrderBookSnapshotSource>(firstScope);
         AssertScoped<DataCollectionDbContext>(firstScope, secondScope);
         AssertSingleton<NormalizerTelemetry>(firstScope, secondScope);
         AssertSingleton<IRawMessageDecoder>(firstScope, secondScope);
@@ -130,6 +132,15 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
         var second = secondScope.ServiceProvider.GetRequiredService<TService>();
 
         first.Should().BeSameAs(repeated);
+        first.Should().NotBeSameAs(second);
+    }
+
+    private static void AssertTransient<TService>(IServiceScope scope)
+        where TService : notnull
+    {
+        var first = scope.ServiceProvider.GetRequiredService<TService>();
+        var second = scope.ServiceProvider.GetRequiredService<TService>();
+
         first.Should().NotBeSameAs(second);
     }
 
