@@ -1,81 +1,94 @@
-# AGENTS.md
+# PolymarketLab Agent Contract
 
-## Общение
+## Проект
 
-- Отвечай на русском языке, если пользователь явно не попросил другой язык.
-- В общении с пользователем не смешивай русские и английские слова без необходимости; английские обозначения оставляй только для имён переменных, классов, методов, файлов и других элементов кода.
-- Пиши комментарии понятным русским языком и не чередуй русские и английские слова без необходимости; английские обозначения оставляй только для имён типов, методов, свойств, статусов и других элементов кода.
-- В финале кратко укажи изменения и причины, затронутые файлы, выполненные тесты и сборки.
+PolymarketLab регистрирует рынки Polymarket, собирает исходные WebSocket-сообщения в PostgreSQL и строит нормализованные проекции. Backend является источником истины; frontend управляет им через HTTP API.
 
-## Документация кода
+Стек: .NET 10, ASP.NET Core, MediatR, FluentValidation, EF Core, PostgreSQL, React 19, TypeScript, Vite, TanStack Query, xUnit и Vitest.
 
-- Для моделей и интерфейсов всегда добавляй содержательные XML-комментарии `///` к типу и всем его членам.
-- Документируй значения перечислений, свойства, методы, параметры конструкторов, возвращаемые значения и значимую семантику `null`.
-- Не добавляй комментарии, которые только повторяют имя элемента и не объясняют его назначение или ограничения.
+## Карта репозитория
 
-## Структура и wiring
+- `PolymarketLab.Api` - единственный executable host.
+- `PolymarketLab.Markets.*` - регистрация и чтение рынков.
+- `PolymarketLab.DataCollection.*` - collector runtime, raw ingestion и проекции.
+- `PolymarketLab.Framework`, `PolymarketLab.SharedKernel` - общие HTTP и domain primitives.
+- `PolymarketLab.Web` - React dashboard; действуют также `PolymarketLab.Web/AGENTS.md`.
+- `docs` - контракты и проектный контекст.
+- `observability` - Prometheus, Grafana, Loki и Alloy.
 
-- Единственный executable host — `PolymarketLab.Api/Program.cs`; папки `/src/...` в `PolymarketLab.slnx` виртуальные, физической `src` нет.
-- `PolymarketLab.Markets.Core/PolymarketLab.Markets.Core.csproj` содержит Domain, Application и Ports; имя папки, сборки и root namespace — `PolymarketLab.Markets.Core`.
-- `Program.cs` подключает Markets Application, Infrastructure и controllers из Presentation. Application DI сканирует MediatR handlers и FluentValidation validators; общий validation pipeline возвращает ожидаемые ошибки как `ErrorList`. Infrastructure DI регистрирует Npgsql context, repository и Gamma typed client.
-- DataCollection Application, Infrastructure и Presentation подключены к host. `CollectorController` публикует read/start/stop endpoints; Infrastructure регистрирует `DataCollectionDbContext`, repositories, singleton collector runtime и bounded raw-message ingestion worker. При запуске активные сессии предыдущего процесса переводятся в `Interrupted/ProcessTerminated`; при штатной остановке текущие сессии проходят `Stopping -> Stopped/ApplicationShutdown`. WebSocket collector принимает text messages, собирает fragments и сохраняет исходные UTF-8 bytes batch-ами.
-- Все проекты используют `net10.0`; `global.json`, package lock и repo-local tool manifest отсутствуют.
+Архитектурные инварианты и ссылки на scoped-документы находятся в `docs/agent-context.md`. Перед изменением соответствующего модуля прочитай этот документ и ближайший `AGENTS.md`.
 
-## Проверка
+## Команды
 
-Запускай команды из корня репозитория:
+Setup из корня:
 
 ```powershell
-dotnet build .\PolymarketLab.slnx
+dotnet restore .\PolymarketLab.slnx
+npm ci --prefix .\PolymarketLab.Web
+.\.harness\setup.ps1
+```
+
+Локальный запуск:
+
+```powershell
+docker compose up -d postgres
+dotnet run --project .\PolymarketLab.Api\PolymarketLab.Api.csproj --launch-profile http
+npm --prefix .\PolymarketLab.Web run dev
+```
+
+Проверки:
+
+```powershell
 dotnet test .\PolymarketLab.slnx
-dotnet test .\PolymarketLab.Markets.Domain.Tests\PolymarketLab.Markets.Domain.Tests.csproj
-dotnet test .\PolymarketLab.Markets.Infrastructure.Tests\PolymarketLab.Markets.Infrastructure.Tests.csproj
-dotnet test .\PolymarketLab.Markets.Domain.Tests\PolymarketLab.Markets.Domain.Tests.csproj --filter "FullyQualifiedName~PolymarketUrlExtensionsTests"
-dotnet test .\PolymarketLab.Markets.Domain.Tests\PolymarketLab.Markets.Domain.Tests.csproj --filter "FullyQualifiedName~RegisterMarketHandlerTests"
-dotnet test .\PolymarketLab.Markets.Infrastructure.Tests\PolymarketLab.Markets.Infrastructure.Tests.csproj --filter "FullyQualifiedName~MarketRepositoryTests"
+dotnet build .\PolymarketLab.slnx
+npm --prefix .\PolymarketLab.Web run test
+npm --prefix .\PolymarketLab.Web run typecheck
+npm --prefix .\PolymarketLab.Web run build
+git diff --check
 ```
 
-- Во время разработки сначала запускай самый узкий тест, затем `dotnet test .\PolymarketLab.slnx`; при изменении project references, EF model или host wiring также запускай solution build.
-- PostgreSQL integration tests используют `Testcontainers.PostgreSql`, сами запускают изолированный контейнер и не требуют локально настроенной БД. Для полного test suite нужен доступный Docker daemon; repository unit tests используют EF InMemory, model tests только строят Npgsql metadata, Gamma tests используют stub `HttpMessageHandler`.
-- Отдельных migration-application и API end-to-end тестов пока нет.
+Сначала запускай самый узкий подходящий тест, затем расширяй проверку. Полные .NET integration tests требуют доступный Docker daemon. Отдельная lint-команда в репозитории не настроена.
 
-## Локальный запуск
+## Рабочие правила
 
-1. Задай `Database:ConnectionString` через API User Secrets или `Database__ConnectionString`; значения нет в `appsettings`.
-2. Запусти PostgreSQL: `docker compose up -d postgres`; проверь `docker compose ps`.
-3. Примени миграции командой ниже: приложение не вызывает `Migrate()` или `EnsureCreated()` автоматически.
-4. Запусти API: `dotnet run --project .\PolymarketLab.Api\PolymarketLab.Api.csproj --launch-profile http`.
+- Отвечай по-русски, если пользователь не попросил другой язык.
+- Сохраняй существующую архитектуру и делай минимальные изменения в рамках задачи.
+- Фактический backend-код контроллеров и DTO имеет приоритет над документацией API.
+- Для C# моделей и интерфейсов добавляй содержательные XML-комментарии к типам и членам, включая семантику `null`.
+- Ожидаемые ошибки не превращай в исключения и не скрывай исходный код или сообщение integration error.
+- Не изменяй и не удаляй чужие незавершённые изменения.
+- Не добавляй credentials, токены, connection strings или полные raw payload в код, документы, команды и отчёты.
 
-- Compose публикует PostgreSQL на host port `5433` (container port `5432`) и хранит данные в named volume; не меняй на `5432` без проверки занятости порта.
-- HTTP profile: `http://localhost:5285`. Только в Development доступны Swagger `/swagger` и OpenAPI `/openapi/v1.json`.
-- Endpoint регистрации: `POST /api/Market`, body: `{ "marketUri": "https://polymarket.com/event/<slug>" }`.
-- Регистрация требует доступных PostgreSQL и Gamma API. Parser извлекает event slug, а gateway вызывает `/markets/slug/{slug}`; соответствие multi-market events пока не решено.
+Можно самостоятельно менять код, тесты и документацию в пределах поставленной задачи и запускать локальные проверки. Сначала спроси разрешение на:
 
-## EF Core и миграции
+- изменение публичного HTTP-контракта или границ модулей;
+- создание или применение EF migration;
+- обновление версий зависимостей;
+- добавление MCP, hooks, CI, runtime permissions или credentials;
+- destructive Docker, database или Git-операции;
+- commit, push, rebase, создание branch или PR.
 
-```powershell
-dotnet ef migrations add <MigrationName> --project .\PolymarketLab.Markets.Infrastructure\PolymarketLab.Markets.Infrastructure.csproj --startup-project .\PolymarketLab.Api\PolymarketLab.Api.csproj --context MarketsDbContext --output-dir Adapters\Postgres\Migrations -- --environment Development
-dotnet ef database update --project .\PolymarketLab.Markets.Infrastructure\PolymarketLab.Markets.Infrastructure.csproj --startup-project .\PolymarketLab.Api\PolymarketLab.Api.csproj --context MarketsDbContext -- --environment Development
-dotnet ef migrations add <MigrationName> --project .\PolymarketLab.DataCollection.Infrastructure\PolymarketLab.DataCollection.Infrastructure.csproj --startup-project .\PolymarketLab.Api\PolymarketLab.Api.csproj --context DataCollectionDbContext --output-dir Adapters\Postgres\Migrations -- --environment Development
-dotnet ef database update --project .\PolymarketLab.DataCollection.Infrastructure\PolymarketLab.DataCollection.Infrastructure.csproj --startup-project .\PolymarketLab.Api\PolymarketLab.Api.csproj --context DataCollectionDbContext -- --environment Development
-```
+Не изменяй вручную migration snapshots, сгенерированные артефакты, файлы под `bin`, `obj`, `node_modules`, `dist` и byte-sensitive fixtures в `PolymarketLab.DataCollection.Infrastructure.Tests/Fixtures/Polymarket`.
 
-- Миграции и snapshots находятся в `PolymarketLab.Markets.Infrastructure/Adapters/Postgres/Migrations` и `PolymarketLab.DataCollection.Infrastructure/Adapters/Postgres/Migrations`; `dotnet-ef` не закреплён manifest-файлом.
-- Уникальность identity рынка обеспечивают отдельные constraints для `slug`, `external_market_id`, `condition_id`. Только их PostgreSQL `23505` repository преобразует в `MarketInsertStatus.UniqueConflict`; token conflicts и прочие DB errors не маскируй.
-- Repository queries используют `AsNoTracking()` и загружают `Tokens`; aggregate не должен возвращаться частично материализованным.
-- Переходы `CollectorSession` сохраняются через compare-and-set по ожидаемому `Status`; `status` является EF concurrency token. Конфликт нужно перечитать и разрешить, не выполняй безусловный update aggregate.
+## Definition Of Done
 
-## Соглашения Markets
+- Поведение покрыто тестом на подходящем уровне либо явно объяснено, почему тест не нужен.
+- Выполнены релевантные test, typecheck и build-команды; ограничения окружения указаны.
+- `git diff --check` проходит, а итоговый diff не содержит несвязанных изменений и секретов.
+- Документация и API-контракты обновлены, если поведение изменилось.
+- Финальный отчёт содержит причины, изменённые файлы и результаты проверок.
 
-- Инварианты держи в Domain, orchestration — в MediatR handler, внешние и persistence детали — в Infrastructure.
-- Value objects и entities с инвариантами создавай через фабрики; приватные пустые конструкторы нужны EF Core.
-- На ports/domain уровне ожидаемые ошибки возвращаются как `Result<T, Error>`/`UnitResult<Error>`; command/controller boundary использует `Result<T, ErrorList>`.
-- Повторная регистрация того же рынка — success с тем же ID и `Created = false`; новая запись возвращает `Created = true`.
-- Расширяй существующий flow, не добавляй параллельные parser/gateway/repository реализации.
+## Project Skills
 
-## Известные пробелы
+Канонические project-local skills находятся в `.harness/skills`, их происхождение закреплено в `.harness/harness.lock`. OpenCode обнаруживает их через локальную `.agents/skills` junction, создаваемую явной командой `.\.harness\setup.ps1`. После clone или перемещения репозитория выполни setup и `.\.harness\health.ps1`.
 
-- Framework возвращает `Envelope`, не raw response DTO. HTTP mapping ошибок неполный: новые `ErrorType` могут уйти в 500, пока не обновлён `ResponseExtensions`.
-- Нет exception-handler/problem-details middleware и автоматического применения миграций.
-- Автономная ошибка сборщика переводит сохранённую активную сессию в `Failed` через обработчик прикладного слоя; ошибка этой записи останавливает приложение.
-- Согласование сессий при запуске рассчитано на один экземпляр приложения и прекращает запуск при ошибке PostgreSQL. Владение сессией несколькими экземплярами, повторное подключение и автоматическое возобновление сбора пока не реализованы.
+Project contract всегда выше procedural skill. Действуют следующие overrides:
+
+- `superpowers:test-driven-development` соответствует local `tdd`, а `superpowers:verification-before-completion` - Definition of Done и командам проекта.
+- Отсутствующие `using-git-worktrees`, `subagent-driven-development`, `executing-plans` и прочие capabilities не устанавливай автоматически; используй доступные runtime-возможности и repo contract.
+- `brainstorming` используй для крупных или неоднозначных capabilities, не как обязательную церемонию перед bounded-задачей; `writing-plans` - для многомодульной работы с несколькими существенными этапами или по прямому запросу.
+- `brainstorming`, `domain-modeling`, `writing-plans` и `research` не создают постоянные docs, `CONTEXT`, ADR или plans и не commit-ят без явного запроса; для domain knowledge используй `docs/agent-context.md` и текущие domain docs.
+- `codebase-design` не переопределяет established DDD/.NET/React terminology или module boundaries.
+- `code-review` не требует issue tracker: specification может быть запросом пользователя, текущим diff или существующим документом проекта.
+- `systematic-debugging` не показывает secrets или raw payload, использует PowerShell и test-команды проекта; POSIX helper опционален.
+- `writing-skills` не разрешает удалять user changes, commit/push или создавать external artifacts.

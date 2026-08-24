@@ -3,6 +3,8 @@
 ###############################################################################
 * text=auto
 PolymarketLab.DataCollection.Infrastructure.Tests/Fixtures/Polymarket/*.json -text
+.harness/skills/** -text
+.harness/licenses/** -text
 
 ###############################################################################
 # Set default behavior for command prompt diff.

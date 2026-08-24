@@ -1,237 +1,49 @@
-# PolymarketLab.Web AGENTS.md
+# PolymarketLab.Web Agent Contract
 
-## Назначение
+## Контекст
 
-Этот файл содержит правила для разработки frontend-части PolymarketLab.
+Перед frontend-задачей прочитай:
 
-Перед frontend-задачами также читать:
+- `../AGENTS.md` и `../docs/agent-context.md`;
+- `../docs/frontend-context.md` для продуктового MVP;
+- `../docs/frontend-api-contract.md` для документированного HTTP-контракта;
+- фактические backend controllers и DTO, которые имеют приоритет при расхождении.
 
-- `../AGENTS.md` - общие правила репозитория;
-- `../docs/frontend-context.md` - продуктовый контекст и MVP;
-- backend-код контроллеров и DTO - фактический API-контракт.
+Frontend является одной React dashboard-страницей. Он управляет backend и отображает рынки, collector sessions, counters и ошибки. Браузер не подключается напрямую к Polymarket WebSocket.
 
-Если документы расходятся с backend-кодом, приоритет у фактического backend-контракта.
+## Архитектура
 
-## Роль frontend
-
-Frontend не собирает данные Polymarket самостоятельно. Он управляет backend и отображает состояние рынков, collector sessions, counters и ошибки.
-
-Не подключаться из браузера напрямую к Polymarket WebSocket.
-
-## Базовый стек
-
-- React;
-- TypeScript;
-- Vite;
-- TanStack Query;
-- CSS Modules или обычный CSS.
-
-Для тестов:
-
-- Vitest;
-- React Testing Library;
-- MSW;
-- Playwright только для критического smoke/e2e-сценария.
-
-Zod допустим для runtime-проверки API-ответов, если это не усложняет MVP. React Router добавлять только при появлении нескольких реальных страниц; первая версия может быть одной dashboard-страницей.
-
-## Архитектурные правила
-
-- Backend - единственный источник истины для статусов и данных.
-- Не выставлять `Running`, `Completed` или другие server statuses вручную после mutation.
-- Server state хранить в TanStack Query.
-- В локальном React state хранить только UI-состояние: введённый URL, выбранный market id, раскрытые панели, локальные флаги.
+- Server state хранить в TanStack Query; React state использовать только для UI-состояния.
 - Не дублировать server state в Context, localStorage или component state.
-- Компоненты не должны выполнять HTTP напрямую.
-- HTTP-вызовы размещать в API-слое и использовать через query/mutation hooks.
-- Не использовать `any`; для неизвестного значения использовать `unknown` и проверку.
-- Не менять смысл backend enum; в TypeScript-модели сохранять исходные значения backend.
-- Не скрывать backend errors за общим сообщением.
+- Не выставлять server statuses вручную после mutation: отображать фактический ответ и обновлять queries.
+- HTTP-вызовы держать в `src/api` и вызывать через query/mutation hooks, не из компонентов.
+- Не использовать `any`; неизвестные значения принимать как `unknown` и проверять.
+- Сохранять точные значения backend enum и структуру `Envelope`.
+- Не выдумывать endpoints или DTO. Backend errors показывать безопасно, не теряя HTTP status, error code и полезное сообщение.
+- Не добавлять абстракции, router или global state manager до появления реальной необходимости.
 
-## Проверка фактического API
+## UI И Тесты
 
-Перед реализацией каждого запроса проверить текущие backend endpoints и DTO в коде.
+- Поддерживать loading, empty, error и success states.
+- Даты показывать в локальном времени, counters форматировать через `Intl.NumberFormat`, `null` показывать как `-`.
+- Неизвестный статус отображать как `Unknown`; token ids и таблицы не должны ломать mobile viewport.
+- Основной сценарий должен работать с клавиатуры; inputs имеют labels, focus видим, статус не передаётся только цветом.
+- Форму регистрации не очищать при ошибке и блокировать во время mutation; после успеха очистить и обновить список.
+- Start блокировать без выбранного рынка, во время mutation и при активной session. Stop разрешать только для рабочей session и блокировать до ответа или изменения статуса.
+- `unpersisted = messagesReceived - messagesPersisted` считать только производным отображаемым значением, не server state.
+- Новую логику проверять на подходящем уровне: API/error parsing и formatters unit-тестами, пользовательские состояния component-тестами.
+- Component tests должны покрывать loading/empty/error/success, регистрацию success/error, выбор рынка, Start/Stop disabled states, Failed/lastError и polling активной session.
 
-Зафиксированный контракт первого вертикального среза находится в
-`../docs/frontend-api-contract.md`. Канонические endpoints:
-
-- `GET /api/Market`;
-- `GET /api/Market/{marketId}`;
-- `POST /api/Market`;
-- `GET /api/Collector/{sessionId}`;
-- `GET /api/Collector/by-market/{marketId}`;
-- `POST /api/Collector`;
-- `POST /api/Collector/{sessionId}/stop`;
-- все ответы проходят через `Envelope`.
-
-Не выдумывать отсутствующие endpoints, DTO и поля. Если frontend требует read endpoints для списков, деталей или counters, сначала явно согласовать backend-задачу.
-
-## Рекомендуемая структура
-
-```text
-PolymarketLab.Web/
-  public/
-  src/
-    app/
-      App.tsx
-      providers.tsx
-      queryClient.ts
-    api/
-      httpClient.ts
-      envelope.ts
-      marketsApi.ts
-      collectorsApi.ts
-    features/
-      markets/
-        components/
-        hooks/
-        model/
-      collectors/
-        components/
-        hooks/
-        model/
-    pages/
-      CollectorDashboardPage.tsx
-    shared/
-      components/
-      formatters/
-      styles/
-      utils/
-    main.tsx
-    vite-env.d.ts
-  .env.example
-  index.html
-  package.json
-  tsconfig.json
-  vite.config.ts
-```
-
-Не создавать абстракции заранее. Новый helper или слой должен решать уже существующую проблему.
-
-## UI-правила MVP
-
-- Первая версия - одна dashboard-страница.
-- Форма добавления рынка: одно поле URL, submit по кнопке и Enter, disabled во время mutation, значение не очищать при ошибке, после успеха очистить.
-- Список рынков: loading, empty, error, success states.
-- Детали рынка: question, slug, condition id, dates, outcomes, token ids.
-- Token id не должен ломать layout; добавить перенос, обрезку или copy-кнопку.
-- Collector panel: status, createdAt, startedAt, stoppedAt, lastMessageAt, messagesReceived, messagesPersisted, reconnectCount, lastError.
-- `unpersisted = received - persisted` считать производным отображаемым значением, не server state.
-- Start недоступен без выбранного рынка, во время mutation и при активной session.
-- Stop доступен только для рабочей session и блокируется после нажатия до ответа или изменения статуса.
-
-## Ошибки
-
-HTTP client должен:
-
-1. проверить `response.ok`;
-2. попытаться прочитать JSON;
-3. распознать backend `Envelope` и возможный Problem Details;
-4. сформировать безопасную fallback-ошибку для пустого или невалидного body;
-5. не терять HTTP status.
-
-Не показывать пользователю `[object Object]`, stack trace браузера или сырую HTML-страницу proxy.
-
-## Форматирование данных
-
-- Даты парсить как ISO 8601 и отображать в локальном времени пользователя.
-- Исходные значения в query cache не изменять.
-- `null` отображать как `-`.
-- Counters форматировать через `Intl.NumberFormat`.
-- Неизвестный статус отображать безопасно как `Unknown`, не падать при рендере.
-
-## Accessibility и responsive
-
-- Каждый input имеет label.
-- Кнопки имеют понятные accessible names.
-- Focus state видим.
-- Статус не передаётся только цветом.
-- Ошибки связаны с полем через `aria-describedby`, если применимо.
-- Таблицы и token ids не ломают mobile viewport.
-- Основной сценарий доступен с клавиатуры.
-
-## Тестирование
-
-Проверять новую логику подходящим уровнем тестов.
-
-Минимальные unit tests:
-
-- разбор backend errors/envelope;
-- форматирование дат;
-- форматирование counters;
-- определение активного статуса;
-- вычисление `unpersisted`.
-
-Минимальные component tests:
-
-- форма добавления рынка success/error;
-- список рынков loading/empty/error/success;
-- выбор рынка;
-- disabled-состояния Start/Stop;
-- отображение Failed и lastError;
-- polling активной session.
-
-## Порядок реализации
-
-Работать маленькими этапами:
-
-1. Каркас Vite React TypeScript.
-2. QueryClientProvider и базовые styles.
-3. Environment config и HTTP client.
-4. API layer под фактический backend.
-5. Markets read model.
-6. Регистрация рынка.
-7. Collector status и polling.
-8. Start/Stop collector.
-9. Тесты, responsive, accessibility, README.
-
-После каждого этапа проект должен собираться.
-
-## Запреты
-
-Не делать без отдельного задания:
-
-- менять backend;
-- добавлять авторизацию;
-- добавлять wallet connection;
-- добавлять trading/order placement;
-- добавлять Redux или другой global state manager на будущее;
-- добавлять SignalR;
-- добавлять frontend WebSocket к Polymarket;
-- добавлять просмотр raw messages;
-- делать большой refactoring вне текущей задачи;
-- отключать TypeScript strict mode;
-- игнорировать TypeScript errors;
-- добавлять зависимости без объяснимой пользы.
-
-## Проверки после изменений
-
-Выполнять доступные команды из `package.json`:
+Проверки из этой директории:
 
 ```powershell
-npm run lint
-npm run typecheck
 npm run test
+npm run typecheck
 npm run build
 ```
 
-Если конкретной команды нет, не выдумывать результат. Указать, что именно было выполнено.
+Отдельного `npm run lint` нет. Не заявляй его результат.
 
-Также проверять:
+## Границы
 
-```powershell
-git diff --check
-git diff
-```
-
-## Формат отчёта
-
-После frontend-задачи кратко указать:
-
-1. что реализовано;
-2. какие файлы изменены;
-3. какие архитектурные решения приняты;
-4. какие проверки выполнены;
-5. результаты build/tests/lint/typecheck;
-6. какие ограничения или несоответствия API обнаружены;
-7. что осталось следующим шагом.
+Без отдельного задания не меняй backend, не добавляй authentication, wallet, trading, SignalR, frontend WebSocket, raw-message viewer, Redux, Playwright или новые dependencies. Не отключай TypeScript strict mode и не игнорируй TypeScript errors.

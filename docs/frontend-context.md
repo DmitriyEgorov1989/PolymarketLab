@@ -4,13 +4,9 @@
 
 Этот документ фиксирует продуктовый контекст frontend MVP для PolymarketLab.
 
-Агентские правила разработки frontend находятся в:
-
-`PolymarketLab.Web/AGENTS.md`
-
-Исходный внешний документ, на основе которого создан этот контекст:
-
-`C:\Users\Dmitrii\Downloads\FRONTEND_OPENCODE_README.md`
+Агентские правила разработки frontend находятся в
+`PolymarketLab.Web/AGENTS.md`. Документ самодостаточен и не зависит от локальных
+файлов вне репозитория.
 
 ## Контекст продукта
 
