@@ -29,6 +29,11 @@
       "license": "MIT",
       "license_path": ".harness/licenses/superpowers-MIT.txt",
       "license_sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "id": "project-local",
+      "role": "skill-content",
+      "provenance": "project-local"
     }
   ],
   "skills": [
@@ -55,6 +60,18 @@
       "source_id": "mattpocock-via-harness",
       "source_path": "skills/vendor/mattpocock/engineering/domain-modeling",
       "content_mode": "byte-for-byte"
+    },
+    {
+      "name": "polymarket-integration",
+      "source_id": "project-local",
+      "source_path": ".harness/skills/polymarket-integration",
+      "content_mode": "project-authored"
+    },
+    {
+      "name": "polymarketlab-feature",
+      "source_id": "project-local",
+      "source_path": ".harness/skills/polymarketlab-feature",
+      "content_mode": "project-authored"
     },
     {
       "name": "research",
@@ -106,7 +123,9 @@
     ".harness/skills/domain-modeling/agents/openai.yaml": "f6bf2aa996c6e6f53fdd0708e18a0d16a56aed8322cca59fedbe3c0d2c75f06b",
     ".harness/skills/domain-modeling/CONTEXT-FORMAT.md": "b8cc318f2a4285b530e908b6bc43901c3c5cd11100362636bbc4216639bef597",
     ".harness/skills/domain-modeling/SKILL.md": "9617041db9b0f6606ecf974e2061c83596b05059b5bb20ddb884c60f147c70e9",
-    ".harness/skills/REGISTRY.md": "69898a44505021a6e4063c7fe2e9a667d27e7c3181cb6690cae1b4b776a1f06a",
+    ".harness/skills/polymarket-integration/SKILL.md": "a0991f2da5abebc02e899162e1b718050bc8d6e32c6513a2e8c6c19ff012c6f0",
+    ".harness/skills/polymarketlab-feature/SKILL.md": "895d0c12301d2e5259ae5c9957e7d02a42c91ffc7106e9d427fe4bdc3a4b7d0d",
+    ".harness/skills/REGISTRY.md": "16fa02b15e62a1f4f48caf14d97517a68a25dde4c43b01e26e5e0746d25dd0cd",
     ".harness/skills/research/agents/openai.yaml": "9b4c470d63221c1f68f22df70b83e2f12401b317babe0d1b7b5f24a974474d0d",
     ".harness/skills/research/SKILL.md": "af378829f015775a3bcd65ff466826722e99359017ae6bae227ca4c9bd14049c",
     ".harness/skills/systematic-debugging/condition-based-waiting.md": "e89fec8400d6cd50f43407cec9fab50976ba4d55d0ec2eb51c0bd68036b54c26",

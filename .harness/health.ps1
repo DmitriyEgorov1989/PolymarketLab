@@ -44,6 +44,10 @@ $expectedSources = @{
         license_path = ".harness/licenses/superpowers-MIT.txt"
         license_sha256 = "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
     }
+    "project-local" = @{
+        role = "skill-content"
+        provenance = "project-local"
+    }
 }
 
 if ($lock.package_version -ne "1.2.0") {
@@ -70,14 +74,16 @@ foreach ($source in $lock.sources) {
         }
     }
 
-    $licensePath = Join-Path $repositoryRoot $source.license_path.Replace("/", [IO.Path]::DirectorySeparatorChar)
-    if (-not (Test-Path -LiteralPath $licensePath -PathType Leaf)) {
-        throw "Pinned source license is missing: $($source.license_path)"
-    }
+    if ($source.PSObject.Properties.Name -contains "license_path") {
+        $licensePath = Join-Path $repositoryRoot $source.license_path.Replace("/", [IO.Path]::DirectorySeparatorChar)
+        if (-not (Test-Path -LiteralPath $licensePath -PathType Leaf)) {
+            throw "Pinned source license is missing: $($source.license_path)"
+        }
 
-    $licenseHash = (Get-FileHash -LiteralPath $licensePath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($licenseHash -ne $source.license_sha256.ToLowerInvariant()) {
-        throw "Pinned source license drift detected: $($source.id)"
+        $licenseHash = (Get-FileHash -LiteralPath $licensePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($licenseHash -ne $source.license_sha256.ToLowerInvariant()) {
+            throw "Pinned source license drift detected: $($source.id)"
+        }
     }
 }
 
@@ -86,6 +92,8 @@ $expectedSkills = @(
     "code-review",
     "codebase-design",
     "domain-modeling",
+    "polymarket-integration",
+    "polymarketlab-feature",
     "research",
     "systematic-debugging",
     "tdd",
@@ -96,7 +104,7 @@ $expectedSkills = @(
 $actualSkillNames = @($lock.skills | ForEach-Object { $_.name })
 if ($actualSkillNames.Count -ne $expectedSkills.Count -or
     (Compare-Object -ReferenceObject $expectedSkills -DifferenceObject $actualSkillNames)) {
-    throw "Harness lock skill inventory does not match the canonical nine-skill set."
+    throw "Harness lock skill inventory does not match the canonical eleven-skill set."
 }
 
 foreach ($skill in $lock.skills) {
@@ -105,8 +113,14 @@ foreach ($skill in $lock.skills) {
         throw "Skill has an unknown content source: $($skill.name)"
     }
 
-    if (-not $skill.source_path -or $skill.content_mode -ne "byte-for-byte") {
-        throw "Skill provenance is incomplete: $($skill.name)"
+    if ($skill.source_id -eq "project-local") {
+        $expectedPath = ".harness/skills/$($skill.name)"
+        if ($skill.source_path -ne $expectedPath -or $skill.content_mode -ne "project-authored") {
+            throw "Project-local skill provenance is incomplete: $($skill.name)"
+        }
+    }
+    elseif (-not $skill.source_path -or $skill.content_mode -ne "byte-for-byte") {
+        throw "Upstream skill provenance is incomplete: $($skill.name)"
     }
 }
 

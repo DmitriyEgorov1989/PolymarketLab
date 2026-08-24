@@ -2,7 +2,7 @@
 
 ## Назначение
 
-`.harness/skills` является единственной физической копией девяти project-local skills: `brainstorming`, `code-review`, `codebase-design`, `domain-modeling`, `research`, `systematic-debugging`, `tdd`, `writing-plans` и `writing-skills`. Runtime-specific MCP, credentials, permissions, hooks и model settings harness не управляет.
+`.harness/skills` является единственной физической копией одиннадцати project-local skills: `brainstorming`, `code-review`, `codebase-design`, `domain-modeling`, `polymarket-integration`, `polymarketlab-feature`, `research`, `systematic-debugging`, `tdd`, `writing-plans` и `writing-skills`. Runtime-specific MCP, credentials, permissions, hooks и model settings harness не управляет.
 
 Snapshot адаптирует принципы `agent-harness`, но не является совместимым installation target его CLI: набор собирается из нескольких pinned sources, а upstream health требует symlink, ненадёжный при текущем Windows `core.symlinks=false`.
 
@@ -26,6 +26,7 @@ Health проверяет pinned repositories, revisions и licenses всех so
 - Harness approach: `https://github.com/KirillSachkov/agent-harness.git` at exact commit `5ab9b5d44c57bfa042e2f62730af95c0e9ab7dc4`, package version `1.2.0`.
 - Matt Pocock skills: byte-for-byte snapshot from `https://github.com/mattpocock/skills.git` at exact commit `9c9f36ccd3995266cd675468af71639c8dde1ec5`, vendored through the pinned harness revision: `code-review`, `codebase-design`, `domain-modeling`, `research` and `tdd`.
 - Superpowers skills: byte-for-byte direct snapshot from `https://github.com/obra/superpowers.git` at exact commit `b36e0829c6d0140e93cfef2ca599b1b07d4a7797`: `brainstorming`, `systematic-debugging`, `writing-plans` and `writing-skills`.
+- Project-authored skills: `polymarket-integration` and `polymarketlab-feature`; their provenance is recorded as `project-local` and no upstream source or license is attributed to them.
 - `writing-skills` выбран вместо Anthropic `skill-creator`; `skill-creator` не vendored.
 - Selected source paths and every managed file hash are recorded in `harness.lock`.
 - Licenses are preserved under `.harness/licenses`.
