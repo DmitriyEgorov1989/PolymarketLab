@@ -9,18 +9,18 @@ public sealed record BestBidAskRecord
     /// <param name="normalizedEventId">Идентификатор сохранённого нормализованного события.</param>
     /// <param name="assetId">Идентификатор актива.</param>
     /// <param name="sourceTimestamp">Epoch milliseconds из исходного события или <see langword="null" />.</param>
-    /// <param name="bestBid">Лучшая цена покупки.</param>
-    /// <param name="bestAsk">Лучшая цена продажи.</param>
-    /// <param name="spread">Спред из нормализованной проекции.</param>
+    /// <param name="bestBid">Лучшая цена покупки или <see langword="null" /> для пустой стороны.</param>
+    /// <param name="bestAsk">Лучшая цена продажи или <see langword="null" /> для пустой стороны.</param>
+    /// <param name="spread">Спред или <see langword="null" />, если одна из сторон пуста.</param>
     public BestBidAskRecord(
         long rawMessageId,
         int rawItemIndex,
         long normalizedEventId,
         string assetId,
         long? sourceTimestamp,
-        decimal bestBid,
-        decimal bestAsk,
-        decimal spread)
+        decimal? bestBid,
+        decimal? bestAsk,
+        decimal? spread)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(assetId);
 
@@ -51,12 +51,12 @@ public sealed record BestBidAskRecord
     /// <summary>Epoch milliseconds из исходного события или <see langword="null" />.</summary>
     public long? SourceTimestamp { get; }
 
-    /// <summary>Лучшая цена покупки.</summary>
-    public decimal BestBid { get; }
+    /// <summary>Лучшая цена покупки или <see langword="null" /> для пустой стороны.</summary>
+    public decimal? BestBid { get; }
 
-    /// <summary>Лучшая цена продажи.</summary>
-    public decimal BestAsk { get; }
+    /// <summary>Лучшая цена продажи или <see langword="null" /> для пустой стороны.</summary>
+    public decimal? BestAsk { get; }
 
-    /// <summary>Спред, полученный из нормализованной проекции без пересчёта.</summary>
-    public decimal Spread { get; }
+    /// <summary>Спред из нормализованной проекции или <see langword="null" />.</summary>
+    public decimal? Spread { get; }
 }

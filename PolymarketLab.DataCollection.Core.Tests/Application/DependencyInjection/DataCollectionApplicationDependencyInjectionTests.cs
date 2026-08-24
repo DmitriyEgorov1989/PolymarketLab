@@ -5,6 +5,7 @@ using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using PolymarketLab.DataCollection.Core.Application.DependencyInjection;
 using PolymarketLab.DataCollection.Core.Application.Normalization;
+using PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection;
 using PolymarketLab.DataCollection.Core.Application.OrderBooks.Resynchronization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
@@ -84,6 +85,10 @@ public sealed class DataCollectionApplicationDependencyInjectionTests
         services.Should().ContainSingle(descriptor =>
             descriptor.ServiceType == typeof(INormalizationDispatcher)
             && descriptor.ImplementationType == typeof(NormalizationDispatcher)
+            && descriptor.Lifetime == ServiceLifetime.Singleton);
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(IOrderBookProjector)
+            && descriptor.ImplementationType == typeof(OrderBookProjector)
             && descriptor.Lifetime == ServiceLifetime.Singleton);
         services.Should().ContainSingle(descriptor =>
             descriptor.ServiceType == typeof(IOrderBookStateRegistry)

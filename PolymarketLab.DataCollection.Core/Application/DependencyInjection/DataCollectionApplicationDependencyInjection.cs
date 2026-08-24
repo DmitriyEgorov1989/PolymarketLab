@@ -4,6 +4,7 @@ using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using PolymarketLab.DataCollection.Core.Application.Normalization;
+using PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection;
 using PolymarketLab.DataCollection.Core.Application.OrderBooks.Resynchronization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
@@ -52,6 +53,7 @@ public static class DataCollectionApplicationDependencyInjection
             ICollectorSessionShutdownHandler,
             CollectorSessionShutdownHandler>();
         services.AddSingleton<INormalizationDispatcher, NormalizationDispatcher>();
+        services.AddSingleton<IOrderBookProjector, OrderBookProjector>();
         services.AddSingleton<IOrderBookStateRegistry, OrderBookStateRegistry>();
         services.AddTransient<IOrderBookResynchronizer, OrderBookResynchronizer>();
         services.TryAddSingleton(TimeProvider.System);
