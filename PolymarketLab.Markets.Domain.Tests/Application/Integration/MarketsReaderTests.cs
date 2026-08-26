@@ -210,7 +210,11 @@ public sealed class MarketsReaderTests
 
         public int CallCount { get; private set; }
 
-        public Task<Result<ExternalMarket, Error>> GetBySlugAsync(
+        public Task<Result<ExternalEvent, Error>> GetByEventSlugAsync(
+            EventSlug eventSlug,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<Result<ExternalMarket, Error>> GetByMarketSlugAsync(
             MarketSlug slug,
             CancellationToken cancellationToken)
         {

@@ -31,6 +31,6 @@ internal static class PolymarketUrlErrors
 
     public static Error SlugMissing => new(
         "polymarket.url.slug.missing",
-        "Market slug is missing.",
+        "Event slug is missing.",
         ErrorType.ValueIsRequired);
 }

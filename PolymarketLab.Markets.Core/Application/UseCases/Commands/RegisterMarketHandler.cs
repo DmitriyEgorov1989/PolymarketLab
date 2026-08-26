@@ -21,20 +21,30 @@ namespace PolymarketLab.Markets.Core.Application.UseCases.Commands
             RegisterMarketCommand request,
             CancellationToken cancellationToken)
         {
-            var slugResult = request.MarketUri.ParsePolymarketSlug();
-            if (slugResult.IsFailure)
-                return Failure(slugResult.Error);
+            var eventSlugResult = request.MarketUri.ParsePolymarketEventSlug();
+            if (eventSlugResult.IsFailure)
+                return Failure(eventSlugResult.Error);
 
-            var requestedSlug = slugResult.Value;
-            var existingBySlug = await marketRepository.GetBySlugAsync(requestedSlug, cancellationToken);
-            if (existingBySlug is not null)
-                return Existing(existingBySlug);
+            var requestedEventSlug = eventSlugResult.Value;
+            var externalEventResult = await externalMarketGateway.GetByEventSlugAsync(
+                requestedEventSlug,
+                cancellationToken);
+            if (externalEventResult.IsFailure)
+                return Failure(externalEventResult.Error);
 
-            var externalMarketResult = await externalMarketGateway.GetBySlugAsync(requestedSlug, cancellationToken);
-            if (externalMarketResult.IsFailure)
-                return Failure(externalMarketResult.Error);
+            var externalEvent = externalEventResult.Value;
+            var externalEventSlugResult = EventSlug.Create(externalEvent.Slug);
+            if (externalEventSlugResult.IsFailure)
+                return Failure(externalEventSlugResult.Error);
 
-            var externalMarket = externalMarketResult.Value;
+            if (!requestedEventSlug.Equals(externalEventSlugResult.Value))
+            {
+                return Failure(MarketRegistrationErrors.EventSlugMismatch(
+                    requestedEventSlug.Value,
+                    externalEventSlugResult.Value.Value));
+            }
+
+            var externalMarket = externalEvent.Market;
 
             var externalIdResult = ExternalMarketId.Create(externalMarket.ExternalMarketId);
             if (externalIdResult.IsFailure)
@@ -51,12 +61,30 @@ namespace PolymarketLab.Markets.Core.Application.UseCases.Commands
             if (string.IsNullOrWhiteSpace(externalMarket.Question))
                 return Failure(GeneralErrors.ValueIsRequired(nameof(externalMarket.Question)));
 
-            if (!requestedSlug.Equals(externalSlugResult.Value))
-            {
-                return Failure(MarketRegistrationErrors.SlugMismatch(
-                    requestedSlug.Value,
-                    externalSlugResult.Value.Value));
-            }
+            var externalId = externalIdResult.Value;
+            var externalSlug = externalSlugResult.Value;
+            var conditionId = conditionIdResult.Value;
+            var existingBySlug = await marketRepository.GetBySlugAsync(externalSlug, cancellationToken);
+            var existingByExternalId = await marketRepository.GetByExternalIdAsync(
+                externalId,
+                cancellationToken);
+            var existingByConditionId = await marketRepository.GetByConditionIdAsync(
+                conditionId,
+                cancellationToken);
+
+            var identity = ResolveIdentity(
+                existingBySlug,
+                existingByExternalId,
+                existingByConditionId,
+                externalSlug,
+                externalId,
+                conditionId);
+
+            if (identity.Conflict)
+                return Failure(MarketRegistrationErrors.IdentityConflict);
+
+            if (identity.Market is not null)
+                return Existing(identity.Market);
 
             if (!externalMarket.OrderBookEnabled)
                 return Failure(MarketRegistrationErrors.OrderBookDisabled);
@@ -67,29 +95,6 @@ namespace PolymarketLab.Markets.Core.Application.UseCases.Commands
             if (externalMarket.Tokens is null || externalMarket.Tokens.Count == 0)
                 return Failure(MarketRegistrationErrors.TokensRequired);
 
-            var externalId = externalIdResult.Value;
-            var conditionId = conditionIdResult.Value;
-            var existingByExternalId = await marketRepository.GetByExternalIdAsync(
-                externalId,
-                cancellationToken);
-            var existingByConditionId = await marketRepository.GetByConditionIdAsync(
-                conditionId,
-                cancellationToken);
-
-            var identity = ResolveIdentity(
-                null,
-                existingByExternalId,
-                existingByConditionId,
-                requestedSlug,
-                externalId,
-                conditionId);
-
-            if (identity.Conflict)
-                return Failure(MarketRegistrationErrors.IdentityConflict);
-
-            if (identity.Market is not null)
-                return Existing(identity.Market);
-
             var marketIdResult = MarketId.Create(Guid.NewGuid());
             if (marketIdResult.IsFailure)
                 return Failure(marketIdResult.Error);
@@ -97,7 +102,7 @@ namespace PolymarketLab.Markets.Core.Application.UseCases.Commands
             var marketResult = MarketAggregate.Create(
                 marketIdResult.Value,
                 externalId,
-                requestedSlug,
+                externalSlug,
                 conditionId,
                 externalMarket.Question,
                 externalMarket.StartsAt,
@@ -132,7 +137,7 @@ namespace PolymarketLab.Markets.Core.Application.UseCases.Commands
             if (insertResult.Value != MarketInsertStatus.UniqueConflict)
                 return Failure(MarketRegistrationErrors.RaceUnresolved);
 
-            existingBySlug = await marketRepository.GetBySlugAsync(requestedSlug, cancellationToken);
+            existingBySlug = await marketRepository.GetBySlugAsync(externalSlug, cancellationToken);
             existingByExternalId = await marketRepository.GetByExternalIdAsync(externalId, cancellationToken);
             existingByConditionId = await marketRepository.GetByConditionIdAsync(conditionId, cancellationToken);
 
@@ -140,7 +145,7 @@ namespace PolymarketLab.Markets.Core.Application.UseCases.Commands
                 existingBySlug,
                 existingByExternalId,
                 existingByConditionId,
-                requestedSlug,
+                externalSlug,
                 externalId,
                 conditionId);
 

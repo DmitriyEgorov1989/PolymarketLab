@@ -25,7 +25,7 @@ public sealed class GetMarketsHandler(
 
             foreach (var market in markets)
             {
-                var externalMarketResult = await externalMarketGateway.GetBySlugAsync(
+                var externalMarketResult = await externalMarketGateway.GetByMarketSlugAsync(
                     market.Slug,
                     cancellationToken);
                 if (externalMarketResult.IsFailure)

@@ -247,7 +247,11 @@ public sealed class GetMarketsHandlerTests
 
         public List<string> RequestedSlugs { get; } = [];
 
-        public Task<Result<ExternalMarket, Error>> GetBySlugAsync(
+        public Task<Result<ExternalEvent, Error>> GetByEventSlugAsync(
+            EventSlug eventSlug,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<Result<ExternalMarket, Error>> GetByMarketSlugAsync(
             MarketSlug slug,
             CancellationToken cancellationToken)
         {

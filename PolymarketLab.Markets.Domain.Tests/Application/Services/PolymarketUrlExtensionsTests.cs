@@ -1,5 +1,6 @@
 using FluentAssertions;
 using PolymarketLab.Markets.Core.Application.Extensions;
+using PolymarketLab.Markets.Core.Domain.Models.Market.ValueObjects;
 using PolymarketLab.SharedKernel.Errors;
 using Xunit;
 
@@ -12,11 +13,12 @@ public class PolymarketUrlExtensionsTests
     [InlineData("https://polymarket.com/ru/event/will-it-rain", "will-it-rain")]
     [InlineData("https://polymarket.com/event/will-it-rain?source=test", "will-it-rain")]
     [InlineData("https://polymarket.com/event/will-it-rain/", "will-it-rain")]
-    public void Parse_WithValidUrl_ShouldReturnSlug(string url, string expectedSlug)
+    public void Parse_WithValidUrl_ShouldReturnEventSlug(string url, string expectedSlug)
     {
-        var result = url.ParsePolymarketSlug();
+        var result = url.ParsePolymarketEventSlug();
 
         result.IsSuccess.Should().BeTrue();
+        result.Value.Should().BeOfType<EventSlug>();
         result.Value.Value.Should().Be(expectedSlug);
     }
 
@@ -28,15 +30,15 @@ public class PolymarketUrlExtensionsTests
     [InlineData("http://polymarket.com/event/will-it-rain", "polymarket.url.https.required", "Only HTTPS URLs are supported.", ErrorType.ValueIsInvalid)]
     [InlineData("https://example.com/event/will-it-rain", "polymarket.url.host.invalid", "URL must belong to polymarket.com.", ErrorType.ValueIsInvalid)]
     [InlineData("https://polymarket.com/markets/will-it-rain", "polymarket.url.event.missing", "URL does not contain an event segment.", ErrorType.ValueIsInvalid)]
-    [InlineData("https://polymarket.com/event/", "polymarket.url.slug.missing", "Market slug is missing.", ErrorType.ValueIsRequired)]
-    [InlineData("https://polymarket.com/event//other", "polymarket.url.slug.missing", "Market slug is missing.", ErrorType.ValueIsRequired)]
+    [InlineData("https://polymarket.com/event/", "polymarket.url.slug.missing", "Event slug is missing.", ErrorType.ValueIsRequired)]
+    [InlineData("https://polymarket.com/event//other", "polymarket.url.slug.missing", "Event slug is missing.", ErrorType.ValueIsRequired)]
     public void Parse_WithInvalidUrl_ShouldReturnSpecificError(
         string? url,
         string expectedCode,
         string expectedMessage,
         ErrorType expectedType)
     {
-        var result = url.ParsePolymarketSlug();
+        var result = url.ParsePolymarketEventSlug();
 
         result.IsFailure.Should().BeTrue();
         result.Error.Code.Should().Be(expectedCode);

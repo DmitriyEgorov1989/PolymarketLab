@@ -47,5 +47,6 @@
 
 - Mapping новых `ErrorType` нужно добавлять в `ResponseExtensions`, иначе неизвестный тип может стать HTTP 500.
 - Миграции не применяются автоматически; отдельного migration-application или полного API end-to-end test suite нет.
-- Регистрация Polymarket multi-market events пока не решена.
+- Первый registration flow принимает только single-market events; multi-market
+  events отклоняются без неявного выбора дочернего market.
 - Reconnect collector, multi-instance session ownership и automatic resume отсутствуют.

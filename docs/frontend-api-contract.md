@@ -147,6 +147,12 @@ GET /api/Market?tradingNow=true
 
 Регистрирует рынок по Polymarket URL.
 
+Backend интерпретирует URL как event URL и запрашивает Gamma
+`/events/slug/{eventSlug}`. Event должен содержать ровно один дочерний market:
+нулевое или множественное количество markets отклоняется без неявного выбора.
+Event slug и slug дочернего market являются разными идентификаторами и не обязаны
+совпадать.
+
 Request:
 
 ```json
@@ -171,9 +177,9 @@ Request:
 `active: true`, `closed: false`, `acceptingOrders: true`, `enableOrderBook: true`.
 Недоступный новый рынок
 возвращает `409` с кодом `market.registration.unavailable`; выключенный order book
-сохраняет более точный код `market.registration.order_book_disabled`. Для уже
-зарегистрированного slug возвращается идемпотентный ответ без повторного запроса
-Gamma.
+сохраняет более точный код `market.registration.order_book_disabled`. До сохранения
+event identity backend сначала разрешает event через Gamma, затем возвращает
+идемпотентный ответ по identity дочернего market.
 
 ## CollectorSession DTO
 

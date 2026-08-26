@@ -10,7 +10,7 @@ namespace PolymarketLab.Markets.Core.Application.Extensions
         private const string PolymarketHost = "polymarket.com";
         private const string EventSegment = "event";
 
-        public static Result<MarketSlug, Error> ParsePolymarketSlug(this string? url)
+        public static Result<EventSlug, Error> ParsePolymarketEventSlug(this string? url)
         {
             if (string.IsNullOrWhiteSpace(url))
                 return PolymarketUrlErrors.Empty;
@@ -36,7 +36,7 @@ namespace PolymarketLab.Markets.Core.Application.Extensions
             if (eventIndex + 1 >= segments.Length || string.IsNullOrWhiteSpace(segments[eventIndex + 1]))
                 return PolymarketUrlErrors.SlugMissing;
 
-            return MarketSlug.Create(segments[eventIndex + 1]);
+            return EventSlug.Create(segments[eventIndex + 1]);
         }
     }
 }

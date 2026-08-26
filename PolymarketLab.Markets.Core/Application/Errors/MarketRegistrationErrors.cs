@@ -25,11 +25,11 @@ internal static class MarketRegistrationErrors
         ErrorType.ValueIsRequired,
         "Tokens");
 
-    public static Error SlugMismatch(string requestedSlug, string externalSlug) => new(
-        "market.registration.slug_mismatch",
-        $"Requested slug '{requestedSlug}' does not match external slug '{externalSlug}'.",
+    public static Error EventSlugMismatch(string requestedSlug, string externalSlug) => new(
+        "market.registration.event_slug_mismatch",
+        $"Requested event slug '{requestedSlug}' does not match external event slug '{externalSlug}'.",
         ErrorType.Conflict,
-        "Slug");
+        "EventSlug");
 
     public static Error RaceUnresolved => new(
         "market.registration.race_unresolved",

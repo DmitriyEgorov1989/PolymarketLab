@@ -20,7 +20,7 @@ internal sealed class MarketsReader(
         if (market is null)
             return (MarketForCollection?)null;
 
-        var externalMarketResult = await externalMarketGateway.GetBySlugAsync(
+        var externalMarketResult = await externalMarketGateway.GetByMarketSlugAsync(
             market.Slug,
             cancellationToken);
         if (externalMarketResult.IsFailure)
