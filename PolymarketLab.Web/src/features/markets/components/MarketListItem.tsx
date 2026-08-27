@@ -17,7 +17,7 @@ export function MarketListItem({ market, isSelected, onSelect }: MarketListItemP
       >
         <span className="market-list-question">{market.question}</span>
         <span className="market-list-meta">
-          <span className="market-list-slug">{market.slug}</span>
+          <span className="market-list-slug">{market.marketSlug}</span>
           {isSelected ? <span className="market-list-selected">Выбран</span> : null}
         </span>
       </button>

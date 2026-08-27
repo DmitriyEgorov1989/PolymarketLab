@@ -73,12 +73,20 @@ Interrupted
 ```json
 {
   "marketId": "11111111-1111-1111-1111-111111111111",
+  "externalEventId": "67890",
+  "eventSlug": "example-event",
   "externalMarketId": "12345",
-  "slug": "example-market",
+  "marketSlug": "example-market",
   "conditionId": "0xcondition",
   "question": "Will the event happen?",
-  "startsAt": "2026-08-01T10:00:00Z",
-  "endsAt": "2026-08-02T10:00:00Z",
+  "discoveredAt": "2026-08-01T09:00:00Z",
+  "externalCreatedAt": "2026-07-31T12:00:00Z",
+  "ordersOpenedAt": "2026-08-01T09:30:00Z",
+  "gammaStartDate": "2026-08-01T09:45:00Z",
+  "eventStartsAt": "2026-08-01T10:00:00Z",
+  "eventEndsAt": "2026-08-02T10:00:00Z",
+  "externalClosedAt": null,
+  "scheduleRefreshedAt": "2026-08-01T09:55:00Z",
   "tokens": [
     {
       "tokenId": "token-yes",
@@ -89,13 +97,16 @@ Interrupted
 }
 ```
 
-`startsAt` и `endsAt` могут быть `null`.
+`discoveredAt`, `eventStartsAt`, `eventEndsAt` и `scheduleRefreshedAt` обязательны.
+`externalCreatedAt`, `ordersOpenedAt`, `gammaStartDate` и `externalClosedAt` могут
+быть `null`. `eventSlug` идентифицирует родительский event, а `marketSlug` - его
+дочерний market; эти значения не обязаны совпадать.
 
 ## GET /api/Market
 
-Возвращает все зарегистрированные рынки, отсортированные backend по slug.
-`startsAt` и `endsAt` являются внешними метаданными и не используются для
-фильтрации: Gamma может продолжать принимать orders после формального `endDate`.
+Возвращает все зарегистрированные рынки, отсортированные backend по `marketSlug`.
+Schedule timestamps являются внешними метаданными и не используются для фильтрации:
+Gamma может продолжать принимать orders после формального `eventEndsAt`.
 
 Опциональный query parameter `tradingNow=true` оставляет только рынки, для которых
 свежий ответ Gamma одновременно содержит `active: true`, `closed: false`,
@@ -130,12 +141,20 @@ GET /api/Market?tradingNow=true
 {
   "market": {
     "marketId": "11111111-1111-1111-1111-111111111111",
+    "externalEventId": "67890",
+    "eventSlug": "example-event",
     "externalMarketId": "12345",
-    "slug": "example-market",
+    "marketSlug": "example-market",
     "conditionId": "0xcondition",
     "question": "Will the event happen?",
-    "startsAt": null,
-    "endsAt": null,
+    "discoveredAt": "2026-08-01T09:00:00Z",
+    "externalCreatedAt": null,
+    "ordersOpenedAt": null,
+    "gammaStartDate": null,
+    "eventStartsAt": "2026-08-01T10:00:00Z",
+    "eventEndsAt": "2026-08-02T10:00:00Z",
+    "externalClosedAt": null,
+    "scheduleRefreshedAt": "2026-08-01T09:55:00Z",
     "tokens": []
   }
 }
@@ -173,13 +192,19 @@ Request:
 `created: true` означает, что текущий запрос создал рынок. Повторная регистрация
 того же рынка возвращает тот же `marketId`, `created: false` и HTTP `200`.
 
-Новый рынок регистрируется только при актуальной доступности в Gamma:
-`active: true`, `closed: false`, `acceptingOrders: true`, `enableOrderBook: true`.
-Недоступный новый рынок
-возвращает `409` с кодом `market.registration.unavailable`; выключенный order book
-сохраняет более точный код `market.registration.order_book_disabled`. До сохранения
-event identity backend сначала разрешает event через Gamma, затем возвращает
-идемпотентный ответ по identity дочернего market.
+Новый рынок можно зарегистрировать до открытия заявок: `active` и
+`acceptingOrders` не ограничивают регистрацию. Требуются `closed: false`,
+отсутствующий `closedTime`, `umaResolutionStatus`, отличный от `resolved`, и
+`enableOrderBook: true`.
+Закрытый или разрешённый новый рынок возвращает `409` с кодом
+`market.registration.unavailable`; выключенный order book сохраняет более точный
+код `market.registration.order_book_disabled`.
+
+Identity включает event ID/slug, market ID/slug, condition и упорядоченные
+`(tokenId, outcome, outcomeIndex)`. Частичное совпадение возвращает
+`market.registration.identity_conflict`. При полном совпадении backend сохраняет
+тот же `marketId`, оставляет `discoveredAt` неизменным, обновляет внешнее расписание
+и `scheduleRefreshedAt`.
 
 ## CollectorSession DTO
 

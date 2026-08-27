@@ -24,12 +24,14 @@ public sealed class GetMarketByIdHandlerTests
         result.Value.Market.Should().BeEquivalentTo(new
         {
             MarketId = market.Id.Value,
+            ExternalEventId = "event-123",
+            EventSlug = "rain-event",
             ExternalMarketId = "market-123",
-            Slug = "will-it-rain",
+            MarketSlug = "will-it-rain",
             ConditionId = "0xcondition",
             Question = "Will it rain?",
-            StartsAt = (DateTimeOffset?)DateTimeOffset.Parse("2026-08-01T10:00:00Z"),
-            EndsAt = (DateTimeOffset?)DateTimeOffset.Parse("2026-08-01T12:00:00Z")
+            EventStartsAt = DateTimeOffset.Parse("2026-08-01T10:00:00Z"),
+            EventEndsAt = DateTimeOffset.Parse("2026-08-01T12:00:00Z")
         });
         result.Value.Market.Tokens.Should().BeEquivalentTo(
         [
@@ -59,12 +61,20 @@ public sealed class GetMarketByIdHandlerTests
     {
         var market = Market.Create(
             MarketId.Create(Guid.NewGuid()).Value,
+            ExternalEventId.Create("event-123").Value,
+            EventSlug.Create("rain-event").Value,
             ExternalMarketId.Create("market-123").Value,
             MarketSlug.Create("will-it-rain").Value,
             ConditionId.Create("0xcondition").Value,
             "Will it rain?",
+            DateTimeOffset.Parse("2026-07-31T10:00:00Z"),
+            null,
+            null,
+            null,
             DateTimeOffset.Parse("2026-08-01T10:00:00Z"),
-            DateTimeOffset.Parse("2026-08-01T12:00:00Z")).Value;
+            DateTimeOffset.Parse("2026-08-01T12:00:00Z"),
+            null,
+            DateTimeOffset.Parse("2026-07-31T10:00:00Z")).Value;
 
         market.AddToken(TokenId.Create("token-yes").Value, "Yes", 0);
         market.AddToken(TokenId.Create("token-no").Value, "No", 1);
@@ -86,21 +96,42 @@ public sealed class GetMarketByIdHandlerTests
             return Task.FromResult(_markets.SingleOrDefault(market => market.Id.Equals(marketId)));
         }
 
+        public Task<Market?> GetByEventSlugAsync(EventSlug eventSlug, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(_markets.SingleOrDefault(market => market.EventSlug.Equals(eventSlug)));
+        }
+
+        public Task<Market?> GetByExternalEventIdAsync(
+            ExternalEventId externalEventId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(
+                _markets.SingleOrDefault(market => market.ExternalEventId.Equals(externalEventId)));
+        }
+
         public Task<Market?> GetBySlugAsync(MarketSlug slug, CancellationToken cancellationToken)
         {
-            return Task.FromResult(_markets.SingleOrDefault(market => market.Slug.Equals(slug)));
+            return Task.FromResult(_markets.SingleOrDefault(market => market.MarketSlug.Equals(slug)));
         }
 
         public Task<Market?> GetByExternalIdAsync(
             ExternalMarketId externalMarketId,
             CancellationToken cancellationToken)
         {
-            return Task.FromResult(_markets.SingleOrDefault(market => market.ExternalId.Equals(externalMarketId)));
+            return Task.FromResult(
+                _markets.SingleOrDefault(market => market.ExternalMarketId.Equals(externalMarketId)));
         }
 
         public Task<Market?> GetByConditionIdAsync(ConditionId conditionId, CancellationToken cancellationToken)
         {
             return Task.FromResult(_markets.SingleOrDefault(market => market.ConditionId.Equals(conditionId)));
+        }
+
+        public Task<IReadOnlyCollection<Market>> GetByAnyTokenIdsAsync(
+            IReadOnlyCollection<TokenId> tokenIds,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult<IReadOnlyCollection<Market>>([]);
         }
 
         public Task<Result<MarketInsertStatus, Error>> TryAddAsync(
@@ -109,6 +140,13 @@ public sealed class GetMarketByIdHandlerTests
         {
             _markets.Add(market);
             return Task.FromResult<Result<MarketInsertStatus, Error>>(MarketInsertStatus.Inserted);
+        }
+
+        public Task<UnitResult<Error>> UpdateScheduleAsync(
+            Market market,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(UnitResult.Success<Error>());
         }
     }
 }

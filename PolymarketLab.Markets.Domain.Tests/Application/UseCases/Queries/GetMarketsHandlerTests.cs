@@ -29,12 +29,14 @@ public sealed class GetMarketsHandlerTests
         markets[0].Should().BeEquivalentTo(new
         {
             MarketId = first.Id.Value,
+            ExternalEventId = "event-alpha-market",
+            EventSlug = "event-alpha-market",
             ExternalMarketId = "market-111",
-            Slug = "alpha-market",
+            MarketSlug = "alpha-market",
             ConditionId = "0x111",
             Question = "Alpha question?",
-            StartsAt = (DateTimeOffset?)DateTimeOffset.Parse("2026-08-01T10:00:00Z"),
-            EndsAt = (DateTimeOffset?)DateTimeOffset.Parse("2026-08-01T12:00:00Z")
+            EventStartsAt = DateTimeOffset.Parse("2026-08-01T10:00:00Z"),
+            EventEndsAt = DateTimeOffset.Parse("2026-08-01T12:00:00Z")
         });
         markets[0].Tokens.Should().BeEquivalentTo(
         [
@@ -44,12 +46,14 @@ public sealed class GetMarketsHandlerTests
         markets[1].Should().BeEquivalentTo(new
         {
             MarketId = second.Id.Value,
+            ExternalEventId = "event-beta-market",
+            EventSlug = "event-beta-market",
             ExternalMarketId = "market-222",
-            Slug = "beta-market",
+            MarketSlug = "beta-market",
             ConditionId = "0x222",
             Question = "Beta question?",
-            StartsAt = (DateTimeOffset?)DateTimeOffset.Parse("2026-08-01T10:00:00Z"),
-            EndsAt = (DateTimeOffset?)DateTimeOffset.Parse("2026-08-01T12:00:00Z")
+            EventStartsAt = DateTimeOffset.Parse("2026-08-01T10:00:00Z"),
+            EventEndsAt = DateTimeOffset.Parse("2026-08-01T12:00:00Z")
         });
         markets[1].Tokens.Should().BeEquivalentTo(
         [
@@ -77,18 +81,15 @@ public sealed class GetMarketsHandlerTests
             startsAt: now.AddMinutes(1), endsAt: now.AddHours(1));
         var ended = CreateMarket("ended", "market-ended", "0xended", "Ended?",
             startsAt: now.AddHours(-1), endsAt: now);
-        var openEnded = CreateMarket("open", "market-open", "0xopen", "Open?",
-            hasCollectionWindow: false);
         var handler = CreateHandler(new InMemoryMarketRepository(
             future,
-            ended,
-            openEnded));
+            ended));
 
         var result = await handler.Handle(new GetMarketsQuery(), CancellationToken.None);
 
-        result.Value.Markets.Select(market => market.Slug)
+        result.Value.Markets.Select(market => market.MarketSlug)
             .Should()
-            .Equal("future", "ended", "open");
+            .Equal("future", "ended");
     }
 
     [Fact]
@@ -117,7 +118,7 @@ public sealed class GetMarketsHandlerTests
         var result = await handler.Handle(new GetMarketsQuery(true), CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Markets.Select(market => market.Slug).Should().Equal("available");
+        result.Value.Markets.Select(market => market.MarketSlug).Should().Equal("available");
         gateway.RequestedSlugs.Should().Equal("available", "closed", "not-accepting");
     }
 
@@ -149,17 +150,22 @@ public sealed class GetMarketsHandlerTests
     private static ExternalMarket CreateExternalMarket(string slug)
     {
         return new ExternalMarket(
-            $"external-{slug}",
-            slug,
-            $"Question {slug}?",
-            $"condition-{slug}",
-            null,
-            null,
-            true,
-            false,
-            true,
-            true,
-            []);
+            ExternalMarketId: $"external-{slug}",
+            Slug: slug,
+            Question: $"Question {slug}?",
+            ConditionId: $"condition-{slug}",
+            ExternalCreatedAt: null,
+            OrdersOpenedAt: null,
+            GammaStartDate: null,
+            EventStartsAt: DateTimeOffset.Parse("2026-08-01T10:00:00Z"),
+            EventEndsAt: DateTimeOffset.Parse("2026-08-01T12:00:00Z"),
+            ExternalClosedAt: null,
+            UmaResolutionStatus: null,
+            Active: true,
+            Closed: false,
+            AcceptingOrders: true,
+            OrderBookEnabled: true,
+            Tokens: []);
     }
 
     private static Market CreateMarket(
@@ -168,21 +174,24 @@ public sealed class GetMarketsHandlerTests
         string conditionId,
         string question,
         DateTimeOffset? startsAt = null,
-        DateTimeOffset? endsAt = null,
-        bool hasCollectionWindow = true)
+        DateTimeOffset? endsAt = null)
     {
         var market = Market.Create(
             MarketId.Create(Guid.NewGuid()).Value,
+            ExternalEventId.Create($"event-{slug}").Value,
+            EventSlug.Create($"event-{slug}").Value,
             ExternalMarketId.Create(externalId).Value,
             MarketSlug.Create(slug).Value,
             ConditionId.Create(conditionId).Value,
             question,
-            hasCollectionWindow
-                ? startsAt ?? DateTimeOffset.Parse("2026-08-01T10:00:00Z")
-                : null,
-            hasCollectionWindow
-                ? endsAt ?? DateTimeOffset.Parse("2026-08-01T12:00:00Z")
-                : null).Value;
+            DateTimeOffset.Parse("2026-07-31T10:00:00Z"),
+            null,
+            null,
+            null,
+            startsAt ?? DateTimeOffset.Parse("2026-08-01T10:00:00Z"),
+            endsAt ?? DateTimeOffset.Parse("2026-08-01T12:00:00Z"),
+            null,
+            DateTimeOffset.Parse("2026-07-31T10:00:00Z")).Value;
 
         market.AddToken(TokenId.Create($"{slug}-yes").Value, "Yes", 0);
         market.AddToken(TokenId.Create($"{slug}-no").Value, "No", 1);
@@ -204,21 +213,42 @@ public sealed class GetMarketsHandlerTests
             return Task.FromResult(_markets.SingleOrDefault(market => market.Id.Equals(marketId)));
         }
 
+        public Task<Market?> GetByEventSlugAsync(EventSlug eventSlug, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(_markets.SingleOrDefault(market => market.EventSlug.Equals(eventSlug)));
+        }
+
+        public Task<Market?> GetByExternalEventIdAsync(
+            ExternalEventId externalEventId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(
+                _markets.SingleOrDefault(market => market.ExternalEventId.Equals(externalEventId)));
+        }
+
         public Task<Market?> GetBySlugAsync(MarketSlug slug, CancellationToken cancellationToken)
         {
-            return Task.FromResult(_markets.SingleOrDefault(market => market.Slug.Equals(slug)));
+            return Task.FromResult(_markets.SingleOrDefault(market => market.MarketSlug.Equals(slug)));
         }
 
         public Task<Market?> GetByExternalIdAsync(
             ExternalMarketId externalMarketId,
             CancellationToken cancellationToken)
         {
-            return Task.FromResult(_markets.SingleOrDefault(market => market.ExternalId.Equals(externalMarketId)));
+            return Task.FromResult(
+                _markets.SingleOrDefault(market => market.ExternalMarketId.Equals(externalMarketId)));
         }
 
         public Task<Market?> GetByConditionIdAsync(ConditionId conditionId, CancellationToken cancellationToken)
         {
             return Task.FromResult(_markets.SingleOrDefault(market => market.ConditionId.Equals(conditionId)));
+        }
+
+        public Task<IReadOnlyCollection<Market>> GetByAnyTokenIdsAsync(
+            IReadOnlyCollection<TokenId> tokenIds,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult<IReadOnlyCollection<Market>>([]);
         }
 
         public Task<Result<MarketInsertStatus, Error>> TryAddAsync(
@@ -227,6 +257,13 @@ public sealed class GetMarketsHandlerTests
         {
             _markets.Add(market);
             return Task.FromResult<Result<MarketInsertStatus, Error>>(MarketInsertStatus.Inserted);
+        }
+
+        public Task<UnitResult<Error>> UpdateScheduleAsync(
+            Market market,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(UnitResult.Success<Error>());
         }
     }
 

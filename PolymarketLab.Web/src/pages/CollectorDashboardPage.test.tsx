@@ -218,12 +218,20 @@ function renderPage(): QueryClient {
 function createMarket(marketId: string): MarketResponse {
   return {
     marketId,
+    externalEventId: `external-event-${marketId}`,
+    eventSlug: `${marketId}-event-slug`,
     externalMarketId: `external-${marketId}`,
-    slug: `${marketId}-slug`,
+    marketSlug: `${marketId}-market-slug`,
     conditionId: `condition-${marketId}`,
     question: `Question ${marketId}?`,
-    startsAt: null,
-    endsAt: null,
+    discoveredAt: '2026-08-01T09:00:00Z',
+    externalCreatedAt: null,
+    ordersOpenedAt: null,
+    gammaStartDate: null,
+    eventStartsAt: '2026-08-01T10:00:00Z',
+    eventEndsAt: '2026-08-02T10:00:00Z',
+    externalClosedAt: null,
+    scheduleRefreshedAt: '2026-08-01T09:30:00Z',
     tokens: [],
   };
 }

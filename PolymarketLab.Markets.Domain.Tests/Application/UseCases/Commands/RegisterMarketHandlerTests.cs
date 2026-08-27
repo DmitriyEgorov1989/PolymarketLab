@@ -14,6 +14,7 @@ namespace PolymarketLab.Markets.Domain.Tests.Application.UseCases.Commands;
 public sealed class RegisterMarketHandlerTests
 {
     private const string MarketUrl = "https://polymarket.com/event/rain-event";
+    private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-08-27T12:00:00Z");
     [Fact]
     public async Task Handle_WithInvalidUrl_ShouldReturnParserErrorWithoutCallingGateway()
     {
@@ -43,6 +44,9 @@ public sealed class RegisterMarketHandlerTests
         result.Value.Should().Be(new RegisterMarketResponse(existing.Id.Value, false));
         gateway.CallCount.Should().Be(1);
         repository.TryAddCallCount.Should().Be(0);
+        repository.UpdateScheduleCallCount.Should().Be(1);
+        existing.DiscoveredAt.Should().Be(Now.AddDays(-2));
+        existing.ScheduleRefreshedAt.Should().Be(Now);
     }
 
     [Fact]
@@ -123,9 +127,51 @@ public sealed class RegisterMarketHandlerTests
     }
 
     [Fact]
-    public async Task Handle_WithUnavailableMarket_ShouldReturnConflict()
+    public async Task Handle_WithFutureMarketNotAcceptingOrders_ShouldRegisterMarket()
     {
         var externalMarket = CreateExternalMarket() with { AcceptingOrders = false };
+        var repository = new InMemoryMarketRepository();
+        var handler = CreateHandler(new StubExternalMarketGateway(externalMarket), repository);
+
+        var result = await handler.Handle(new RegisterMarketCommand(MarketUrl), CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Created.Should().BeTrue();
+        repository.TryAddCallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Handle_WithClosedNewMarket_ShouldReturnConflict()
+    {
+        var externalMarket = CreateExternalMarket() with { Closed = true };
+        var repository = new InMemoryMarketRepository();
+        var handler = CreateHandler(new StubExternalMarketGateway(externalMarket), repository);
+
+        var result = await handler.Handle(new RegisterMarketCommand(MarketUrl), CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Code.Should().Be("market.registration.unavailable");
+        repository.TryAddCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Handle_WithResolvedNewMarket_ShouldReturnConflict()
+    {
+        var externalMarket = CreateExternalMarket() with { UmaResolutionStatus = "Resolved" };
+        var repository = new InMemoryMarketRepository();
+        var handler = CreateHandler(new StubExternalMarketGateway(externalMarket), repository);
+
+        var result = await handler.Handle(new RegisterMarketCommand(MarketUrl), CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Code.Should().Be("market.registration.unavailable");
+        repository.TryAddCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Handle_WithExternalClosedTime_ShouldReturnConflict()
+    {
+        var externalMarket = CreateExternalMarket() with { ExternalClosedAt = Now };
         var repository = new InMemoryMarketRepository();
         var handler = CreateHandler(new StubExternalMarketGateway(externalMarket), repository);
 
@@ -183,7 +229,9 @@ public sealed class RegisterMarketHandlerTests
         result.Value.Created.Should().BeTrue();
         result.Value.MarketId.Should().NotBeEmpty();
         repository.Markets.Should().ContainSingle();
-        repository.Markets.Single().Slug.Value.Should().Be("will-it-rain");
+        repository.Markets.Single().EventSlug.Value.Should().Be("rain-event");
+        repository.Markets.Single().MarketSlug.Value.Should().Be("will-it-rain");
+        repository.Markets.Single().DiscoveredAt.Should().Be(Now);
         repository.Markets.Single().Tokens
             .Select(token => (token.ExternalTokenId.Value, token.Outcome, token.OutcomeIndex))
             .Should().Equal(
@@ -200,13 +248,74 @@ public sealed class RegisterMarketHandlerTests
         var byExternalId = CreateMarket(
             slug: "other-market-a",
             externalId: "market-123",
-            conditionId: "0xother-a");
+            conditionId: "0xother-a",
+            eventId: "event-other-a",
+            eventSlug: "event-other-a");
         var byConditionId = CreateMarket(
             slug: "other-market-b",
             externalId: "market-other-b",
-            conditionId: "0xcondition");
+            conditionId: "0xcondition",
+            eventId: "event-other-b",
+            eventSlug: "event-other-b");
         var repository = new InMemoryMarketRepository(byExternalId, byConditionId);
         var handler = CreateHandler(new StubExternalMarketGateway(CreateExternalMarket()), repository);
+
+        var result = await handler.Handle(new RegisterMarketCommand(MarketUrl), CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Code.Should().Be("market.registration.identity_conflict");
+        repository.TryAddCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Handle_WithPartialEventIdentityMatch_ShouldReturnConflict()
+    {
+        var existing = CreateMarket(eventSlug: "old-rain-event");
+        var repository = new InMemoryMarketRepository(existing);
+        var handler = CreateHandler(new StubExternalMarketGateway(CreateExternalMarket()), repository);
+
+        var result = await handler.Handle(new RegisterMarketCommand(MarketUrl), CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Code.Should().Be("market.registration.identity_conflict");
+        repository.UpdateScheduleCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Handle_WithChangedTokenOutcome_ShouldReturnConflict()
+    {
+        var externalMarket = CreateExternalMarket() with
+        {
+            Tokens =
+            [
+                new ExternalMarketToken("Up", "token-yes", 0),
+                new ExternalMarketToken("No", "token-no", 1)
+            ]
+        };
+        var repository = new InMemoryMarketRepository(CreateMarket(eventSlug: "existing-event"));
+        var handler = CreateHandler(new StubExternalMarketGateway(externalMarket), repository);
+
+        var result = await handler.Handle(new RegisterMarketCommand(MarketUrl), CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Code.Should().Be("market.registration.identity_conflict");
+        repository.UpdateScheduleCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Handle_WithMatchingTokenIdsAndDifferentMarketKeys_ShouldReturnConflict()
+    {
+        var externalEvent = CreateExternalEvent(CreateExternalMarket() with
+        {
+            ExternalMarketId = "market-other",
+            Slug = "market-other",
+            ConditionId = "condition-other"
+        }) with
+        {
+            ExternalEventId = "event-other"
+        };
+        var repository = new InMemoryMarketRepository(CreateMarket(eventSlug: "existing-event"));
+        var handler = CreateHandler(new StubExternalMarketGateway(externalEvent), repository);
 
         var result = await handler.Handle(new RegisterMarketCommand(MarketUrl), CancellationToken.None);
 
@@ -253,22 +362,28 @@ public sealed class RegisterMarketHandlerTests
         IExternalMarketGateway gateway,
         IMarketRepository repository)
     {
-        return new RegisterMarketHandler(gateway, repository);
+        return new RegisterMarketHandler(gateway, repository, new FixedTimeProvider(Now));
     }
 
     private static ExternalMarket CreateExternalMarket()
     {
         return new ExternalMarket(
-            "market-123",
-            "will-it-rain",
-            "Will it rain?",
-            "0xcondition",
-            null,
-            null,
-            true,
-            false,
-            true,
-            true,
+            ExternalMarketId: "market-123",
+            Slug: "will-it-rain",
+            Question: "Will it rain?",
+            ConditionId: "0xcondition",
+            ExternalCreatedAt: Now.AddDays(-1),
+            OrdersOpenedAt: null,
+            GammaStartDate: Now.AddMinutes(30),
+            EventStartsAt: Now.AddHours(1),
+            EventEndsAt: Now.AddHours(1).AddMinutes(5),
+            ExternalClosedAt: null,
+            UmaResolutionStatus: null,
+            Active: true,
+            Closed: false,
+            AcceptingOrders: true,
+            OrderBookEnabled: true,
+            Tokens:
             [
                 new ExternalMarketToken("Yes", "token-yes", 0),
                 new ExternalMarketToken("No", "token-no", 1)
@@ -283,16 +398,30 @@ public sealed class RegisterMarketHandlerTests
     private static MarketAggregate CreateMarket(
         string slug = "will-it-rain",
         string externalId = "market-123",
-        string conditionId = "0xcondition")
+        string conditionId = "0xcondition",
+        string eventId = "event-123",
+        string eventSlug = "rain-event")
     {
-        return MarketAggregate.Create(
+        var market = MarketAggregate.Create(
             MarketId.Create(Guid.NewGuid()).Value,
+            ExternalEventId.Create(eventId).Value,
+            EventSlug.Create(eventSlug).Value,
             ExternalMarketId.Create(externalId).Value,
             MarketSlug.Create(slug).Value,
             ConditionId.Create(conditionId).Value,
             "Will it rain?",
+            Now.AddDays(-2),
+            Now.AddDays(-1),
             null,
-            null).Value;
+            Now.AddMinutes(30),
+            Now.AddHours(1),
+            Now.AddHours(1).AddMinutes(5),
+            null,
+            Now.AddDays(-2)).Value;
+
+        market.AddToken(TokenId.Create("token-yes").Value, "Yes", 0);
+        market.AddToken(TokenId.Create("token-no").Value, "No", 1);
+        return market;
     }
 
     private sealed class StubExternalMarketGateway : IExternalMarketGateway
@@ -339,6 +468,7 @@ public sealed class RegisterMarketHandlerTests
 
         public IReadOnlyCollection<MarketAggregate> Markets => _markets;
         public int TryAddCallCount { get; private set; }
+        public int UpdateScheduleCallCount { get; private set; }
         public CancellationToken LastCancellationToken { get; private set; }
         public Func<MarketAggregate, Result<MarketInsertStatus, Error>>? TryAddHandler { get; set; }
 
@@ -357,12 +487,29 @@ public sealed class RegisterMarketHandlerTests
             return Task.FromResult<IReadOnlyCollection<MarketAggregate>>(_markets.ToArray());
         }
 
+        public Task<MarketAggregate?> GetByEventSlugAsync(
+            EventSlug eventSlug,
+            CancellationToken cancellationToken)
+        {
+            LastCancellationToken = cancellationToken;
+            return Task.FromResult(_markets.SingleOrDefault(market => market.EventSlug.Equals(eventSlug)));
+        }
+
+        public Task<MarketAggregate?> GetByExternalEventIdAsync(
+            ExternalEventId externalEventId,
+            CancellationToken cancellationToken)
+        {
+            LastCancellationToken = cancellationToken;
+            return Task.FromResult(
+                _markets.SingleOrDefault(market => market.ExternalEventId.Equals(externalEventId)));
+        }
+
         public Task<MarketAggregate?> GetBySlugAsync(
             MarketSlug slug,
             CancellationToken cancellationToken)
         {
             LastCancellationToken = cancellationToken;
-            return Task.FromResult(_markets.SingleOrDefault(market => market.Slug.Equals(slug)));
+            return Task.FromResult(_markets.SingleOrDefault(market => market.MarketSlug.Equals(slug)));
         }
 
         public Task<MarketAggregate?> GetByExternalIdAsync(
@@ -371,7 +518,7 @@ public sealed class RegisterMarketHandlerTests
         {
             LastCancellationToken = cancellationToken;
             return Task.FromResult(
-                _markets.SingleOrDefault(market => market.ExternalId.Equals(externalMarketId)));
+                _markets.SingleOrDefault(market => market.ExternalMarketId.Equals(externalMarketId)));
         }
 
         public Task<MarketAggregate?> GetByConditionIdAsync(
@@ -381,6 +528,17 @@ public sealed class RegisterMarketHandlerTests
             LastCancellationToken = cancellationToken;
             return Task.FromResult(
                 _markets.SingleOrDefault(market => market.ConditionId.Equals(conditionId)));
+        }
+
+        public Task<IReadOnlyCollection<MarketAggregate>> GetByAnyTokenIdsAsync(
+            IReadOnlyCollection<TokenId> tokenIds,
+            CancellationToken cancellationToken)
+        {
+            LastCancellationToken = cancellationToken;
+            return Task.FromResult<IReadOnlyCollection<MarketAggregate>>(
+                _markets.Where(market => market.Tokens.Any(token =>
+                        tokenIds.Contains(token.ExternalTokenId)))
+                    .ToArray());
         }
 
         public Task<Result<MarketInsertStatus, Error>> TryAddAsync(
@@ -401,5 +559,19 @@ public sealed class RegisterMarketHandlerTests
         {
             _markets.Add(market);
         }
+
+        public Task<UnitResult<Error>> UpdateScheduleAsync(
+            MarketAggregate market,
+            CancellationToken cancellationToken)
+        {
+            UpdateScheduleCallCount++;
+            LastCancellationToken = cancellationToken;
+            return Task.FromResult(UnitResult.Success<Error>());
+        }
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 }

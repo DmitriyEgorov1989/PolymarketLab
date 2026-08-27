@@ -1,40 +1,46 @@
-﻿namespace PolymarketLab.Markets.Core.Ports.Dto
-{
-    /// <summary>
-    ///     Represents normalized market data returned by an external market source.
-    /// </summary>
-    /// <param name="ExternalMarketId">The external market identifier.</param>
-    /// <param name="Slug">The child market slug, which may differ from its event slug.</param>
-    /// <param name="Question">The market question.</param>
-    /// <param name="ConditionId">The market condition identifier.</param>
-    /// <param name="StartsAt">The external start timestamp, or <see langword="null"/> when absent.</param>
-    /// <param name="EndsAt">The external end timestamp, or <see langword="null"/> when absent.</param>
-    /// <param name="Active">Whether the external market is active.</param>
-    /// <param name="Closed">Whether the external market is closed.</param>
-    /// <param name="AcceptingOrders">Whether the external market currently accepts orders.</param>
-    /// <param name="OrderBookEnabled">Whether the CLOB order book is enabled.</param>
-    /// <param name="Tokens">The outcome tokens in the order supplied by the external source.</param>
-    public sealed record ExternalMarket(
-        string ExternalMarketId,
-        string Slug,
-        string Question,
-        string ConditionId,
-        DateTimeOffset? StartsAt,
-        DateTimeOffset? EndsAt,
-        bool Active,
-        bool Closed,
-        bool AcceptingOrders,
-        bool OrderBookEnabled,
-        IReadOnlyList<ExternalMarketToken> Tokens);
+namespace PolymarketLab.Markets.Core.Ports.Dto;
 
-    /// <summary>
-    ///     Represents one ordered outcome-token mapping from an external market.
-    /// </summary>
-    /// <param name="Outcome">The external outcome label.</param>
-    /// <param name="TokenId">The external token identifier.</param>
-    /// <param name="OutcomeIndex">The zero-based position in the external outcome arrays.</param>
-    public sealed record ExternalMarketToken(
-        string Outcome,
-        string TokenId,
-        int OutcomeIndex);
-}
+/// <summary>
+///     Представляет нормализованные данные дочернего рынка из внешнего источника.
+/// </summary>
+/// <param name="ExternalMarketId">Внешний идентификатор рынка.</param>
+/// <param name="Slug">Slug дочернего рынка, который может отличаться от slug события.</param>
+/// <param name="Question">Вопрос рынка.</param>
+/// <param name="ConditionId">Идентификатор condition рынка.</param>
+/// <param name="ExternalCreatedAt">Внешнее время создания либо <see langword="null"/>, если значение отсутствует.</param>
+/// <param name="OrdersOpenedAt">Историческое время открытия заявок либо <see langword="null"/>, если значение отсутствует.</param>
+/// <param name="GammaStartDate">Gamma <c>startDate</c> либо <see langword="null"/>, если значение отсутствует.</param>
+/// <param name="EventStartsAt">Начало предметного окна либо <see langword="null"/>, если значение отсутствует.</param>
+/// <param name="EventEndsAt">Конец предметного окна либо <see langword="null"/>, если значение отсутствует.</param>
+/// <param name="ExternalClosedAt">Внешнее время закрытия либо <see langword="null"/>, если значение отсутствует.</param>
+/// <param name="UmaResolutionStatus">Статус resolution UMA либо <see langword="null"/>, если значение отсутствует.</param>
+/// <param name="Active">Признак активности внешнего рынка.</param>
+/// <param name="Closed">Признак закрытия внешнего рынка.</param>
+/// <param name="AcceptingOrders">Признак текущего приёма заявок.</param>
+/// <param name="OrderBookEnabled">Признак включённого CLOB order book.</param>
+/// <param name="Tokens">Outcome tokens в порядке внешнего источника.</param>
+public sealed record ExternalMarket(
+    string ExternalMarketId,
+    string Slug,
+    string Question,
+    string ConditionId,
+    DateTimeOffset? ExternalCreatedAt,
+    DateTimeOffset? OrdersOpenedAt,
+    DateTimeOffset? GammaStartDate,
+    DateTimeOffset? EventStartsAt,
+    DateTimeOffset? EventEndsAt,
+    DateTimeOffset? ExternalClosedAt,
+    string? UmaResolutionStatus,
+    bool Active,
+    bool Closed,
+    bool AcceptingOrders,
+    bool OrderBookEnabled,
+    IReadOnlyList<ExternalMarketToken> Tokens);
+
+/// <summary>
+///     Представляет одно упорядоченное соответствие outcome и token внешнего рынка.
+/// </summary>
+/// <param name="Outcome">Внешнее название outcome.</param>
+/// <param name="TokenId">Внешний идентификатор token.</param>
+/// <param name="OutcomeIndex">Позиция во внешних массивах outcomes с нулевой индексацией.</param>
+public sealed record ExternalMarketToken(string Outcome, string TokenId, int OutcomeIndex);

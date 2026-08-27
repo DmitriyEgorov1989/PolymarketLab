@@ -43,6 +43,10 @@ internal sealed class MarketTokenConfiguration : IEntityTypeConfiguration<Market
             .IsUnique()
             .HasDatabaseName("ux_market_tokens_market_id_external_token_id");
 
+        builder.HasIndex(token => token.ExternalTokenId)
+            .IsUnique()
+            .HasDatabaseName(MarketDatabaseConstraints.ExternalTokenId);
+
         builder.HasIndex(token => new { token.MarketId, token.OutcomeIndex })
             .IsUnique()
             .HasDatabaseName("ux_market_tokens_market_id_outcome_index");

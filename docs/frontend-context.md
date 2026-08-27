@@ -33,7 +33,7 @@ Frontend не собирает данные Polymarket самостоятель�
 - добавить рынок по Polymarket URL;
 - увидеть зарегистрированные рынки, на которых сейчас доступны торги;
 - выбрать рынок;
-- увидеть вопрос, slug, даты, outcomes и token ids;
+- увидеть вопрос, event/market identity, schedule timestamps, outcomes и token ids;
 - запустить CollectorSession;
 - наблюдать статус коллектора;
 - видеть количество полученных и сохранённых сообщений;
@@ -119,8 +119,8 @@ received/persisted counters, время последнего сообщения 
 Frontend использует `GET /api/Market?tradingNow=true`: backend проверяет каждый
 рынок через Gamma и возвращает только рынки с активными торгами. При ошибке live-
 проверки frontend скрывает устаревший список. Список обновляется каждые 30 секунд.
-`startsAt` и `endsAt` остаются отображаемыми метаданными: Gamma status flags имеют
-приоритет, поскольку orders могут приниматься после формального `endDate`.
+Schedule timestamps остаются отображаемыми метаданными: Gamma status flags имеют
+приоритет, поскольку orders могут приниматься после формального `eventEndsAt`.
 
 Перед созданием collector session backend выполняет live-проверку Gamma. Сбор
 доступен только при `active`, отсутствии `closed`, включённых `acceptingOrders` и
@@ -147,12 +147,20 @@ export interface MarketTokenDto {
 
 export interface MarketDto {
   marketId: string;
+  externalEventId: string;
+  eventSlug: string;
   externalMarketId: string;
-  slug: string;
+  marketSlug: string;
   conditionId: string;
   question: string;
-  startsAt: string | null;
-  endsAt: string | null;
+  discoveredAt: string;
+  externalCreatedAt: string | null;
+  ordersOpenedAt: string | null;
+  gammaStartDate: string | null;
+  eventStartsAt: string;
+  eventEndsAt: string;
+  externalClosedAt: string | null;
+  scheduleRefreshedAt: string;
   tokens: MarketTokenDto[];
 }
 

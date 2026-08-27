@@ -21,7 +21,7 @@ public sealed class MarketRepositoryTests
 
         var result = await repository.TryAddAsync(market, CancellationToken.None);
         context.ChangeTracker.Clear();
-        var storedMarket = await repository.GetBySlugAsync(market.Slug, CancellationToken.None);
+        var storedMarket = await repository.GetBySlugAsync(market.MarketSlug, CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
         result.Value.Should().Be(MarketInsertStatus.Inserted);
@@ -40,9 +40,13 @@ public sealed class MarketRepositoryTests
         context.ChangeTracker.Clear();
 
         var byId = await repository.GetByIdAsync(market.Id, CancellationToken.None);
-        var bySlug = await repository.GetBySlugAsync(market.Slug, CancellationToken.None);
+        var byEventSlug = await repository.GetByEventSlugAsync(market.EventSlug, CancellationToken.None);
+        var byExternalEventId = await repository.GetByExternalEventIdAsync(
+            market.ExternalEventId,
+            CancellationToken.None);
+        var bySlug = await repository.GetBySlugAsync(market.MarketSlug, CancellationToken.None);
         var byExternalId = await repository.GetByExternalIdAsync(
-            market.ExternalId,
+            market.ExternalMarketId,
             CancellationToken.None);
         var byConditionId = await repository.GetByConditionIdAsync(
             market.ConditionId,
@@ -50,6 +54,8 @@ public sealed class MarketRepositoryTests
 
         byId!.Id.Should().Be(market.Id);
         byId.Tokens.Should().HaveCount(2);
+        byEventSlug!.Id.Should().Be(market.Id);
+        byExternalEventId!.Id.Should().Be(market.Id);
         bySlug!.Id.Should().Be(market.Id);
         byExternalId!.Id.Should().Be(market.Id);
         byConditionId!.Id.Should().Be(market.Id);
@@ -129,12 +135,20 @@ public sealed class MarketRepositoryTests
     {
         var market = Market.Create(
             MarketId.Create(Guid.NewGuid()).Value,
+            ExternalEventId.Create($"event-{slug}").Value,
+            EventSlug.Create($"event-{slug}").Value,
             ExternalMarketId.Create(externalId).Value,
             MarketSlug.Create(slug).Value,
             ConditionId.Create(conditionId).Value,
             "Will it rain?",
+            DateTimeOffset.Parse("2026-07-31T10:00:00Z"),
             null,
-            null).Value;
+            null,
+            null,
+            DateTimeOffset.Parse("2026-08-01T10:00:00Z"),
+            DateTimeOffset.Parse("2026-08-01T10:05:00Z"),
+            null,
+            DateTimeOffset.Parse("2026-07-31T10:00:00Z")).Value;
 
         market.AddToken(TokenId.Create("token-yes").Value, "Yes", 0);
         market.AddToken(TokenId.Create("token-no").Value, "No", 1);

@@ -9,34 +9,30 @@ namespace PolymarketLab.Markets.Domain.Tests.Domain.Models.MarketAggregate;
 
 public class MarketTests
 {
+    private static readonly DateTimeOffset DiscoveredAt = DateTimeOffset.Parse("2026-08-27T09:00:00+03:00");
+    private static readonly DateTimeOffset EventStartsAt = DateTimeOffset.Parse("2026-08-27T10:00:00+03:00");
+    private static readonly DateTimeOffset EventEndsAt = EventStartsAt.AddMinutes(5);
+
     [Fact]
-    public void Create_WithValidData_ShouldCreateMarket()
+    public void Create_WithValidData_ShouldCreateMarketAndNormalizeTimestampsToUtc()
     {
-        var id = MarketId.Create(Guid.NewGuid()).Value;
-        var externalId = ExternalMarketId.Create("market-123").Value;
-        var slug = MarketSlug.Create("will-it-rain").Value;
-        var conditionId = ConditionId.Create("0xcondition").Value;
-        var startsAt = DateTimeOffset.UtcNow;
-        var endsAt = startsAt.AddDays(1);
+        var market = CreateMarket();
 
-        var result = MarketModel.Create(
-            id,
-            externalId,
-            slug,
-            conditionId,
-            "Will it rain?",
-            startsAt,
-            endsAt);
-
-        result.IsSuccess.Should().BeTrue();
-        result.Value.Id.Should().Be(id);
-        result.Value.ExternalId.Should().Be(externalId);
-        result.Value.Slug.Should().Be(slug);
-        result.Value.ConditionId.Should().Be(conditionId);
-        result.Value.Question.Should().Be("Will it rain?");
-        result.Value.StartsAt.Should().Be(startsAt);
-        result.Value.EndsAt.Should().Be(endsAt);
-        result.Value.Tokens.Should().BeEmpty();
+        market.ExternalEventId.Value.Should().Be("event-123");
+        market.EventSlug.Value.Should().Be("bitcoin-up-or-down");
+        market.ExternalMarketId.Value.Should().Be("market-123");
+        market.MarketSlug.Value.Should().Be("bitcoin-up-or-down-5m");
+        market.ConditionId.Value.Should().Be("0xcondition");
+        market.Question.Should().Be("Will Bitcoin go up?");
+        market.DiscoveredAt.Should().Be(DiscoveredAt.ToUniversalTime());
+        market.ExternalCreatedAt.Should().Be(DiscoveredAt.AddDays(-1).ToUniversalTime());
+        market.OrdersOpenedAt.Should().Be(DiscoveredAt.AddMinutes(10).ToUniversalTime());
+        market.GammaStartDate.Should().Be(EventStartsAt.AddMinutes(-1).ToUniversalTime());
+        market.EventStartsAt.Should().Be(EventStartsAt.ToUniversalTime());
+        market.EventEndsAt.Should().Be(EventEndsAt.ToUniversalTime());
+        market.ExternalClosedAt.Should().BeNull();
+        market.ScheduleRefreshedAt.Should().Be(DiscoveredAt.ToUniversalTime());
+        market.Tokens.Should().BeEmpty();
     }
 
     [Theory]
@@ -45,37 +41,70 @@ public class MarketTests
     [InlineData(" ")]
     public void Create_WithEmptyQuestion_ShouldReturnError(string? question)
     {
-        var id = MarketId.Create(Guid.NewGuid()).Value;
-        var externalId = ExternalMarketId.Create("market-123").Value;
-        var slug = MarketSlug.Create("will-it-rain").Value;
-        var conditionId = ConditionId.Create("0xcondition").Value;
-
-        var result = MarketModel.Create(id, externalId, slug, conditionId, question!, null, null);
+        var result = CreateMarketResult(question!);
 
         result.IsFailure.Should().BeTrue();
         result.Error.Type.Should().Be(ErrorType.ValueIsRequired);
     }
 
     [Fact]
-    public void CompareTo_ShouldCompareUnderlyingValues()
+    public void Create_WithEventEndNotAfterStart_ShouldReturnError()
     {
-        var first = MarketId.Create(Guid.Parse("00000000-0000-0000-0000-000000000001")).Value;
-        var second = MarketId.Create(Guid.Parse("00000000-0000-0000-0000-000000000002")).Value;
+        var result = CreateMarketResult(eventEndsAt: EventStartsAt);
 
-        first.CompareTo(second).Should().BeLessThan(0);
+        result.IsFailure.Should().BeTrue();
+        result.Error.Type.Should().Be(ErrorType.ValueIsInvalid);
     }
 
     [Fact]
-    public void AddToken_WithValidData_ShouldAddTokenToMarket()
+    public void HasSameIdentity_WithExactOrderedTokens_ShouldReturnTrue()
+    {
+        var first = CreateMarket();
+        first.AddToken(TokenId.Create("token-yes").Value, "Yes", 0);
+        first.AddToken(TokenId.Create("token-no").Value, "No", 1);
+        var second = CreateMarket();
+        second.AddToken(TokenId.Create("token-no").Value, "No", 1);
+        second.AddToken(TokenId.Create("token-yes").Value, "Yes", 0);
+
+        first.HasSameIdentity(second).Should().BeTrue();
+    }
+
+    [Fact]
+    public void HasSameIdentity_WithChangedTokenOutcome_ShouldReturnFalse()
+    {
+        var first = CreateMarket();
+        first.AddToken(TokenId.Create("token-yes").Value, "Yes", 0);
+        var second = CreateMarket();
+        second.AddToken(TokenId.Create("token-yes").Value, "Up", 0);
+
+        first.HasSameIdentity(second).Should().BeFalse();
+    }
+
+    [Fact]
+    public void RefreshSchedule_ShouldPreserveDiscoveryAndUpdateScheduleInUtc()
     {
         var market = CreateMarket();
-        var tokenId = TokenId.Create("token-yes").Value;
+        var discoveredAt = market.DiscoveredAt;
+        var refreshedAt = DateTimeOffset.Parse("2026-08-27T12:00:00+03:00");
+        var newStart = EventStartsAt.AddMinutes(5);
+        var newEnd = EventEndsAt.AddMinutes(5);
 
-        var result = market.AddToken(tokenId, "Yes", 0);
+        var result = market.RefreshSchedule(
+            externalCreatedAt: null,
+            ordersOpenedAt: refreshedAt.AddMinutes(-30),
+            gammaStartDate: newStart.AddMinutes(-1),
+            eventStartsAt: newStart,
+            eventEndsAt: newEnd,
+            externalClosedAt: refreshedAt,
+            scheduleRefreshedAt: refreshedAt);
 
         result.IsSuccess.Should().BeTrue();
-        market.Tokens.Should().ContainSingle();
-        market.Tokens.Single().ExternalTokenId.Should().Be(tokenId);
+        market.DiscoveredAt.Should().Be(discoveredAt);
+        market.ExternalCreatedAt.Should().BeNull();
+        market.EventStartsAt.Should().Be(newStart.ToUniversalTime());
+        market.EventEndsAt.Should().Be(newEnd.ToUniversalTime());
+        market.ExternalClosedAt.Should().Be(refreshedAt.ToUniversalTime());
+        market.ScheduleRefreshedAt.Should().Be(refreshedAt.ToUniversalTime());
     }
 
     [Fact]
@@ -118,10 +147,7 @@ public class MarketTests
     {
         var market = CreateMarket();
 
-        var result = market.AddToken(
-            TokenId.Create("token-no").Value,
-            outcome!,
-            outcomeIndex);
+        var result = market.AddToken(TokenId.Create("token-no").Value, outcome!, outcomeIndex);
 
         result.IsFailure.Should().BeTrue();
         result.Error.Type.Should().Be(expectedType);
@@ -130,13 +156,28 @@ public class MarketTests
 
     private static MarketModel CreateMarket()
     {
+        return CreateMarketResult().Value;
+    }
+
+    private static CSharpFunctionalExtensions.Result<MarketModel, Error> CreateMarketResult(
+        string question = "Will Bitcoin go up?",
+        DateTimeOffset? eventEndsAt = null)
+    {
         return MarketModel.Create(
             MarketId.Create(Guid.NewGuid()).Value,
+            ExternalEventId.Create("event-123").Value,
+            EventSlug.Create("bitcoin-up-or-down").Value,
             ExternalMarketId.Create("market-123").Value,
-            MarketSlug.Create("will-it-rain").Value,
+            MarketSlug.Create("bitcoin-up-or-down-5m").Value,
             ConditionId.Create("0xcondition").Value,
-            "Will it rain?",
-            null,
-            null).Value;
+            question,
+            DiscoveredAt,
+            DiscoveredAt.AddDays(-1),
+            DiscoveredAt.AddMinutes(10),
+            EventStartsAt.AddMinutes(-1),
+            EventStartsAt,
+            eventEndsAt ?? EventEndsAt,
+            externalClosedAt: null,
+            scheduleRefreshedAt: DiscoveredAt);
     }
 }

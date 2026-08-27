@@ -5,7 +5,7 @@ Frontend для PolymarketLab Collector.
 Dashboard позволяет:
 
 - зарегистрировать доступный рынок по Polymarket URL;
-- выбрать рынок и просмотреть его outcomes и token ids;
+- выбрать рынок и просмотреть event/market identity, schedule, outcomes и token ids;
 - запустить и остановить collector session;
 - наблюдать статусы, durable counters, отставание persistence и ошибки.
 
@@ -63,8 +63,10 @@ docker compose up -d --build api
 Frontend запрашивает `GET /api/Market?tradingNow=true` и обновляет список каждые
 30 секунд. Backend оставляет только рынки, для которых свежий ответ Gamma содержит
 `active: true`, `closed: false`, `acceptingOrders: true` и включённый order book.
-`startsAt` и `endsAt` отображаются как метаданные, но не определяют доступность:
-Gamma может продолжать принимать orders после формального `endDate`.
+Frontend показывает `marketSlug` в списке, а в деталях различает identity
+родительского event и дочернего market и отображает все schedule timestamps.
+Nullable timestamps показываются как `-`. Schedule не определяет доступность:
+Gamma может продолжать принимать orders после формального `eventEndsAt`.
 
 Перед запуском collector backend повторно проверяет Gamma. Сбор разрешён только
 при `active: true`, `closed: false`, `acceptingOrders: true`, включённом order book

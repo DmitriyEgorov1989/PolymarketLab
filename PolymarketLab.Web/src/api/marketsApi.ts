@@ -17,12 +17,20 @@ export interface MarketTokenResponse {
 
 export interface MarketResponse {
   marketId: string;
+  externalEventId: string;
+  eventSlug: string;
   externalMarketId: string;
-  slug: string;
+  marketSlug: string;
   conditionId: string;
   question: string;
-  startsAt: string | null;
-  endsAt: string | null;
+  discoveredAt: string;
+  externalCreatedAt: string | null;
+  ordersOpenedAt: string | null;
+  gammaStartDate: string | null;
+  eventStartsAt: string;
+  eventEndsAt: string;
+  externalClosedAt: string | null;
+  scheduleRefreshedAt: string;
   tokens: MarketTokenResponse[];
 }
 

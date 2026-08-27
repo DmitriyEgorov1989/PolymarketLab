@@ -164,12 +164,20 @@ describe('market hooks', () => {
 function createMarket(): MarketResponse {
   return {
     marketId: 'market-id',
+    externalEventId: 'external-event-id',
+    eventSlug: 'example-event',
     externalMarketId: 'external-id',
-    slug: 'example-market',
+    marketSlug: 'example-market',
     conditionId: 'condition-id',
     question: 'Will it happen?',
-    startsAt: null,
-    endsAt: null,
+    discoveredAt: '2026-08-01T09:00:00Z',
+    externalCreatedAt: null,
+    ordersOpenedAt: null,
+    gammaStartDate: null,
+    eventStartsAt: '2026-08-01T10:00:00Z',
+    eventEndsAt: '2026-08-02T10:00:00Z',
+    externalClosedAt: null,
+    scheduleRefreshedAt: '2026-08-01T09:30:00Z',
     tokens: [],
   };
 }

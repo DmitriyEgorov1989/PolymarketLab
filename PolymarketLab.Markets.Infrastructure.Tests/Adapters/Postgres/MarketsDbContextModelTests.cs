@@ -22,15 +22,19 @@ public sealed class MarketsDbContextModelTests
         market.Should().NotBeNull();
         market!.GetTableName().Should().Be("markets");
         AssertConverter<MarketId, Guid>(market, nameof(MarketAggregate.Id));
-        AssertConverter<ExternalMarketId, string>(market, nameof(MarketAggregate.ExternalId));
-        AssertConverter<MarketSlug, string>(market, nameof(MarketAggregate.Slug));
+        AssertConverter<ExternalEventId, string>(market, nameof(MarketAggregate.ExternalEventId));
+        AssertConverter<EventSlug, string>(market, nameof(MarketAggregate.EventSlug));
+        AssertConverter<ExternalMarketId, string>(market, nameof(MarketAggregate.ExternalMarketId));
+        AssertConverter<MarketSlug, string>(market, nameof(MarketAggregate.MarketSlug));
         AssertConverter<ConditionId, string>(market, nameof(MarketAggregate.ConditionId));
         market.GetIndexes()
             .Select(index => index.GetDatabaseName())
             .Should()
             .Contain([
-                "ux_markets_slug",
-                "ux_markets_external_id",
+                "ux_markets_external_event_id",
+                "ux_markets_event_slug",
+                "ux_markets_market_slug",
+                "ux_markets_external_market_id",
                 "ux_markets_condition_id"
             ]);
     }
@@ -49,6 +53,7 @@ public sealed class MarketsDbContextModelTests
             .Select(index => index.GetDatabaseName())
             .Should()
             .Contain([
+                "ux_market_tokens_external_token_id",
                 "ux_market_tokens_market_id_external_token_id",
                 "ux_market_tokens_market_id_outcome_index"
             ]);
@@ -67,10 +72,10 @@ public sealed class MarketsDbContextModelTests
         var sql = context.Markets
             .AsNoTracking()
             .Include(market => market.Tokens)
-            .OrderBy(market => market.Slug)
+            .OrderBy(market => market.MarketSlug)
             .ToQueryString();
 
-        sql.Should().Contain("ORDER BY m.slug");
+        sql.Should().Contain("ORDER BY m.market_slug");
     }
 
     private static MarketsDbContext CreateContext()

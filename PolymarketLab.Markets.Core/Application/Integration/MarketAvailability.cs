@@ -11,4 +11,11 @@ internal static class MarketAvailability
             && market.AcceptingOrders
             && market.OrderBookEnabled;
     }
+
+    public static bool IsTerminal(ExternalMarket market)
+    {
+        return market.Closed
+            || market.ExternalClosedAt is not null
+            || string.Equals(market.UmaResolutionStatus, "resolved", StringComparison.OrdinalIgnoreCase);
+    }
 }

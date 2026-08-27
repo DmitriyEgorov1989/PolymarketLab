@@ -17,9 +17,13 @@
 - Ports/domain возвращают `Result<T, Error>` или `UnitResult<Error>`; command/controller boundary использует `Result<T, ErrorList>`.
 - Повторная регистрация того же рынка успешна: тот же ID и `Created = false`. Новая запись возвращает `Created = true`.
 - Расширяй существующий parser/gateway/repository flow, не создавай параллельную реализацию.
-- Identity рынка защищают отдельные constraints для `slug`, `external_market_id` и `condition_id`. Только их PostgreSQL `23505` преобразуется в `MarketInsertStatus.UniqueConflict`; token conflicts и остальные database errors не маскируются.
+- Identity рынка защищают отдельные constraints для event/market slugs и IDs, `condition_id` и глобального `external_token_id`. Только эти PostgreSQL `23505` преобразуются в `MarketInsertStatus.UniqueConflict`; scoped token conflicts и остальные database errors не маскируются.
 - Repository queries используют `AsNoTracking()` и загружают `Tokens`. Aggregate нельзя возвращать частично материализованным.
 - Регистрация и запуск collector требуют live-проверки Gamma. Внешние даты являются метаданными и не заменяют status flags Gamma.
+- Market раздельно хранит event identity (`ExternalEventId`, `EventSlug`) и child market identity (`ExternalMarketId`, `MarketSlug`, `ConditionId`, ordered tokens). Schedule не входит в identity.
+- `DiscoveredAt` неизменяем, а повторная exact registration обновляет внешнее расписание и `ScheduleRefreshedAt`. `EventStartsAt` берётся только из Gamma `eventStartTime`, не из `startDate`.
+- Future market регистрируется без требований `active` и `acceptingOrders`, если order book включён и рынок ещё не закрыт или разрешён. Exact existing market остаётся идемпотентным независимо от текущего terminal state.
+- Migration `PersistEventIdentityAndSchedule` намеренно требует пустую таблицу `markets`; старые identity и точное расписание не backfill-ятся вымышленными значениями.
 
 Фактический frontend HTTP-контракт описан в controllers/DTO и отражён в `docs/frontend-api-contract.md`.
 

@@ -16,7 +16,7 @@ internal static class MarketRegistrationErrors
 
     public static Error Unavailable => new(
         "market.registration.unavailable",
-        "The market is not currently available for collection.",
+        "The market is closed or resolved and cannot be registered.",
         ErrorType.Conflict);
 
     public static Error TokensRequired => new(

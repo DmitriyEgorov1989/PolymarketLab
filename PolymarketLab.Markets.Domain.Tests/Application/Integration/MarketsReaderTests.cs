@@ -94,8 +94,8 @@ public sealed class MarketsReaderTests
         var market = CreateMarket();
         var gateway = new StubExternalMarketGateway(CreateExternalMarket() with
         {
-            StartsAt = Now.AddDays(-2),
-            EndsAt = Now.AddDays(-1)
+            EventStartsAt = Now.AddDays(-2),
+            EventEndsAt = Now.AddDays(-1)
         });
         using var provider = CreateProvider(new StubMarketRepository(market), gateway);
         var reader = provider.GetRequiredService<IMarketsReader>();
@@ -136,16 +136,22 @@ public sealed class MarketsReaderTests
     private static ExternalMarket CreateExternalMarket()
     {
         return new ExternalMarket(
-            "market-123",
-            "will-it-rain",
-            "Will it rain?",
-            "0xcondition",
-            null,
-            null,
-            true,
-            false,
-            true,
-            true,
+            ExternalMarketId: "market-123",
+            Slug: "will-it-rain",
+            Question: "Will it rain?",
+            ConditionId: "0xcondition",
+            ExternalCreatedAt: null,
+            OrdersOpenedAt: null,
+            GammaStartDate: null,
+            EventStartsAt: Now.AddHours(1),
+            EventEndsAt: Now.AddHours(1).AddMinutes(5),
+            ExternalClosedAt: null,
+            UmaResolutionStatus: null,
+            Active: true,
+            Closed: false,
+            AcceptingOrders: true,
+            OrderBookEnabled: true,
+            Tokens:
             [
                 new ExternalMarketToken("Yes", "token-yes", 0),
                 new ExternalMarketToken("No", "token-no", 1)
@@ -156,12 +162,20 @@ public sealed class MarketsReaderTests
     {
         var market = Market.Create(
             MarketId.Create(Guid.NewGuid()).Value,
+            ExternalEventId.Create("event-123").Value,
+            EventSlug.Create("rain-event").Value,
             ExternalMarketId.Create("market-123").Value,
             MarketSlug.Create("will-it-rain").Value,
             ConditionId.Create("0xcondition").Value,
             "Will it rain?",
+            Now,
             null,
-            null).Value;
+            null,
+            null,
+            Now.AddHours(1),
+            Now.AddHours(1).AddMinutes(5),
+            null,
+            Now).Value;
 
         market.AddToken(TokenId.Create("token-yes").Value, "Yes", 0);
         market.AddToken(TokenId.Create("token-no").Value, "No", 1);
@@ -184,6 +198,14 @@ public sealed class MarketsReaderTests
             return Task.FromResult(market?.Id.Equals(marketId) == true ? market : null);
         }
 
+        public Task<Market?> GetByEventSlugAsync(
+            EventSlug eventSlug,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<Market?> GetByExternalEventIdAsync(
+            ExternalEventId externalEventId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<Market?> GetBySlugAsync(
             MarketSlug slug,
             CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -196,7 +218,15 @@ public sealed class MarketsReaderTests
             ConditionId conditionId,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
+        public Task<IReadOnlyCollection<Market>> GetByAnyTokenIdsAsync(
+            IReadOnlyCollection<TokenId> tokenIds,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<Result<MarketInsertStatus, Error>> TryAddAsync(
+            Market market,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<UnitResult<Error>> UpdateScheduleAsync(
             Market market,
             CancellationToken cancellationToken) => throw new NotSupportedException();
     }

@@ -21,7 +21,7 @@ internal sealed class MarketsReader(
             return (MarketForCollection?)null;
 
         var externalMarketResult = await externalMarketGateway.GetByMarketSlugAsync(
-            market.Slug,
+            market.MarketSlug,
             cancellationToken);
         if (externalMarketResult.IsFailure)
             return externalMarketResult.Error;
@@ -33,7 +33,7 @@ internal sealed class MarketsReader(
 
         return new MarketForCollection(
             market.Id,
-            market.Slug.Value,
+            market.MarketSlug.Value,
             market.Tokens
                 .Select(token => new MarketTokenForCollection(
                     token.ExternalTokenId,

@@ -67,6 +67,13 @@ dotnet ef database update --project .\PolymarketLab.Markets.Infrastructure\Polym
 dotnet ef database update --project .\PolymarketLab.DataCollection.Infrastructure\PolymarketLab.DataCollection.Infrastructure.csproj --startup-project .\PolymarketLab.Api\PolymarketLab.Api.csproj --context DataCollectionDbContext -- --environment Development
 ```
 
+Миграция Markets `PersistEventIdentityAndSchedule` требует пустую таблицу
+`markets`, потому что обязательные event identity и `eventStartTime` нельзя
+достоверно восстановить из старой схемы. Для локального disposable-окружения с
+существующими рынками пересоздай всю базу целиком, чтобы не оставить collector
+sessions со ссылками на удалённые markets. Миграция завершится ошибкой вместо
+частичного или вымышленного backfill.
+
 Для нормализатора обязательны миграции `AddNormalizationSchema`,
 `AddNormalizationReplayIndexes` и `PersistNormalizationErrorField`. Проверить
 применённые миграции можно так:

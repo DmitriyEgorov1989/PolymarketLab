@@ -1,7 +1,6 @@
 ﻿using CSharpFunctionalExtensions;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
-using PolymarketLab.Markets.Core.Domain.Models.Market.Entity;
 using PolymarketLab.Markets.Core.Domain.Models.Market.MarketAggregate;
 using PolymarketLab.Markets.Core.Domain.Models.Market.ValueObjects;
 using PolymarketLab.Markets.Core.Ports;
@@ -16,7 +15,7 @@ internal sealed class MarketRepository(MarketsDbContext dbContext) : IMarketRepo
         CancellationToken cancellationToken)
     {
         return await QueryMarkets()
-            .OrderBy(market => market.Slug)
+            .OrderBy(market => market.MarketSlug)
             .ToArrayAsync(cancellationToken);
     }
 
@@ -30,13 +29,31 @@ internal sealed class MarketRepository(MarketsDbContext dbContext) : IMarketRepo
                 cancellationToken);
     }
 
+    public Task<Market?> GetByEventSlugAsync(
+        EventSlug eventSlug,
+        CancellationToken cancellationToken)
+    {
+        return QueryMarkets().SingleOrDefaultAsync(
+            market => market.EventSlug == eventSlug,
+            cancellationToken);
+    }
+
+    public Task<Market?> GetByExternalEventIdAsync(
+        ExternalEventId externalEventId,
+        CancellationToken cancellationToken)
+    {
+        return QueryMarkets().SingleOrDefaultAsync(
+            market => market.ExternalEventId == externalEventId,
+            cancellationToken);
+    }
+
     public Task<Market?> GetBySlugAsync(
         MarketSlug slug,
         CancellationToken cancellationToken)
     {
         return QueryMarkets()
             .SingleOrDefaultAsync(market =>
-            market.Slug == slug, cancellationToken);
+            market.MarketSlug == slug, cancellationToken);
     }
 
     public Task<Market?> GetByExternalIdAsync(
@@ -45,7 +62,7 @@ internal sealed class MarketRepository(MarketsDbContext dbContext) : IMarketRepo
     {
         return QueryMarkets()
             .SingleOrDefaultAsync(
-                market => market.ExternalId == externalMarketId,
+                market => market.ExternalMarketId == externalMarketId,
                 cancellationToken);
     }
 
@@ -73,9 +90,39 @@ internal sealed class MarketRepository(MarketsDbContext dbContext) : IMarketRepo
         catch (DbUpdateException exception) when
         (IsIdentityConflict(exception))
         {
-            Detach(market);
+            Detach();
             return MarketInsertStatus.UniqueConflict;
         }
+    }
+
+    public async Task<IReadOnlyCollection<Market>> GetByAnyTokenIdsAsync(
+        IReadOnlyCollection<TokenId> tokenIds,
+        CancellationToken cancellationToken)
+    {
+        return await QueryMarkets()
+            .Where(market => market.Tokens.Any(token => tokenIds.Contains(token.ExternalTokenId)))
+            .ToArrayAsync(cancellationToken);
+    }
+
+    public async Task<UnitResult<Error>> UpdateScheduleAsync(
+        Market market,
+        CancellationToken cancellationToken)
+    {
+        await dbContext.Markets
+            .Where(stored => stored.Id == market.Id
+                && stored.ScheduleRefreshedAt < market.ScheduleRefreshedAt)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(stored => stored.ExternalCreatedAt, market.ExternalCreatedAt)
+                    .SetProperty(stored => stored.OrdersOpenedAt, market.OrdersOpenedAt)
+                    .SetProperty(stored => stored.GammaStartDate, market.GammaStartDate)
+                    .SetProperty(stored => stored.EventStartsAt, market.EventStartsAt)
+                    .SetProperty(stored => stored.EventEndsAt, market.EventEndsAt)
+                    .SetProperty(stored => stored.ExternalClosedAt, market.ExternalClosedAt)
+                    .SetProperty(stored => stored.ScheduleRefreshedAt, market.ScheduleRefreshedAt),
+                cancellationToken);
+
+        return UnitResult.Success<Error>();
     }
 
     private IQueryable<Market> QueryMarkets()
@@ -92,11 +139,8 @@ internal sealed class MarketRepository(MarketsDbContext dbContext) : IMarketRepo
             && MarketDatabaseConstraints.IsIdentityConstraint(postgresException.ConstraintName);
     }
 
-    private void Detach(Market market)
+    private void Detach()
     {
-        foreach (MarketToken token in market.Tokens)
-            dbContext.Entry(token).State = EntityState.Detached;
-
-        dbContext.Entry(market).State = EntityState.Detached;
+        dbContext.ChangeTracker.Clear();
     }
 }

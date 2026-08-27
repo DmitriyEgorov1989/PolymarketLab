@@ -20,6 +20,7 @@ public static class MarketsApplicationDependencyInjection
 
         services.AddMediatR(configuration => configuration.RegisterServicesFromAssembly(assembly));
         services.AddValidatorsFromAssembly(assembly);
+        services.TryAddSingleton(TimeProvider.System);
         services.TryAddEnumerable(ServiceDescriptor.Transient<
             IPipelineBehavior<RegisterMarketCommand, Result<RegisterMarketResponse, ErrorList>>,
             ValidationBehavior<RegisterMarketCommand, RegisterMarketResponse>>());

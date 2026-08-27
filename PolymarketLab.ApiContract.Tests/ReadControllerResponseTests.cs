@@ -49,13 +49,22 @@ public sealed class ReadControllerResponseTests
     {
         var marketId = Guid.NewGuid();
         var response = new GetMarketByIdResponse(new MarketResponse(
-            marketId,
-            "market-123",
-            "will-it-rain",
-            "0xcondition",
-            "Will it rain?",
-            CreatedAt,
-            CreatedAt.AddHours(1),
+            MarketId: marketId,
+            ExternalEventId: "event-123",
+            EventSlug: "rain-event",
+            ExternalMarketId: "market-123",
+            MarketSlug: "will-it-rain",
+            ConditionId: "0xcondition",
+            Question: "Will it rain?",
+            DiscoveredAt: CreatedAt.AddDays(-1),
+            ExternalCreatedAt: CreatedAt.AddDays(-2),
+            OrdersOpenedAt: null,
+            GammaStartDate: CreatedAt.AddMinutes(-1),
+            EventStartsAt: CreatedAt,
+            EventEndsAt: CreatedAt.AddMinutes(5),
+            ExternalClosedAt: null,
+            ScheduleRefreshedAt: CreatedAt.AddDays(-1),
+            Tokens:
             [
                 new MarketTokenResponse("token-yes", "Yes", 0),
                 new MarketTokenResponse("token-no", "No", 1)

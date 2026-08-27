@@ -37,11 +37,22 @@ describe('MarketDetails', () => {
     renderDetails({ market });
 
     expect(screen.getByRole('heading', { name: market.question })).toBeTruthy();
-    expect(screen.getByText(market.slug)).toBeTruthy();
+    expect(screen.getByText('Event identity')).toBeTruthy();
+    expect(screen.getByText('Market identity')).toBeTruthy();
+    expect(screen.getByText('Schedule')).toBeTruthy();
+    expect(screen.getByText(market.eventSlug)).toBeTruthy();
+    expect(screen.getByText(market.externalEventId)).toBeTruthy();
+    expect(screen.getByText(market.marketSlug)).toBeTruthy();
+    expect(screen.getByText(market.marketId)).toBeTruthy();
     expect(screen.getByText(market.externalMarketId)).toBeTruthy();
     expect(screen.getByText(market.conditionId)).toBeTruthy();
-    expect(screen.getByText(formatLocalDate(market.startsAt))).toBeTruthy();
-    expect(screen.getByText('-')).toBeTruthy();
+    expect(screen.getByText(formatLocalDate(market.discoveredAt))).toBeTruthy();
+    expect(screen.getByText(formatLocalDate(market.ordersOpenedAt))).toBeTruthy();
+    expect(screen.getByText(formatLocalDate(market.gammaStartDate))).toBeTruthy();
+    expect(screen.getByText(formatLocalDate(market.eventStartsAt))).toBeTruthy();
+    expect(screen.getByText(formatLocalDate(market.eventEndsAt))).toBeTruthy();
+    expect(screen.getByText(formatLocalDate(market.scheduleRefreshedAt))).toBeTruthy();
+    expect(screen.getAllByText('-')).toHaveLength(2);
     expect(screen.getByText('Yes')).toBeTruthy();
     expect(screen.getByText('Outcome index: 0')).toBeTruthy();
     expect(screen.getByText('token-yes')).toBeTruthy();
@@ -73,12 +84,20 @@ function renderDetails(options: RenderDetailsOptions = {}) {
 function createMarket(): Market {
   return {
     marketId: 'market-id',
+    externalEventId: 'external-event-id',
+    eventSlug: 'example-event',
     externalMarketId: 'external-market-id',
-    slug: 'example-market',
+    marketSlug: 'example-market',
     conditionId: 'condition-id',
     question: 'Will it happen?',
-    startsAt: '2026-08-01T10:00:00Z',
-    endsAt: null,
+    discoveredAt: '2026-08-01T09:00:00Z',
+    externalCreatedAt: null,
+    ordersOpenedAt: '2026-08-01T09:30:00Z',
+    gammaStartDate: '2026-08-01T09:45:00Z',
+    eventStartsAt: '2026-08-01T10:00:00Z',
+    eventEndsAt: '2026-08-02T10:00:00Z',
+    externalClosedAt: null,
+    scheduleRefreshedAt: '2026-08-01T10:15:00Z',
     tokens: [
       { outcome: 'Yes', outcomeIndex: 0, tokenId: 'token-yes' },
     ],

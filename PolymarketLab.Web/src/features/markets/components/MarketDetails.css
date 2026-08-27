@@ -26,6 +26,13 @@
   line-height: 1.25;
 }
 
+.market-details-section-title {
+  margin: 0 0 -10px;
+  color: #cbd5e1;
+  font-size: 0.92rem;
+  letter-spacing: 0.04em;
+}
+
 .market-details-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
