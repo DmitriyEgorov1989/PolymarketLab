@@ -22,7 +22,7 @@ public sealed class MarketsReaderTests
     {
         var market = CreateMarket();
         var repository = new StubMarketRepository(market);
-        var gateway = new StubExternalMarketGateway(CreateExternalMarket());
+        var gateway = new StubExternalMarketGateway(CreateExternalEvent());
         using var provider = CreateProvider(repository, gateway);
         var reader = provider.GetRequiredService<IMarketsReader>();
 
@@ -31,8 +31,18 @@ public sealed class MarketsReaderTests
         result.IsSuccess.Should().BeTrue();
         result.Value.Should().NotBeNull();
         result.Value!.MarketId.Should().Be(market.Id);
-        result.Value.Slug.Should().Be("will-it-rain");
-        result.Value.Tokens.Should().BeEquivalentTo(
+        result.Value.ExternalEventId.Should().Be("event-123");
+        result.Value.EventSlug.Should().Be("rain-event");
+        result.Value.ExternalMarketId.Should().Be("market-123");
+        result.Value.MarketSlug.Should().Be("will-it-rain");
+        result.Value.ConditionId.Should().Be("0xcondition");
+        result.Value.EventStartsAt.Should().Be(Now.AddHours(1));
+        result.Value.EventEndsAt.Should().Be(Now.AddHours(1).AddMinutes(5));
+        result.Value.Active.Should().BeTrue();
+        result.Value.Closed.Should().BeFalse();
+        result.Value.AcceptingOrders.Should().BeTrue();
+        result.Value.OrderBookEnabled.Should().BeTrue();
+        result.Value.Tokens.Should().Equal(
         [
             new MarketTokenForCollection(TokenId.Create("token-yes").Value, "Yes", 0),
             new MarketTokenForCollection(TokenId.Create("token-no").Value, "No", 1)
@@ -43,7 +53,7 @@ public sealed class MarketsReaderTests
     public async Task GetForCollectionAsync_WithMissingMarket_ShouldReturnNullAndForwardCancellation()
     {
         var repository = new StubMarketRepository(null);
-        var gateway = new StubExternalMarketGateway(CreateExternalMarket());
+        var gateway = new StubExternalMarketGateway(CreateExternalEvent());
         using var provider = CreateProvider(repository, gateway);
         var reader = provider.GetRequiredService<IMarketsReader>();
         using var cancellationTokenSource = new CancellationTokenSource();
@@ -59,58 +69,172 @@ public sealed class MarketsReaderTests
     }
 
     [Theory]
-    [InlineData(false, false, true, true)]
-    [InlineData(true, true, true, true)]
-    [InlineData(true, false, false, true)]
-    [InlineData(true, false, true, false)]
-    public async Task GetForCollectionAsync_WithUnavailableMarket_ShouldReturnConflict(
+    [InlineData(false, false, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    public async Task GetForCollectionAsync_WithNonTerminalOperationalFlags_ShouldReturnContract(
         bool active,
-        bool closed,
         bool acceptingOrders,
         bool orderBookEnabled)
     {
         var market = CreateMarket();
         var gateway = new StubExternalMarketGateway(
-            CreateExternalMarket() with
+            CreateExternalEvent() with
             {
-                Active = active,
-                Closed = closed,
-                AcceptingOrders = acceptingOrders,
-                OrderBookEnabled = orderBookEnabled
+                Market = CreateExternalMarket() with
+                {
+                    Active = active,
+                    AcceptingOrders = acceptingOrders,
+                    OrderBookEnabled = orderBookEnabled
+                }
             });
         using var provider = CreateProvider(new StubMarketRepository(market), gateway);
         var reader = provider.GetRequiredService<IMarketsReader>();
 
         var result = await reader.GetForCollectionAsync(market.Id, CancellationToken.None);
 
-        result.IsFailure.Should().BeTrue();
-        result.Error.Code.Should().Be("market.collection.unavailable");
-        result.Error.Type.Should().Be(ErrorType.Conflict);
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Active.Should().Be(active);
+        result.Value.AcceptingOrders.Should().Be(acceptingOrders);
+        result.Value.OrderBookEnabled.Should().Be(orderBookEnabled);
     }
 
-    [Fact]
-    public async Task GetForCollectionAsync_WithPastExternalEndDate_ShouldReturnContract()
+    [Theory]
+    [InlineData("eventId")]
+    [InlineData("eventSlug")]
+    [InlineData("marketId")]
+    [InlineData("marketSlug")]
+    [InlineData("conditionId")]
+    [InlineData("tokenId")]
+    [InlineData("tokenOutcome")]
+    [InlineData("tokenOrder")]
+    public async Task GetForCollectionAsync_WithIdentityMismatch_ShouldReturnConflict(string mismatch)
     {
         var market = CreateMarket();
-        var gateway = new StubExternalMarketGateway(CreateExternalMarket() with
+        var externalEvent = CreateExternalEvent();
+        var externalMarket = externalEvent.Market;
+        externalEvent = mismatch switch
         {
-            EventStartsAt = Now.AddDays(-2),
-            EventEndsAt = Now.AddDays(-1)
+            "eventId" => externalEvent with { ExternalEventId = "event-999" },
+            "eventSlug" => externalEvent with { Slug = "other-event" },
+            "marketId" => externalEvent with
+            {
+                Market = externalMarket with { ExternalMarketId = "market-999" }
+            },
+            "marketSlug" => externalEvent with
+            {
+                Market = externalMarket with { Slug = "other-market" }
+            },
+            "conditionId" => externalEvent with
+            {
+                Market = externalMarket with { ConditionId = "0xother" }
+            },
+            "tokenId" => externalEvent with
+            {
+                Market = externalMarket with
+                {
+                    Tokens =
+                    [
+                        new ExternalMarketToken("Yes", "token-yes", 0),
+                        new ExternalMarketToken("No", "token-999", 1)
+                    ]
+                }
+            },
+            "tokenOutcome" => externalEvent with
+            {
+                Market = externalMarket with
+                {
+                    Tokens =
+                    [
+                        new ExternalMarketToken("Up", "token-yes", 0),
+                        new ExternalMarketToken("No", "token-no", 1)
+                    ]
+                }
+            },
+            "tokenOrder" => externalEvent with
+            {
+                Market = externalMarket with
+                {
+                    Tokens =
+                    [
+                        new ExternalMarketToken("No", "token-no", 0),
+                        new ExternalMarketToken("Yes", "token-yes", 1)
+                    ]
+                }
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(mismatch), mismatch, null)
+        };
+        var gateway = new StubExternalMarketGateway(externalEvent);
+        using var provider = CreateProvider(new StubMarketRepository(market), gateway);
+        var reader = provider.GetRequiredService<IMarketsReader>();
+
+        var result = await reader.GetForCollectionAsync(market.Id, CancellationToken.None);
+
+        AssertUnavailable(result);
+    }
+
+    [Theory]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    public async Task GetForCollectionAsync_WithTerminalMarket_ShouldReturnConflict(
+        bool closed,
+        bool hasClosedTime,
+        bool resolved)
+    {
+        var market = CreateMarket();
+        var externalEvent = CreateExternalEvent();
+        var gateway = new StubExternalMarketGateway(externalEvent with
+        {
+            Market = externalEvent.Market with
+            {
+                Closed = closed,
+                ExternalClosedAt = hasClosedTime ? Now : null,
+                UmaResolutionStatus = resolved ? "resolved" : null
+            }
         });
         using var provider = CreateProvider(new StubMarketRepository(market), gateway);
         var reader = provider.GetRequiredService<IMarketsReader>();
 
         var result = await reader.GetForCollectionAsync(market.Id, CancellationToken.None);
 
-        result.IsSuccess.Should().BeTrue();
-        result.Value.Should().NotBeNull();
+        AssertUnavailable(result);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetForCollectionAsync_WithScheduleMismatch_ShouldReturnConflict(
+        bool startChanged)
+    {
+        var market = CreateMarket();
+        var externalEvent = CreateExternalEvent();
+        var gateway = new StubExternalMarketGateway(externalEvent with
+        {
+            Market = externalEvent.Market with
+            {
+                EventStartsAt = startChanged
+                    ? externalEvent.Market.EventStartsAt!.Value.AddMinutes(1)
+                    : externalEvent.Market.EventStartsAt,
+                EventEndsAt = startChanged
+                    ? externalEvent.Market.EventEndsAt
+                    : externalEvent.Market.EventEndsAt!.Value.AddMinutes(1)
+            }
+        });
+        using var provider = CreateProvider(new StubMarketRepository(market), gateway);
+        var reader = provider.GetRequiredService<IMarketsReader>();
+
+        var result = await reader.GetForCollectionAsync(market.Id, CancellationToken.None);
+
+        AssertUnavailable(result);
     }
 
     [Fact]
     public async Task GetForCollectionAsync_WhenGammaFails_ShouldPreserveError()
     {
         var market = CreateMarket();
-        var error = new Error("gamma.market.timeout", "Gamma timed out.", ErrorType.Failure);
+        var error = new Error("gamma.event.timeout", "Gamma timed out.", ErrorType.Failure);
         using var provider = CreateProvider(
             new StubMarketRepository(market),
             new StubExternalMarketGateway(error));
@@ -120,6 +244,13 @@ public sealed class MarketsReaderTests
 
         result.IsFailure.Should().BeTrue();
         result.Error.Should().Be(error);
+    }
+
+    private static void AssertUnavailable(Result<MarketForCollection?, Error> result)
+    {
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be("market.collection.unavailable");
+        result.Error.Type.Should().Be(ErrorType.Conflict);
     }
 
     private static ServiceProvider CreateProvider(
@@ -156,6 +287,11 @@ public sealed class MarketsReaderTests
                 new ExternalMarketToken("Yes", "token-yes", 0),
                 new ExternalMarketToken("No", "token-no", 1)
             ]);
+    }
+
+    private static ExternalEvent CreateExternalEvent()
+    {
+        return new ExternalEvent("event-123", "rain-event", CreateExternalMarket());
     }
 
     private static Market CreateMarket()
@@ -233,24 +369,24 @@ public sealed class MarketsReaderTests
 
     private sealed class StubExternalMarketGateway : IExternalMarketGateway
     {
-        private readonly Result<ExternalMarket, Error> _result;
+        private readonly Result<ExternalEvent, Error> _result;
 
-        public StubExternalMarketGateway(ExternalMarket market) => _result = market;
+        public StubExternalMarketGateway(ExternalEvent externalEvent) => _result = externalEvent;
         public StubExternalMarketGateway(Error error) => _result = error;
 
         public int CallCount { get; private set; }
 
         public Task<Result<ExternalEvent, Error>> GetByEventSlugAsync(
             EventSlug eventSlug,
-            CancellationToken cancellationToken) => throw new NotSupportedException();
-
-        public Task<Result<ExternalMarket, Error>> GetByMarketSlugAsync(
-            MarketSlug slug,
             CancellationToken cancellationToken)
         {
             CallCount++;
             return Task.FromResult(_result);
         }
+
+        public Task<Result<ExternalMarket, Error>> GetByMarketSlugAsync(
+            MarketSlug slug,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
 }

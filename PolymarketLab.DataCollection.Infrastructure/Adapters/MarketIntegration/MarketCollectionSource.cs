@@ -26,7 +26,17 @@ internal sealed class MarketCollectionSource(IMarketsReader marketsReader)
 
         return new CollectionMarket(
             market.Value.MarketId,
-            market.Value.Slug,
+            market.Value.ExternalEventId,
+            market.Value.EventSlug,
+            market.Value.ExternalMarketId,
+            market.Value.MarketSlug,
+            market.Value.ConditionId,
+            market.Value.EventStartsAt,
+            market.Value.EventEndsAt,
+            market.Value.Active,
+            market.Value.Closed,
+            market.Value.AcceptingOrders,
+            market.Value.OrderBookEnabled,
             market.Value.Tokens
                 .Select(token => new CollectionMarketToken(
                     token.TokenId,

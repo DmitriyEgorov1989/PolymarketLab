@@ -42,6 +42,14 @@ public sealed class StartCollectorHandler(
         if (market is null)
             return Failure(StartCollectorErrors.MarketNotFound(command.MarketId));
 
+        if (!market.Active
+            || market.Closed
+            || !market.AcceptingOrders
+            || !market.OrderBookEnabled)
+        {
+            return Failure(StartCollectorErrors.MarketUnavailable(command.MarketId));
+        }
+
         var tokenError = ValidateTokens(market);
         if (tokenError is not null)
             return Failure(tokenError);

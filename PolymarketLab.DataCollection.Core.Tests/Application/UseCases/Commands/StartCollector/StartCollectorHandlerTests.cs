@@ -48,6 +48,37 @@ public sealed class StartCollectorHandlerTests
     }
 
     [Theory]
+    [InlineData(false, false, true, true)]
+    [InlineData(true, true, true, true)]
+    [InlineData(true, false, false, true)]
+    [InlineData(true, false, true, false)]
+    public async Task Handle_WithUnavailableOperationalFlags_ShouldReturnConflictWithoutCreatingSession(
+        bool active,
+        bool closed,
+        bool acceptingOrders,
+        bool orderBookEnabled)
+    {
+        var fixture = new Fixture
+        {
+            Market = CreateMarket() with
+            {
+                Active = active,
+                Closed = closed,
+                AcceptingOrders = acceptingOrders,
+                OrderBookEnabled = orderBookEnabled
+            }
+        };
+
+        var result = await fixture.HandleAsync();
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Should().Be(
+            StartCollectorErrors.MarketUnavailable(fixture.MarketId.Value));
+        fixture.Repository.TryAddCallCount.Should().Be(0);
+        fixture.Runtime.StartCallCount.Should().Be(0);
+    }
+
+    [Theory]
     [InlineData(InvalidTokens.TooFew, "collector.start.tokens.insufficient")]
     [InlineData(InvalidTokens.EmptyOutcome, "collector.start.token.outcome.required")]
     [InlineData(InvalidTokens.DuplicateTokenId, "collector.start.token.id.duplicate")]
@@ -262,7 +293,20 @@ public sealed class StartCollectorHandlerTests
             ]
         };
 
-        return new CollectionMarket(marketId, "will-it-rain", tokens);
+        return new CollectionMarket(
+            marketId,
+            "event-123",
+            "rain-event",
+            "market-123",
+            "will-it-rain",
+            "0xcondition",
+            Now.AddHours(1),
+            Now.AddHours(1).AddMinutes(5),
+            true,
+            false,
+            true,
+            true,
+            tokens.OrderBy(token => token.OutcomeIndex).ToArray());
     }
 
     private static CollectorSessionAggregate CreateSession(MarketId marketId)

@@ -3,6 +3,7 @@ using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Infrastructure.DependencyInjection;
 using PolymarketLab.Markets.Contracts;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
@@ -13,6 +14,8 @@ namespace PolymarketLab.DataCollection.Infrastructure.Tests.Adapters.MarketInteg
 
 public sealed class MarketCollectionSourceTests
 {
+    private static readonly DateTimeOffset StartsAt = DateTimeOffset.Parse("2026-08-28T12:00:00Z");
+    private static readonly DateTimeOffset EndsAt = StartsAt.AddMinutes(5);
     private const string ConnectionString =
         "Host=localhost;Port=5432;Database=polymarket_lab;Username=postgres;Password=postgres";
 
@@ -20,11 +23,25 @@ public sealed class MarketCollectionSourceTests
     public async Task GetByIdAsync_WithMarketContract_ShouldMapCollectionMarket()
     {
         var marketId = MarketId.Create(Guid.NewGuid()).Value;
-        var tokenId = TokenId.Create("token-yes").Value;
+        var yesTokenId = TokenId.Create("token-yes").Value;
+        var noTokenId = TokenId.Create("token-no").Value;
         var reader = new StubMarketsReader(new MarketForCollection(
             marketId,
+            "event-123",
+            "rain-event",
+            "market-123",
             "will-it-rain",
-            [new MarketTokenForCollection(tokenId, "Yes", 0)]));
+            "0xcondition",
+            StartsAt,
+            EndsAt,
+            false,
+            false,
+            false,
+            true,
+            [
+                new MarketTokenForCollection(yesTokenId, "Yes", 0),
+                new MarketTokenForCollection(noTokenId, "No", 1)
+            ]));
         using var provider = CreateProvider(reader);
         var source = provider.GetRequiredService<IMarketCollectionSource>();
 
@@ -33,11 +50,20 @@ public sealed class MarketCollectionSourceTests
         result.IsSuccess.Should().BeTrue();
         result.Value.Should().NotBeNull();
         result.Value!.MarketId.Should().Be(marketId);
-        result.Value.Slug.Should().Be("will-it-rain");
-        result.Value.Tokens.Should().ContainSingle();
-        result.Value.Tokens.Single().TokenId.Should().Be(tokenId);
-        result.Value.Tokens.Single().Outcome.Should().Be("Yes");
-        result.Value.Tokens.Single().OutcomeIndex.Should().Be(0);
+        result.Value.ExternalEventId.Should().Be("event-123");
+        result.Value.EventSlug.Should().Be("rain-event");
+        result.Value.ExternalMarketId.Should().Be("market-123");
+        result.Value.MarketSlug.Should().Be("will-it-rain");
+        result.Value.ConditionId.Should().Be("0xcondition");
+        result.Value.EventStartsAt.Should().Be(StartsAt);
+        result.Value.EventEndsAt.Should().Be(EndsAt);
+        result.Value.Active.Should().BeFalse();
+        result.Value.Closed.Should().BeFalse();
+        result.Value.AcceptingOrders.Should().BeFalse();
+        result.Value.OrderBookEnabled.Should().BeTrue();
+        result.Value.Tokens.Should().Equal(
+            new CollectionMarketToken(yesTokenId, "Yes", 0),
+            new CollectionMarketToken(noTokenId, "No", 1));
     }
 
     [Fact]

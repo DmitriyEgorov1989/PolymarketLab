@@ -2,7 +2,31 @@ using PolymarketLab.SharedKernel.DomainModels.Ids;
 
 namespace PolymarketLab.Markets.Contracts;
 
+/// <summary>Представляет проверенный снимок рынка для создания collection session.</summary>
+/// <param name="MarketId">Внутренний идентификатор зарегистрированного рынка.</param>
+/// <param name="ExternalEventId">Идентификатор родительского события Gamma.</param>
+/// <param name="EventSlug">Slug родительского события Gamma.</param>
+/// <param name="ExternalMarketId">Идентификатор дочернего рынка Gamma.</param>
+/// <param name="MarketSlug">Slug дочернего рынка Gamma.</param>
+/// <param name="ConditionId">Идентификатор condition рынка.</param>
+/// <param name="EventStartsAt">Точное UTC-время начала предметного окна.</param>
+/// <param name="EventEndsAt">Точное UTC-время окончания предметного окна.</param>
+/// <param name="Active">Актуальный признак активности Gamma.</param>
+/// <param name="Closed">Актуальный признак закрытия Gamma.</param>
+/// <param name="AcceptingOrders">Актуальный признак приёма заявок Gamma.</param>
+/// <param name="OrderBookEnabled">Актуальный признак включённого CLOB order book.</param>
+/// <param name="Tokens">Токены исходов в порядке Gamma.</param>
 public sealed record MarketForCollection(
     MarketId MarketId,
-    string Slug,
-    IReadOnlyCollection<MarketTokenForCollection> Tokens);
+    string ExternalEventId,
+    string EventSlug,
+    string ExternalMarketId,
+    string MarketSlug,
+    string ConditionId,
+    DateTimeOffset EventStartsAt,
+    DateTimeOffset EventEndsAt,
+    bool Active,
+    bool Closed,
+    bool AcceptingOrders,
+    bool OrderBookEnabled,
+    IReadOnlyList<MarketTokenForCollection> Tokens);

@@ -446,7 +446,17 @@ public sealed class CollectorRuntimeStartTests
     {
         var market = new CollectionMarket(
             MarketId.Create(Guid.NewGuid()).Value,
+            "event-123",
+            "runtime-test-event",
+            "market-123",
             "runtime-test-market",
+            "0xcondition",
+            DateTimeOffset.Parse("2026-08-28T12:00:00Z"),
+            DateTimeOffset.Parse("2026-08-28T12:05:00Z"),
+            true,
+            false,
+            true,
+            true,
             [
                 new CollectionMarketToken(TokenId.Create("yes-token").Value, "Yes", 0),
                 new CollectionMarketToken(TokenId.Create("no-token").Value, "No", 1)

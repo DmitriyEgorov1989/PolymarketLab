@@ -16,6 +16,12 @@ public static class StartCollectorErrors
         ErrorType.NotFound,
         "marketId");
 
+    public static Error MarketUnavailable(Guid marketId) => new(
+        "market.collection.unavailable",
+        $"Market '{marketId}' is not currently available for collection.",
+        ErrorType.Conflict,
+        "marketId");
+
     public static Error TokensRequired(int count) => new(
         "collector.start.tokens.insufficient",
         $"At least two market tokens are required; found {count}.",

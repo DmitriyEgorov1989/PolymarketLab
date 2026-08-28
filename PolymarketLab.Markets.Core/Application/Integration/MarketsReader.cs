@@ -20,25 +20,68 @@ internal sealed class MarketsReader(
         if (market is null)
             return (MarketForCollection?)null;
 
-        var externalMarketResult = await externalMarketGateway.GetByMarketSlugAsync(
-            market.MarketSlug,
+        var externalEventResult = await externalMarketGateway.GetByEventSlugAsync(
+            market.EventSlug,
             cancellationToken);
-        if (externalMarketResult.IsFailure)
-            return externalMarketResult.Error;
+        if (externalEventResult.IsFailure)
+            return externalEventResult.Error;
 
-        if (!MarketAvailability.IsAvailable(externalMarketResult.Value))
+        var externalEvent = externalEventResult.Value;
+        var externalMarket = externalEvent.Market;
+
+        if (!HasSameSnapshot(market, externalEvent)
+            || MarketAvailability.IsTerminal(externalMarket))
         {
             return MarketCollectionErrors.Unavailable(market.Id.Value);
         }
 
         return new MarketForCollection(
             market.Id,
-            market.MarketSlug.Value,
-            market.Tokens
+            externalEvent.ExternalEventId,
+            externalEvent.Slug,
+            externalMarket.ExternalMarketId,
+            externalMarket.Slug,
+            externalMarket.ConditionId,
+            externalMarket.EventStartsAt!.Value.ToUniversalTime(),
+            externalMarket.EventEndsAt!.Value.ToUniversalTime(),
+            externalMarket.Active,
+            externalMarket.Closed,
+            externalMarket.AcceptingOrders,
+            externalMarket.OrderBookEnabled,
+            externalMarket.Tokens
+                .OrderBy(token => token.OutcomeIndex)
                 .Select(token => new MarketTokenForCollection(
-                    token.ExternalTokenId,
+                    TokenId.Create(token.TokenId).Value,
                     token.Outcome,
                     token.OutcomeIndex))
                 .ToArray());
+    }
+
+    private static bool HasSameSnapshot(
+        Domain.Models.Market.MarketAggregate.Market market,
+        Ports.Dto.ExternalEvent externalEvent)
+    {
+        var externalMarket = externalEvent.Market;
+        if (!string.Equals(market.ExternalEventId.Value, externalEvent.ExternalEventId, StringComparison.Ordinal)
+            || !string.Equals(market.EventSlug.Value, externalEvent.Slug, StringComparison.Ordinal)
+            || !string.Equals(market.ExternalMarketId.Value, externalMarket.ExternalMarketId, StringComparison.Ordinal)
+            || !string.Equals(market.MarketSlug.Value, externalMarket.Slug, StringComparison.Ordinal)
+            || !string.Equals(market.ConditionId.Value, externalMarket.ConditionId, StringComparison.Ordinal)
+            || externalMarket.EventStartsAt is null
+            || externalMarket.EventEndsAt is null
+            || market.EventStartsAt != externalMarket.EventStartsAt.Value
+            || market.EventEndsAt != externalMarket.EventEndsAt.Value)
+        {
+            return false;
+        }
+
+        var storedTokens = market.Tokens
+            .OrderBy(token => token.OutcomeIndex)
+            .Select(token => (token.ExternalTokenId.Value, token.Outcome, token.OutcomeIndex));
+        var externalTokens = externalMarket.Tokens
+            .OrderBy(token => token.OutcomeIndex)
+            .Select(token => (token.TokenId, token.Outcome, token.OutcomeIndex));
+
+        return storedTokens.SequenceEqual(externalTokens);
     }
 }
