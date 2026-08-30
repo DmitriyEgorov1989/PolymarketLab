@@ -9,8 +9,7 @@ using CollectorSessionAggregate = PolymarketLab.DataCollection.Core.Domain.Model
 namespace PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
 
 public sealed class CollectorSessionStartupReconciler(
-    ICollectorSessionRepository sessionRepository,
-    TimeProvider timeProvider)
+    ICollectorSessionRepository sessionRepository)
     : ICollectorSessionStartupReconciler
 {
     private const int MaximumUpdateAttempts = 3;
@@ -38,20 +37,15 @@ public sealed class CollectorSessionStartupReconciler(
 
         for (var attempt = 0; attempt < MaximumUpdateAttempts; attempt++)
         {
-            if (session is null || !IsActive(session.Status))
+            if (session is null || !IsIncomplete(session.Status))
+                return UnitResult.Success<Error>();
+            if (session.Status == CollectorSessionStatus.Invalidating)
                 return UnitResult.Success<Error>();
 
             var expectedStatus = session.Status;
-            var lowerBound = session.StartedAt ?? session.CreatedAt;
-            var currentTime = timeProvider.GetUtcNow();
-            var interruptedAt = currentTime < lowerBound
-                ? lowerBound
-                : currentTime;
-            var interruptResult = session.Interrupt(
-                interruptedAt,
-                CollectorStopReason.ProcessTerminated);
-            if (interruptResult.IsFailure)
-                return interruptResult;
+            var invalidationResult = session.BeginInvalidation();
+            if (invalidationResult.IsFailure)
+                return invalidationResult;
 
             var updateResult = await sessionRepository.TryUpdateAsync(
                 session,
@@ -68,7 +62,9 @@ public sealed class CollectorSessionStartupReconciler(
                 cancellationToken);
         }
 
-        if (session is null || !IsActive(session.Status))
+        if (session is null
+            || !IsIncomplete(session.Status)
+            || session.Status == CollectorSessionStatus.Invalidating)
             return UnitResult.Success<Error>();
 
         return UnitResult.Failure(
@@ -76,7 +72,7 @@ public sealed class CollectorSessionStartupReconciler(
                 initialSession.Id));
     }
 
-    private static bool IsActive(CollectorSessionStatus status)
+    private static bool IsIncomplete(CollectorSessionStatus status)
     {
         return status is CollectorSessionStatus.Scheduled
             or CollectorSessionStatus.Starting

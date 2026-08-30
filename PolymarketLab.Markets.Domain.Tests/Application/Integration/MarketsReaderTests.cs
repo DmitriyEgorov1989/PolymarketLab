@@ -18,6 +18,39 @@ public sealed class MarketsReaderTests
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-08-10T12:00:00Z");
 
     [Fact]
+    public async Task GetCollectionWindowAsync_WithStoredMarket_ShouldReturnPersistedWindowWithoutGamma()
+    {
+        var market = CreateMarket();
+        var repository = new StubMarketRepository(market);
+        var gateway = new StubExternalMarketGateway(CreateExternalEvent());
+        using var provider = CreateProvider(repository, gateway);
+        var reader = provider.GetRequiredService<IMarketsReader>();
+
+        var result = await reader.GetCollectionWindowAsync(market.Id, CancellationToken.None);
+
+        result.Should().Be(new MarketCollectionWindow(market.Id, Now.AddHours(1)));
+        gateway.CallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetCollectionWindowAsync_WithMissingMarket_ShouldReturnNullAndForwardCancellation()
+    {
+        var repository = new StubMarketRepository(null);
+        var gateway = new StubExternalMarketGateway(CreateExternalEvent());
+        using var provider = CreateProvider(repository, gateway);
+        var reader = provider.GetRequiredService<IMarketsReader>();
+        using var cancellationTokenSource = new CancellationTokenSource();
+
+        var result = await reader.GetCollectionWindowAsync(
+            MarketId.Create(Guid.NewGuid()).Value,
+            cancellationTokenSource.Token);
+
+        result.Should().BeNull();
+        repository.LastCancellationToken.Should().Be(cancellationTokenSource.Token);
+        gateway.CallCount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task GetForCollectionAsync_WithStoredMarket_ShouldReturnContract()
     {
         var market = CreateMarket();

@@ -18,7 +18,7 @@ public sealed class CollectorSessionStartupReconcilerTests
         new(2026, 7, 29, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task ReconcileAsync_WithActiveSessions_ShouldInterruptAll()
+    public async Task ReconcileAsync_WithIncompleteSessions_ShouldInvalidateWithoutResuming()
     {
         var sessions = new[]
         {
@@ -29,23 +29,20 @@ public sealed class CollectorSessionStartupReconcilerTests
             CreateSession(CollectorSessionStatus.Invalidating)
         };
         var repository = new StubRepository(sessions);
-        var reconciler = new CollectorSessionStartupReconciler(
-            repository,
-            new FixedTimeProvider(Now));
+        var reconciler = new CollectorSessionStartupReconciler(repository);
 
         var result = await reconciler.ReconcileAsync(CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
-        repository.UpdateCalls.Should().HaveCount(5);
+        repository.UpdateCalls.Should().HaveCount(4);
         repository.UpdateCalls.Select(call => call.ExpectedStatus).Should().Equal(
             CollectorSessionStatus.Scheduled,
             CollectorSessionStatus.Starting,
             CollectorSessionStatus.Running,
-            CollectorSessionStatus.Stopping,
-            CollectorSessionStatus.Invalidating);
+            CollectorSessionStatus.Stopping);
         repository.UpdateCalls.Should().OnlyContain(call =>
-            call.Status == CollectorSessionStatus.Interrupted
-            && call.Reason == CollectorStopReason.ProcessTerminated);
+            call.Status == CollectorSessionStatus.Invalidating
+            && call.Phase == CollectorSessionPhase.Cleaning);
     }
 
     [Fact]
@@ -65,9 +62,7 @@ public sealed class CollectorSessionStartupReconcilerTests
         repository.UpdateResults.Enqueue(
             CollectorSessionUpdateStatus.ConcurrencyConflict);
         repository.UpdateResults.Enqueue(CollectorSessionUpdateStatus.Updated);
-        var reconciler = new CollectorSessionStartupReconciler(
-            repository,
-            new FixedTimeProvider(Now));
+        var reconciler = new CollectorSessionStartupReconciler(repository);
 
         var result = await reconciler.ReconcileAsync(CancellationToken.None);
 
@@ -97,9 +92,7 @@ public sealed class CollectorSessionStartupReconcilerTests
             CollectorSessionUpdateStatus.ConcurrencyConflict);
         repository.UpdateResults.Enqueue(
             CollectorSessionUpdateStatus.ConcurrencyConflict);
-        var reconciler = new CollectorSessionStartupReconciler(
-            repository,
-            new FixedTimeProvider(Now));
+        var reconciler = new CollectorSessionStartupReconciler(repository);
 
         var result = await reconciler.ReconcileAsync(CancellationToken.None);
 
@@ -171,7 +164,7 @@ public sealed class CollectorSessionStartupReconcilerTests
             UpdateCalls.Add(new UpdateCall(
                 session.Status,
                 expectedStatus,
-                session.StopReason));
+                session.Phase));
             return Task.FromResult(
                 UpdateResults.TryDequeue(out var result)
                     ? result
@@ -195,10 +188,5 @@ public sealed class CollectorSessionStartupReconcilerTests
     private sealed record UpdateCall(
         CollectorSessionStatus Status,
         CollectorSessionStatus ExpectedStatus,
-        CollectorStopReason? Reason);
-
-    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => now;
-    }
+        CollectorSessionPhase? Phase);
 }

@@ -630,7 +630,8 @@ public sealed class CollectorWebSocketWorkerTests
                         TokenId.Create("no-token").Value,
                         "No",
                         1)
-                ]));
+                ]),
+            DateTimeOffset.Parse("2026-08-28T11:59:50Z"));
     }
 
     private sealed class StubWebSocketFactory(StubWebSocketConnection connection)

@@ -31,7 +31,8 @@
 
 - `CollectorController` публикует read/start/stop endpoints. Infrastructure регистрирует `DataCollectionDbContext`, repositories, singleton collector runtime и bounded raw-message ingestion worker.
 - WebSocket collector принимает text messages, собирает fragments и передаёт полные исходные UTF-8 bytes в bounded ingestion pipeline. Silent drop недопустим.
-- При старте активные сессии предыдущего процесса переводятся в `Interrupted/ProcessTerminated`. При штатной остановке текущие сессии проходят `Stopping -> Stopped/ApplicationShutdown`.
+- Lifecycle scheduler раз в секунду обрабатывает сохранённую global exclusive session: до `T-60s` она остаётся `Scheduled`, затем exact Gamma boundary check и CAS запускают preparation; обычный readiness deadline равен `T-10s`, late deadline равен `EventStartsAt`.
+- При старте незавершённые сессии предыдущего процесса переводятся в `Invalidating/Cleaning` и не возобновляются. При штатной остановке текущие сессии пока проходят `Stopping -> Stopped/ApplicationShutdown` до введения общего invalidation coordinator.
 - Переходы `CollectorSession` сохраняются compare-and-set по ожидаемому `Status`; `status` является EF concurrency token. При конфликте перечитай состояние и разреши переход, не выполняй unconditional update.
 - Автономная ошибка collector переводит сохранённую активную session в `Failed`; ошибка сохранения этого перехода останавливает приложение.
 - Startup reconciliation рассчитан на один экземпляр приложения. Multi-instance ownership, reconnect и automatic resume не реализованы.

@@ -10,6 +10,18 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.MarketIntegration
 internal sealed class MarketCollectionSource(IMarketsReader marketsReader)
     : IMarketCollectionSource
 {
+    public async Task<CollectionMarketWindow?> GetWindowAsync(
+        MarketId marketId,
+        CancellationToken cancellationToken)
+    {
+        var window = await marketsReader.GetCollectionWindowAsync(
+            marketId,
+            cancellationToken);
+        return window is null
+            ? null
+            : new CollectionMarketWindow(window.MarketId, window.EventStartsAt);
+    }
+
     public async Task<Result<CollectionMarket?, Error>> GetByIdAsync(
         MarketId marketId,
         CancellationToken cancellationToken)

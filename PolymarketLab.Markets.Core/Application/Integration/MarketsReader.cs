@@ -11,6 +11,16 @@ internal sealed class MarketsReader(
     IMarketRepository repository,
     IExternalMarketGateway externalMarketGateway) : IMarketsReader
 {
+    public async Task<MarketCollectionWindow?> GetCollectionWindowAsync(
+        MarketId marketId,
+        CancellationToken cancellationToken)
+    {
+        var market = await repository.GetByIdAsync(marketId, cancellationToken);
+        return market is null
+            ? null
+            : new MarketCollectionWindow(market.Id, market.EventStartsAt);
+    }
+
     public async Task<Result<MarketForCollection?, Error>> GetForCollectionAsync(
         MarketId marketId,
         CancellationToken cancellationToken)

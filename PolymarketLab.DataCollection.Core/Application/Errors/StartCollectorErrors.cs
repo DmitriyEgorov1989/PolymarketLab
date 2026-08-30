@@ -16,6 +16,12 @@ public static class StartCollectorErrors
         ErrorType.NotFound,
         "marketId");
 
+    public static Error MarketAlreadyOpen(Guid marketId) => new(
+        "collector.start.market_already_open",
+        $"Market '{marketId}' has already opened.",
+        ErrorType.Conflict,
+        "marketId");
+
     public static Error MarketUnavailable(Guid marketId) => new(
         "market.collection.unavailable",
         $"Market '{marketId}' is not currently available for collection.",

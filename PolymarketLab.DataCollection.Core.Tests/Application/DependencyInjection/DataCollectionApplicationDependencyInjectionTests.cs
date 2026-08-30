@@ -11,6 +11,7 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartColle
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.ReplayNormalization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionById;
@@ -82,6 +83,13 @@ public sealed class DataCollectionApplicationDependencyInjectionTests
             descriptor.ServiceType == typeof(ICollectorSessionShutdownHandler)
             && descriptor.ImplementationType == typeof(CollectorSessionShutdownHandler)
             && descriptor.Lifetime == ServiceLifetime.Scoped);
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(ICollectorScheduler)
+            && descriptor.ImplementationType == typeof(CollectorScheduler)
+            && descriptor.Lifetime == ServiceLifetime.Scoped);
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(CollectorBoundaryCheckRegistry)
+            && descriptor.Lifetime == ServiceLifetime.Singleton);
         services.Should().ContainSingle(descriptor =>
             descriptor.ServiceType == typeof(INormalizationDispatcher)
             && descriptor.ImplementationType == typeof(NormalizationDispatcher)

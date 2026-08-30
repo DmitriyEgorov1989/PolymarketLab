@@ -302,11 +302,16 @@ Request:
 }
 ```
 
-Backend возвращает фактический сохранённый status. Новая session создаётся как
-`Scheduled` и сразу занимает глобальный exclusive slot. Если exclusive session
+Backend возвращает фактический сохранённый status. Ранний Start создаёт session как
+`Scheduled`; Start после `T-60s`, прошедший preparation checks, возвращает `Starting`.
+Session сразу занимает глобальный exclusive slot. Если exclusive session
 этого же рынка уже существует, новая не создаётся и возвращается существующая
 session без повторного запроса Gamma. Если slot занят другим рынком, endpoint
 возвращает `409` с кодом `collector.start.global_session_conflict`.
+
+При свободном slot backend сначала читает сохранённый `EventStartsAt` без Gamma.
+Если `EventStartsAt <= now`, endpoint возвращает `409` с кодом
+`collector.start.market_already_open`, не вызывает Gamma и не создаёт session.
 
 Перед созданием новой session backend повторно запрашивает Gamma и сохраняет
 неизменяемый snapshot identity, расписания и ordered tokens. Временная readiness
@@ -314,10 +319,14 @@ policy не применяется на этом шаге, поэтому кор
 `acceptingOrders: false`. Ошибка Gamma возвращается без замены исходного кода и
 сообщения.
 
-Для новой session проверка выполняется до её создания. `POST /api/Collector` не
-подключает WebSocket: session остаётся `Scheduled/WaitingForPreparation`, пока
-lifecycle scheduler не начнёт preparation. Snapshot live-проверки остаётся
-авторитетным для всей session.
+Для новой session проверка выполняется до её создания. До `T-60s`
+`POST /api/Collector` не подключает WebSocket: session остаётся
+`Scheduled/WaitingForPreparation`. Начиная с `T-60s`, lifecycle scheduler требует
+`active=true`, `closed=false`, `acceptingOrders=true`, `enableOrderBook=true`,
+выполняет CAS в `Starting/Connecting` и запускает runtime. Обычный readiness
+deadline равен `T-10s`; для Start в диапазоне `T-10s..EventStartsAt` deadline
+равен `EventStartsAt`. Snapshot live-проверки остаётся неизменяемым для всей
+session; mismatch инициирует `Invalidating/Cleaning`.
 
 Удалённое закрытие WebSocket переводит session в `Failed` с кодом
 `collector.runtime.receive.closed`, в том числе если Polymarket закрывает connection

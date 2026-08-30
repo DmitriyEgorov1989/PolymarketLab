@@ -20,6 +20,20 @@ public sealed class MarketCollectionSourceTests
         "Host=localhost;Port=5432;Database=polymarket_lab;Username=postgres;Password=postgres";
 
     [Fact]
+    public async Task GetWindowAsync_WithStoredWindow_ShouldMapWithoutFreshMarketRead()
+    {
+        var marketId = MarketId.Create(Guid.NewGuid()).Value;
+        var reader = new StubMarketsReader(new MarketCollectionWindow(marketId, StartsAt));
+        using var provider = CreateProvider(reader);
+        var source = provider.GetRequiredService<IMarketCollectionSource>();
+
+        var result = await source.GetWindowAsync(marketId, CancellationToken.None);
+
+        result.Should().Be(new CollectionMarketWindow(marketId, StartsAt));
+        reader.FreshReadCallCount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task GetByIdAsync_WithMarketContract_ShouldMapCollectionMarket()
     {
         var marketId = MarketId.Create(Guid.NewGuid()).Value;
@@ -116,16 +130,33 @@ public sealed class MarketCollectionSourceTests
     private sealed class StubMarketsReader : IMarketsReader
     {
         private readonly Result<MarketForCollection?, Error> _result;
+        private readonly MarketCollectionWindow? _window;
 
         public StubMarketsReader(MarketForCollection? market) => _result = market;
         public StubMarketsReader(Error error) => _result = error;
+        public StubMarketsReader(MarketCollectionWindow window)
+        {
+            _window = window;
+            _result = (MarketForCollection?)null;
+        }
 
         public CancellationToken LastCancellationToken { get; private set; }
+        public int FreshReadCallCount { get; private set; }
+
+        public Task<MarketCollectionWindow?> GetCollectionWindowAsync(
+            MarketId marketId,
+            CancellationToken cancellationToken)
+        {
+            LastCancellationToken = cancellationToken;
+            return Task.FromResult(
+                _window?.MarketId == marketId ? _window : null);
+        }
 
         public Task<Result<MarketForCollection?, Error>> GetForCollectionAsync(
             MarketId marketId,
             CancellationToken cancellationToken)
         {
+            FreshReadCallCount++;
             LastCancellationToken = cancellationToken;
             if (_result.IsFailure)
                 return Task.FromResult(_result);

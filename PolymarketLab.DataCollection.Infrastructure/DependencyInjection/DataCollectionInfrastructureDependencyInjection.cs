@@ -211,6 +211,7 @@ public static class DataCollectionInfrastructureDependencyInjection
             serviceProvider.GetRequiredService<RawMarketMessagePersistenceWorker>());
         services.AddHostedService<CollectorRuntimeShutdownService>();
         services.AddHostedService<CollectorSessionStartupReconciliationService>();
+        services.AddHostedService<CollectorSchedulerBackgroundService>();
         services.AddHostedService<NormalizationBackgroundService>();
         services.AddHostedService<NormalizationMetricsBackgroundService>();
 

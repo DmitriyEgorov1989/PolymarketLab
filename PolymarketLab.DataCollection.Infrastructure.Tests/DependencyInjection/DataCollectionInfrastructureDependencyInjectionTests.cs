@@ -49,6 +49,8 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
             NullLogger<CollectorRuntimeShutdownService>.Instance);
         services.AddSingleton<ILogger<CollectorSessionStartupReconciliationService>>(
             NullLogger<CollectorSessionStartupReconciliationService>.Instance);
+        services.AddSingleton<ILogger<CollectorSchedulerBackgroundService>>(
+            NullLogger<CollectorSchedulerBackgroundService>.Instance);
         services.AddSingleton<ILogger<CollectorSessionProgressCompletion>>(
             NullLogger<CollectorSessionProgressCompletion>.Instance);
         services.AddSingleton<ILogger<NormalizationBackgroundService>>(
@@ -108,6 +110,7 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
                 typeof(RawMarketMessagePersistenceWorker),
                 typeof(CollectorRuntimeShutdownService),
                 typeof(CollectorSessionStartupReconciliationService),
+                typeof(CollectorSchedulerBackgroundService),
                 typeof(NormalizationBackgroundService),
                 typeof(NormalizationMetricsBackgroundService));
     }
@@ -158,6 +161,11 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
 
     private sealed class StubMarketsReader : IMarketsReader
     {
+        public Task<MarketCollectionWindow?> GetCollectionWindowAsync(
+            MarketId marketId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<MarketCollectionWindow?>(null);
+
         public Task<Result<MarketForCollection?, Error>> GetForCollectionAsync(
             MarketId marketId,
             CancellationToken cancellationToken)

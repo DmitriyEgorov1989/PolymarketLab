@@ -464,7 +464,8 @@ public sealed class CollectorRuntimeStartTests
 
         return new CollectorRuntimeStartRequest(
             CollectorSessionId.Create(Guid.NewGuid()).Value,
-            market);
+            market,
+            market.EventStartsAt.AddSeconds(-10));
     }
 
     private sealed class StubCollectorWorkerFactory(

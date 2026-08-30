@@ -1,6 +1,7 @@
 using CSharpFunctionalExtensions;
 using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.Errors;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
 using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
@@ -78,6 +79,64 @@ public sealed class StartCollectorHandlerTests
             .Equal(
                 (fixture.Market.Tokens[0].TokenId, "Yes", 0),
                 (fixture.Market.Tokens[1].TokenId, "No", 1));
+    }
+
+    [Fact]
+    public async Task Handle_AtPreparationBoundary_ShouldStartRuntimeWithRegularDeadline()
+    {
+        var fixture = new Fixture(now: Now.AddMinutes(2));
+
+        var result = await fixture.HandleAsync();
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Status.Should().Be("Starting");
+        fixture.Runtime.StartRequests.Should().ContainSingle();
+        fixture.Runtime.StartRequests.Single().ReadinessDeadline.Should()
+            .Be(fixture.Market!.EventStartsAt.AddSeconds(-10));
+    }
+
+    [Fact]
+    public async Task Handle_AtLatePreparationBoundary_ShouldUseEventStartAsDeadline()
+    {
+        var fixture = new Fixture(now: Now.AddMinutes(2).AddSeconds(50));
+
+        var result = await fixture.HandleAsync();
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Status.Should().Be("Starting");
+        fixture.Runtime.StartRequests.Single().ReadinessDeadline.Should()
+            .Be(fixture.Market!.EventStartsAt);
+    }
+
+    [Fact]
+    public async Task Handle_WhenPersistedMarketIsAlreadyOpen_ShouldRejectBeforeGamma()
+    {
+        var fixture = new Fixture(now: Now.AddMinutes(3));
+
+        var result = await fixture.HandleAsync();
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Should().Be(
+            StartCollectorErrors.MarketAlreadyOpen(fixture.RequestedMarketId.Value));
+        fixture.MarketSource.CallCount.Should().Be(0);
+        fixture.Repository.TryAddCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Handle_WhenMarketOpensDuringGammaRequest_ShouldRejectWithoutSession()
+    {
+        var marketStartsAt = Now.AddMinutes(3);
+        var fixture = new Fixture(timeProvider: new SequenceTimeProvider(
+            marketStartsAt.AddMilliseconds(-1),
+            marketStartsAt));
+
+        var result = await fixture.HandleAsync();
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Should().Be(
+            StartCollectorErrors.MarketAlreadyOpen(fixture.RequestedMarketId.Value));
+        fixture.MarketSource.CallCount.Should().Be(1);
+        fixture.Repository.TryAddCallCount.Should().Be(0);
     }
 
     [Fact]
@@ -193,20 +252,32 @@ public sealed class StartCollectorHandlerTests
     {
         private CollectionMarket? _market = CreateMarket();
 
-        public Fixture(int projectionVersion = 3)
+        public Fixture(
+            int projectionVersion = 3,
+            DateTimeOffset? now = null,
+            TimeProvider? timeProvider = null)
         {
             RequestedMarketId = _market!.MarketId;
             MarketSource = new StubMarketSource(() => _market, () => MarketError);
+            var actualTimeProvider = timeProvider ?? new FixedTimeProvider(now ?? Now);
+            var scheduler = new CollectorScheduler(
+                MarketSource,
+                Repository,
+                Runtime,
+                new CollectorBoundaryCheckRegistry(),
+                actualTimeProvider);
             Handler = new StartCollectorHandler(
                 MarketSource,
                 Repository,
                 new StubProjectionVersionProvider(projectionVersion),
-                new FixedTimeProvider(Now));
+                scheduler,
+                actualTimeProvider);
         }
 
         public StartCollectorHandler Handler { get; }
         public StubMarketSource MarketSource { get; }
         public StubCollectorSessionRepository Repository { get; } = new();
+        public StubCollectorRuntime Runtime { get; } = new();
         public MarketId RequestedMarketId { get; }
         public Error? MarketError { get; init; }
 
@@ -229,6 +300,17 @@ public sealed class StartCollectorHandlerTests
         Func<Error?> errorFactory) : IMarketCollectionSource
     {
         public int CallCount { get; private set; }
+
+        public Task<CollectionMarketWindow?> GetWindowAsync(
+            MarketId marketId,
+            CancellationToken cancellationToken)
+        {
+            var market = marketFactory();
+            return Task.FromResult(
+                market?.MarketId == marketId
+                    ? new CollectionMarketWindow(market.MarketId, market.EventStartsAt)
+                    : null);
+        }
 
         public Task<Result<CollectionMarket?, Error>> GetByIdAsync(
             MarketId marketId,
@@ -285,7 +367,27 @@ public sealed class StartCollectorHandlerTests
         public Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
             CollectorSessionAggregate session,
             CollectorSessionStatus expectedStatus,
-            CancellationToken cancellationToken) => throw new NotSupportedException();
+            CancellationToken cancellationToken) =>
+            Task.FromResult<Result<CollectorSessionUpdateStatus, Error>>(
+                CollectorSessionUpdateStatus.Updated);
+    }
+
+    private sealed class StubCollectorRuntime : ICollectorRuntime
+    {
+        public List<CollectorRuntimeStartRequest> StartRequests { get; } = [];
+
+        public Task<UnitResult<Error>> StartAsync(
+            CollectorRuntimeStartRequest request,
+            CancellationToken cancellationToken)
+        {
+            StartRequests.Add(request);
+            return Task.FromResult(UnitResult.Success<Error>());
+        }
+
+        public Task<UnitResult<Error>> StopAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(UnitResult.Success<Error>());
     }
 
     private sealed class StubProjectionVersionProvider(int projectionVersion)
@@ -297,5 +399,18 @@ public sealed class StartCollectorHandlerTests
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private sealed class SequenceTimeProvider(params DateTimeOffset[] values) : TimeProvider
+    {
+        private readonly Queue<DateTimeOffset> _values = new(values);
+        private DateTimeOffset _last = values[^1];
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            if (_values.TryDequeue(out var value))
+                _last = value;
+            return _last;
+        }
     }
 }

@@ -1,6 +1,7 @@
 using CSharpFunctionalExtensions;
 using MediatR;
 using PolymarketLab.DataCollection.Core.Application.Errors;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
 using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
@@ -16,6 +17,7 @@ public sealed class StartCollectorHandler(
     IMarketCollectionSource marketSource,
     ICollectorSessionRepository sessionRepository,
     IProjectionVersionProvider projectionVersionProvider,
+    ICollectorScheduler scheduler,
     TimeProvider timeProvider)
     : IRequestHandler<StartCollectorCommand, Result<StartCollectorResponse, ErrorList>>
 {
@@ -32,6 +34,12 @@ public sealed class StartCollectorHandler(
         if (exclusiveSession is not null)
             return ResolveExclusiveSession(exclusiveSession, marketId);
 
+        var window = await marketSource.GetWindowAsync(marketId, cancellationToken);
+        if (window is null)
+            return Failure(StartCollectorErrors.MarketNotFound(command.MarketId));
+        if (window.EventStartsAt <= timeProvider.GetUtcNow())
+            return Failure(StartCollectorErrors.MarketAlreadyOpen(command.MarketId));
+
         var marketResult = await marketSource.GetByIdAsync(marketId, cancellationToken);
         if (marketResult.IsFailure)
             return Failure(marketResult.Error);
@@ -39,6 +47,9 @@ public sealed class StartCollectorHandler(
         var market = marketResult.Value;
         if (market is null)
             return Failure(StartCollectorErrors.MarketNotFound(command.MarketId));
+        var verifiedAt = timeProvider.GetUtcNow();
+        if (window.EventStartsAt <= verifiedAt || market.EventStartsAt <= verifiedAt)
+            return Failure(StartCollectorErrors.MarketAlreadyOpen(command.MarketId));
 
         var tokenError = ValidateTokens(market);
         if (tokenError is not null)
@@ -66,7 +77,7 @@ public sealed class StartCollectorHandler(
             market.EventEndsAt,
             projectionVersionProvider.ProjectionVersion,
             tokenDefinitions,
-            timeProvider.GetUtcNow());
+            verifiedAt);
         if (sessionResult.IsFailure)
             return Failure(sessionResult.Error);
 
@@ -76,7 +87,15 @@ public sealed class StartCollectorHandler(
             return Failure(insertResult.Error);
 
         if (insertResult.Value == CollectorSessionInsertStatus.Inserted)
-            return Response(session);
+        {
+            var schedulingResult = await scheduler.PrepareAsync(
+                session,
+                market,
+                cancellationToken);
+            return schedulingResult.IsFailure
+                ? Failure(schedulingResult.Error)
+                : Response(schedulingResult.Value);
+        }
         if (insertResult.Value != CollectorSessionInsertStatus.ExclusiveSessionConflict)
             return Failure(StartCollectorErrors.RaceUnresolved);
 

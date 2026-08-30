@@ -249,7 +249,8 @@ public sealed class CollectorRuntimeShutdownServiceTests
                         TokenId.Create("no-token").Value,
                         "No",
                         1)
-                ]));
+                ]),
+            DateTimeOffset.Parse("2026-08-28T11:59:50Z"));
     }
 
     private sealed class StubWorkerFactory(params ICollectorWorker[] workers)

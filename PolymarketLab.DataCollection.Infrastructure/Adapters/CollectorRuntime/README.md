@@ -86,6 +86,7 @@ Raw ingestion отделяет быстрый WebSocket receive от scoped EF C
 
 ```text
 StartCollectorHandler
+  -> ICollectorScheduler.PrepareAsync
   -> ICollectorRuntime.StartAsync
   -> CollectorRuntime
   -> CollectorRuntimeEntry
@@ -107,6 +108,7 @@ StartCollectorHandler
 ```mermaid
 sequenceDiagram
     participant App as StartCollectorHandler
+    participant Scheduler as CollectorScheduler
     participant Runtime as CollectorRuntime
     participant Worker as CollectorWebSocketWorker
     participant WS as Polymarket WebSocket
@@ -114,7 +116,8 @@ sequenceDiagram
     participant Consumer as PersistenceWorker
     participant DB as PostgreSQL
 
-    App->>Runtime: StartAsync(session, market)
+    App->>Scheduler: PrepareAsync(session, fresh market)
+    Scheduler->>Runtime: StartAsync(session, market, deadline)
     Runtime->>Worker: StartAsync()
     Worker->>WS: ConnectAsync()
     Worker->>WS: subscription assets_ids
@@ -217,18 +220,19 @@ public sealed record RawMarketMessage(
 
 ## Запуск collector
 
-Application flow находится в [`StartCollectorHandler`](../../../PolymarketLab.DataCollection.Core/Application/UseCases/Commands/StartCollector/StartCollectorHandler.cs).
+Application flow разделён между [`StartCollectorHandler`](../../../PolymarketLab.DataCollection.Core/Application/UseCases/Commands/StartCollector/StartCollectorHandler.cs) и `CollectorScheduler`.
 
 Упрощённая последовательность:
 
 1. Валидировать command.
-2. Загрузить market и token IDs.
-3. Проверить отсутствие active session.
-4. Создать persisted `CollectorSession` со статусом `Starting`.
-5. Вызвать `ICollectorRuntime.StartAsync`.
-6. После startup success перевести session в `Running`.
-7. При startup failure перевести session в `Failed`.
-8. При ошибке сохранения `Running` остановить уже запущенный runtime как compensation.
+2. Сначала проверить global exclusive slot.
+3. Прочитать сохранённый `EventStartsAt` без Gamma и отклонить уже открытый рынок.
+4. Получить свежий Gamma snapshot и создать persisted `Scheduled/WaitingForPreparation`.
+5. До `T-60s` оставить session запланированной.
+6. Начиная с `T-60s`, проверить exact snapshot и operational flags.
+7. CAS-переходом установить `Starting/Connecting` и вызвать `ICollectorRuntime.StartAsync`.
+8. Оставить session в `Starting`: connect и отправка subscription не доказывают readiness.
+9. При startup failure перевести session в `Invalidating/Cleaning` и остановить runtime как compensation.
 
 DataCollection Application и Presentation подключены к API host. Публичные endpoints collector session:
 
@@ -553,13 +557,14 @@ Runtime ждёт completion, удаляет именно старую entry и �
 
 ## Global shutdown
 
-Жизненный цикл состоит из трёх размещённых служб:
+Жизненный цикл состоит из четырёх связанных размещённых служб:
 
 1. [`RawMarketMessagePersistenceWorker`](../RawMessageIngestion/RawMarketMessagePersistenceWorker.cs).
 2. [`CollectorRuntimeShutdownService`](CollectorRuntimeShutdownService.cs).
 3. [`CollectorSessionStartupReconciliationService`](CollectorSessionStartupReconciliationService.cs).
+4. [`CollectorSchedulerBackgroundService`](CollectorSchedulerBackgroundService.cs).
 
-При запуске службы вызываются последовательно. Служба согласования находит сохранённые `Starting`, `Running` и `Stopping` сессии предыдущего процесса и атомарно переводит их в `Interrupted` с причиной `ProcessTerminated`. Ошибка чтения или обновления PostgreSQL прекращает запуск приложения.
+При запуске службы вызываются последовательно. Служба согласования находит незавершённые сессии предыдущего процесса и атомарно переводит их в `Invalidating/Cleaning`; collection и preparation не возобновляются. Scheduler запускается только после согласования. Ошибка чтения или обновления PostgreSQL прекращает запуск приложения.
 
 Ожидаемый порядок:
 
@@ -956,6 +961,7 @@ Options читаются через обычный `IOptions<T>`. Hot reload у�
 | `RawMarketMessagePersistenceWorker` | Channel consumer и batch persistence |
 | `CollectorRuntimeShutdownService` | Остановка collectors до ingestion shutdown |
 | `CollectorSessionStartupReconciliationService` | Согласование сессий предыдущего процесса до открытия API |
+| `CollectorSchedulerBackgroundService` | Идемпотентная обработка preparation и readiness boundaries |
 
 Singleton runtime/factory не должны напрямую зависеть от scoped repository или DbContext.
 
