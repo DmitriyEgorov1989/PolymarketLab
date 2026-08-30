@@ -51,6 +51,12 @@ public static class StartCollectorErrors
         "An active collector session conflict occurred, but the session could not be found.",
         ErrorType.Conflict);
 
+    public static Error GlobalSessionConflict => new(
+        "collector.start.global_session_conflict",
+        "Another market already has an exclusive collector session.",
+        ErrorType.Conflict,
+        "marketId");
+
     public static Error StateTransitionConflict => new(
         "collector.start.session.state_changed",
         "Collector session state changed concurrently during startup.",

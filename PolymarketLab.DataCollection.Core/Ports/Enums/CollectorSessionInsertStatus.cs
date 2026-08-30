@@ -6,6 +6,6 @@ public enum CollectorSessionInsertStatus
     /// <summary>Сессия успешно вставлена.</summary>
     Inserted = 1,
 
-    /// <summary>Для рынка уже существует активная сессия.</summary>
-    ActiveSessionConflict = 2
+    /// <summary>Глобальный exclusive slot уже занят другой нетерминальной сессией.</summary>
+    ExclusiveSessionConflict = 2
 }

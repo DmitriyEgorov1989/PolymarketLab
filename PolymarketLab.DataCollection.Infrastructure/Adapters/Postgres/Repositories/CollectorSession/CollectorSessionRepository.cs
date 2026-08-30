@@ -14,11 +14,13 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Reposito
 internal sealed class CollectorSessionRepository(DataCollectionDbContext dbContext)
     : ICollectorSessionRepository
 {
-    private static readonly CollectorSessionStatus[] ActiveStatuses =
+    private static readonly CollectorSessionStatus[] ExclusiveStatuses =
     [
+        CollectorSessionStatus.Scheduled,
         CollectorSessionStatus.Starting,
         CollectorSessionStatus.Running,
-        CollectorSessionStatus.Stopping
+        CollectorSessionStatus.Stopping,
+        CollectorSessionStatus.Invalidating
     ];
 
     public Task<CollectorSessionAggregate?> GetByIdAsync(
@@ -30,13 +32,21 @@ internal sealed class CollectorSessionRepository(DataCollectionDbContext dbConte
             cancellationToken);
     }
 
+    public Task<CollectorSessionAggregate?> GetExclusiveAsync(
+        CancellationToken cancellationToken)
+    {
+        return QuerySessions().SingleOrDefaultAsync(
+            session => ExclusiveStatuses.Contains(session.Status),
+            cancellationToken);
+    }
+
     public Task<CollectorSessionAggregate?> GetActiveByMarketIdAsync(
         MarketId marketId,
         CancellationToken cancellationToken)
     {
         return QuerySessions().SingleOrDefaultAsync(
             session => session.MarketId == marketId
-                && ActiveStatuses.Contains(session.Status),
+                && ExclusiveStatuses.Contains(session.Status),
             cancellationToken);
     }
 
@@ -46,7 +56,7 @@ internal sealed class CollectorSessionRepository(DataCollectionDbContext dbConte
     {
         return QuerySessions()
             .Where(session => session.MarketId == marketId)
-            .OrderBy(session => ActiveStatuses.Contains(session.Status) ? 0 : 1)
+            .OrderBy(session => ExclusiveStatuses.Contains(session.Status) ? 0 : 1)
             .ThenByDescending(session => session.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
     }
@@ -55,7 +65,7 @@ internal sealed class CollectorSessionRepository(DataCollectionDbContext dbConte
         CancellationToken cancellationToken)
     {
         return await QuerySessions()
-            .Where(session => ActiveStatuses.Contains(session.Status))
+            .Where(session => ExclusiveStatuses.Contains(session.Status))
             .ToListAsync(cancellationToken);
     }
 
@@ -72,11 +82,13 @@ internal sealed class CollectorSessionRepository(DataCollectionDbContext dbConte
             await dbContext.SaveChangesAsync(cancellationToken);
             return CollectorSessionInsertStatus.Inserted;
         }
-        catch (DbUpdateException exception) when (IsActiveMarketConflict(exception))
+        catch (DbUpdateException exception) when (IsExclusiveSlotConflict(exception))
         {
             dbContext.Entry(session).State = EntityState.Detached;
             dbContext.Entry(progress).State = EntityState.Detached;
-            return CollectorSessionInsertStatus.ActiveSessionConflict;
+            foreach (var token in session.Tokens)
+                dbContext.Entry(token).State = EntityState.Detached;
+            return CollectorSessionInsertStatus.ExclusiveSessionConflict;
         }
     }
 
@@ -106,14 +118,16 @@ internal sealed class CollectorSessionRepository(DataCollectionDbContext dbConte
 
     private IQueryable<CollectorSessionAggregate> QuerySessions()
     {
-        return dbContext.CollectorSessions.AsNoTracking();
+        return dbContext.CollectorSessions
+            .Include(session => session.Tokens.OrderBy(token => token.OutcomeIndex))
+            .AsNoTracking();
     }
 
-    private static bool IsActiveMarketConflict(DbUpdateException exception)
+    private static bool IsExclusiveSlotConflict(DbUpdateException exception)
     {
         return exception.InnerException is PostgresException postgresException
             && postgresException.SqlState == PostgresErrorCodes.UniqueViolation
-            && CollectorSessionDatabaseConstraints.IsActiveMarketConstraint(
+            && CollectorSessionDatabaseConstraints.IsExclusiveSlotConstraint(
                 postgresException.ConstraintName);
     }
 }

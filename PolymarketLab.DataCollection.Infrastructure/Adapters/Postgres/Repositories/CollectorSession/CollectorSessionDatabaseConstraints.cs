@@ -2,11 +2,13 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Reposito
 
 internal static class CollectorSessionDatabaseConstraints
 {
-    public const string ActiveMarket = "ux_collector_sessions_active_market";
-    public const string ActiveStatusFilter = "\"status\" IN (0, 1, 2)";
+    public const string ExclusiveSlot = "ux_collector_sessions_exclusive_slot";
+    public const string ExclusiveSlotProperty = "ExclusiveSlot";
+    public const string ExclusiveStatusFilter = "\"status\" IN (0, 1, 2, 6, 7)";
+    public const string ExclusiveSlotCheck = "ck_collector_sessions_exclusive_slot";
 
-    public static bool IsActiveMarketConstraint(string? constraintName)
+    public static bool IsExclusiveSlotConstraint(string? constraintName)
     {
-        return constraintName == ActiveMarket;
+        return constraintName == ExclusiveSlot;
     }
 }

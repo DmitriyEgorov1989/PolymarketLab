@@ -4,6 +4,7 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionSta
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
+using PolymarketLab.DataCollection.Core.Tests.TestSupport;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using Xunit;
@@ -21,9 +22,11 @@ public sealed class CollectorSessionStartupReconcilerTests
     {
         var sessions = new[]
         {
+            CreateSession(CollectorSessionStatus.Scheduled),
             CreateSession(CollectorSessionStatus.Starting),
             CreateSession(CollectorSessionStatus.Running),
-            CreateSession(CollectorSessionStatus.Stopping)
+            CreateSession(CollectorSessionStatus.Stopping),
+            CreateSession(CollectorSessionStatus.Invalidating)
         };
         var repository = new StubRepository(sessions);
         var reconciler = new CollectorSessionStartupReconciler(
@@ -33,11 +36,13 @@ public sealed class CollectorSessionStartupReconcilerTests
         var result = await reconciler.ReconcileAsync(CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
-        repository.UpdateCalls.Should().HaveCount(3);
+        repository.UpdateCalls.Should().HaveCount(5);
         repository.UpdateCalls.Select(call => call.ExpectedStatus).Should().Equal(
+            CollectorSessionStatus.Scheduled,
             CollectorSessionStatus.Starting,
             CollectorSessionStatus.Running,
-            CollectorSessionStatus.Stopping);
+            CollectorSessionStatus.Stopping,
+            CollectorSessionStatus.Invalidating);
         repository.UpdateCalls.Should().OnlyContain(call =>
             call.Status == CollectorSessionStatus.Interrupted
             && call.Reason == CollectorStopReason.ProcessTerminated);
@@ -118,14 +123,18 @@ public sealed class CollectorSessionStartupReconcilerTests
         MarketId marketId,
         CollectorSessionStatus status)
     {
-        var session = CollectorSessionAggregate.Create(
+        var session = CollectorSessionTestFactory.CreateScheduled(
             sessionId,
             marketId,
-            Now.AddMinutes(-1)).Value;
+            Now.AddMinutes(-1));
+        if (status == CollectorSessionStatus.Starting)
+            session.BeginPreparation(Now.AddSeconds(-30));
         if (status is CollectorSessionStatus.Running or CollectorSessionStatus.Stopping)
-            session.MarkRunning(Now.AddSeconds(-30));
+            CollectorSessionTestFactory.MarkRunning(session, Now.AddSeconds(-30));
         if (status == CollectorSessionStatus.Stopping)
             session.MarkStopping();
+        if (status == CollectorSessionStatus.Invalidating)
+            session.BeginInvalidation();
         return session;
     }
 
@@ -150,6 +159,9 @@ public sealed class CollectorSessionStartupReconcilerTests
             return Task.FromResult<CollectorSessionAggregate?>(
                 _reloadSessions.TryDequeue(out var session) ? session : null);
         }
+
+        public Task<CollectorSessionAggregate?> GetExclusiveAsync(
+            CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
             CollectorSessionAggregate session,

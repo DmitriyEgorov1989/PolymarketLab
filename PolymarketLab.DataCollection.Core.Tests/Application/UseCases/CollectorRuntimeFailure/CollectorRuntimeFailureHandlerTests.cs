@@ -5,6 +5,7 @@ using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
+using PolymarketLab.DataCollection.Core.Tests.TestSupport;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using Xunit;
@@ -117,16 +118,18 @@ public sealed class CollectorRuntimeFailureHandlerTests
         MarketId marketId,
         CollectorSessionStatus status)
     {
-        var session = CollectorSessionAggregate.Create(
+        var session = CollectorSessionTestFactory.CreateScheduled(
             sessionId,
             marketId,
-            CreatedAt).Value;
+            CreatedAt);
 
-        if (status != CollectorSessionStatus.Starting)
-            session.MarkRunning(CreatedAt.AddSeconds(1));
+        if (status == CollectorSessionStatus.Starting)
+            session.BeginPreparation(CreatedAt.AddSeconds(1));
+        else
+            CollectorSessionTestFactory.MarkRunning(session, CreatedAt.AddSeconds(1));
 
         if (status == CollectorSessionStatus.Stopping)
-            SetStatus(session, CollectorSessionStatus.Stopping);
+            session.MarkStopping();
         else if (status == CollectorSessionStatus.Stopped)
             session.Stop(CreatedAt.AddSeconds(2), CollectorStopReason.Requested);
         else if (status == CollectorSessionStatus.Failed)
@@ -136,18 +139,9 @@ public sealed class CollectorRuntimeFailureHandlerTests
                 RuntimeError.Code,
                 RuntimeError.Message);
         else if (status == CollectorSessionStatus.Interrupted)
-            SetStatus(session, CollectorSessionStatus.Interrupted);
+            session.Interrupt(CreatedAt.AddSeconds(2), CollectorStopReason.ProcessTerminated);
 
         return session;
-    }
-
-    private static void SetStatus(
-        CollectorSessionAggregate session,
-        CollectorSessionStatus status)
-    {
-        typeof(CollectorSessionAggregate)
-            .GetProperty(nameof(CollectorSessionAggregate.Status))!
-            .SetValue(session, status);
     }
 
     private sealed class StubCollectorSessionRepository(
@@ -166,6 +160,9 @@ public sealed class CollectorRuntimeFailureHandlerTests
             return Task.FromResult<CollectorSessionAggregate?>(
                 _sessions.TryDequeue(out var session) ? session : null);
         }
+
+        public Task<CollectorSessionAggregate?> GetExclusiveAsync(
+            CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
             CollectorSessionAggregate session,

@@ -11,7 +11,12 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Configur
     {
         public void Configure(EntityTypeBuilder<CollectorSession> builder)
         {
-            builder.ToTable("collector_sessions", "data_collection");
+            builder.ToTable(
+                "collector_sessions",
+                "data_collection",
+                table => table.HasCheckConstraint(
+                    CollectorSessionDatabaseConstraints.ExclusiveSlotCheck,
+                    "\"exclusive_slot\" = 1"));
             builder.HasKey(x => x.Id);
 
             builder.Property(x => x.Id)
@@ -28,11 +33,32 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Configur
                     value => MarketId.Create(value).Value)
                 .IsRequired();
 
+            builder.Property(x => x.ExternalEventId)
+                .HasColumnName("external_event_id");
+            builder.Property(x => x.EventSlug)
+                .HasColumnName("event_slug");
+            builder.Property(x => x.ExternalMarketId)
+                .HasColumnName("external_market_id");
+            builder.Property(x => x.MarketSlug)
+                .HasColumnName("market_slug");
+            builder.Property(x => x.ConditionId)
+                .HasColumnName("condition_id");
+            builder.Property(x => x.EventStartsAt)
+                .HasColumnName("event_starts_at");
+            builder.Property(x => x.EventEndsAt)
+                .HasColumnName("event_ends_at");
+            builder.Property(x => x.ProjectionVersion)
+                .HasColumnName("projection_version");
+
             builder.Property(x => x.Status)
                 .HasColumnName("status")
                 .HasConversion<int>()
                 .IsConcurrencyToken()
                 .IsRequired();
+
+            builder.Property(x => x.Phase)
+                .HasColumnName("phase")
+                .HasConversion<int?>();
 
             builder.Property(x => x.CreatedAt)
                 .HasColumnName("created_at")
@@ -40,6 +66,9 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Configur
 
             builder.Property(x => x.StartedAt)
                 .HasColumnName("started_at");
+
+            builder.Property(x => x.SubscriptionReadyAt)
+                .HasColumnName("subscription_ready_at");
 
             builder.Property(x => x.StoppedAt)
                 .HasColumnName("stopped_at");
@@ -56,10 +85,22 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Configur
                 .HasColumnName("failure_message")
                 .HasMaxLength(2000);
 
-            builder.HasIndex(x => x.MarketId)
+            builder.Property<short>(CollectorSessionDatabaseConstraints.ExclusiveSlotProperty)
+                .HasColumnName("exclusive_slot")
+                .HasDefaultValue((short)1)
+                .IsRequired();
+
+            builder.HasIndex(CollectorSessionDatabaseConstraints.ExclusiveSlotProperty)
                 .IsUnique()
-                .HasFilter(CollectorSessionDatabaseConstraints.ActiveStatusFilter)
-                .HasDatabaseName(CollectorSessionDatabaseConstraints.ActiveMarket);
+                .HasFilter(CollectorSessionDatabaseConstraints.ExclusiveStatusFilter)
+                .HasDatabaseName(CollectorSessionDatabaseConstraints.ExclusiveSlot);
+
+            builder.HasMany(x => x.Tokens)
+                .WithOne()
+                .HasForeignKey(token => token.SessionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            builder.Navigation(x => x.Tokens)
+                .UsePropertyAccessMode(PropertyAccessMode.Field);
         }
     }
 }

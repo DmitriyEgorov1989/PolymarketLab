@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
+using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
@@ -48,6 +49,33 @@ public sealed class CollectorSessionRepositoryTests
     }
 
     [Fact]
+    public async Task TryAddAsync_ShouldRoundTripImmutableSnapshotAndOrderedTokens()
+    {
+        var options = CreateOptions(new InMemoryDatabaseRoot());
+        var session = CreateSession();
+        await using (var writeContext = new DataCollectionDbContext(options))
+        {
+            var insert = await new CollectorSessionRepository(writeContext)
+                .TryAddAsync(session, CancellationToken.None);
+            insert.Value.Should().Be(CollectorSessionInsertStatus.Inserted);
+        }
+
+        await using var readContext = new DataCollectionDbContext(options);
+        var persisted = await new CollectorSessionRepository(readContext)
+            .GetByIdAsync(session.Id, CancellationToken.None);
+
+        persisted.Should().NotBeNull();
+        persisted!.ExternalEventId.Should().Be("event-123");
+        persisted.ConditionId.Should().Be("0xabc");
+        persisted.EventStartsAt.Should().Be(Now.AddMinutes(3));
+        persisted.EventEndsAt.Should().Be(Now.AddMinutes(8));
+        persisted.ProjectionVersion.Should().Be(3);
+        persisted.Tokens.Select(token => (token.TokenId.Value, token.OutcomeIndex))
+            .Should()
+            .Equal(("1001", 0), ("1002", 1));
+    }
+
+    [Fact]
     public async Task TryUpdateAsync_WhenExpectedStatusChanged_ShouldReturnConflict()
     {
         var databaseRoot = new InMemoryDatabaseRoot();
@@ -69,7 +97,7 @@ public sealed class CollectorSessionRepositoryTests
         var failedSession = await failedRepository.GetByIdAsync(
             session.Id,
             CancellationToken.None);
-        runningSession!.MarkRunning(Now.AddSeconds(1));
+        MarkRunning(runningSession!, Now.AddSeconds(1));
         failedSession!.Fail(
             Now.AddSeconds(2),
             CollectorStopReason.FatalWebSocketError,
@@ -78,11 +106,11 @@ public sealed class CollectorSessionRepositoryTests
 
         var failedUpdate = await failedRepository.TryUpdateAsync(
             failedSession,
-            CollectorSessionStatus.Starting,
+            CollectorSessionStatus.Scheduled,
             CancellationToken.None);
         var staleRunningUpdate = await runningRepository.TryUpdateAsync(
-            runningSession,
-            CollectorSessionStatus.Starting,
+            runningSession!,
+            CollectorSessionStatus.Scheduled,
             CancellationToken.None);
 
         failedUpdate.Value.Should().Be(CollectorSessionUpdateStatus.Updated);
@@ -96,15 +124,19 @@ public sealed class CollectorSessionRepositoryTests
     }
 
     [Fact]
-    public async Task GetActiveAsync_ShouldReturnOnlyActiveStatuses()
+    public async Task GetActiveAsync_ShouldReturnAllExclusiveStatuses()
     {
         var options = CreateOptions(new InMemoryDatabaseRoot());
+        var scheduled = CreateSession();
         var starting = CreateSession();
+        starting.BeginPreparation(Now);
         var running = CreateSession();
-        running.MarkRunning(Now.AddSeconds(1));
+        MarkRunning(running, Now.AddSeconds(1));
         var stopping = CreateSession();
-        stopping.MarkRunning(Now.AddSeconds(1));
+        MarkRunning(stopping, Now.AddSeconds(1));
         stopping.MarkStopping();
+        var invalidating = CreateSession();
+        invalidating.BeginInvalidation();
         var stopped = CreateSession();
         stopped.Stop(Now.AddSeconds(1), CollectorStopReason.Requested);
         var failed = CreateSession();
@@ -119,9 +151,11 @@ public sealed class CollectorSessionRepositoryTests
             CollectorStopReason.ProcessTerminated);
         await using var context = new DataCollectionDbContext(options);
         context.CollectorSessions.AddRange(
+            scheduled,
             starting,
             running,
             stopping,
+            invalidating,
             stopped,
             failed,
             interrupted);
@@ -133,9 +167,11 @@ public sealed class CollectorSessionRepositoryTests
 
         activeSessions.Select(session => session.Status).Should().BeEquivalentTo(
             [
+                CollectorSessionStatus.Scheduled,
                 CollectorSessionStatus.Starting,
                 CollectorSessionStatus.Running,
-                CollectorSessionStatus.Stopping
+                CollectorSessionStatus.Stopping,
+                CollectorSessionStatus.Invalidating
             ]);
     }
 
@@ -144,7 +180,7 @@ public sealed class CollectorSessionRepositoryTests
     {
         var marketId = MarketId.Create(Guid.NewGuid()).Value;
         var active = CreateSession(marketId, Now);
-        active.MarkRunning(Now.AddSeconds(1));
+        MarkRunning(active, Now.AddSeconds(1));
         var newerStopped = CreateSession(marketId, Now.AddMinutes(1));
         newerStopped.Stop(Now.AddMinutes(2), CollectorStopReason.Requested);
         await using var context = new DataCollectionDbContext(
@@ -218,6 +254,28 @@ public sealed class CollectorSessionRepositoryTests
         return CollectorSessionAggregate.Create(
             CollectorSessionId.Create(Guid.NewGuid()).Value,
             marketId ?? MarketId.Create(Guid.NewGuid()).Value,
+            "event-123",
+            "btc-updown-5m-1200",
+            "market-123",
+            "btc-updown-5m-1200",
+            "0xabc",
+            (createdAt ?? Now).AddMinutes(3),
+            (createdAt ?? Now).AddMinutes(8),
+            3,
+            [
+                new CollectorSessionTokenDefinition(TokenId.Create("1001").Value, "Yes", 0),
+                new CollectorSessionTokenDefinition(TokenId.Create("1002").Value, "No", 1)
+            ],
             createdAt ?? Now).Value;
+    }
+
+    private static void MarkRunning(
+        CollectorSessionAggregate session,
+        DateTimeOffset readyAt)
+    {
+        session.BeginPreparation(session.CreatedAt);
+        session.MarkAwaitingInitialBooks();
+        session.MarkAwaitingHeartbeat();
+        session.MarkRunning(readyAt);
     }
 }

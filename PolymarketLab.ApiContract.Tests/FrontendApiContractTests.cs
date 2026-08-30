@@ -86,13 +86,15 @@ public sealed class FrontendApiContractTests
             "Stopping",
             "Stopped",
             "Failed",
-            "Interrupted");
+            "Interrupted",
+            "Scheduled",
+            "Invalidating");
     }
 
     [Fact]
     public void StartResponse_ShouldContainOnlyIdsAndStringStatus()
     {
-        var response = new StartCollectorResponse(Guid.NewGuid(), Guid.NewGuid(), "Running");
+        var response = new StartCollectorResponse(Guid.NewGuid(), Guid.NewGuid(), "Scheduled");
 
         var result = Serialize(response);
 
@@ -100,7 +102,7 @@ public sealed class FrontendApiContractTests
             "sessionId",
             "marketId",
             "status");
-        result["status"]!.GetValue<string>().Should().Be("Running");
+        result["status"]!.GetValue<string>().Should().Be("Scheduled");
     }
 
     [Fact]

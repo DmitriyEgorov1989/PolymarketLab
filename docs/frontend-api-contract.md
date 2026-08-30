@@ -64,6 +64,8 @@ Stopping
 Stopped
 Failed
 Interrupted
+Scheduled
+Invalidating
 ```
 
 Числовые значения enum в HTTP-контракте не используются.
@@ -296,25 +298,26 @@ Request:
 {
   "sessionId": "22222222-2222-2222-2222-222222222222",
   "marketId": "11111111-1111-1111-1111-111111111111",
-  "status": "Running"
+  "status": "Scheduled"
 }
 ```
 
-Backend возвращает фактический сохранённый status. Для новой session после
-успешного запуска это обычно `Running`. Если активная session уже существует,
-новая не создаётся и возвращается существующая session со статусом `Starting`,
-`Running` или `Stopping`.
+Backend возвращает фактический сохранённый status. Новая session создаётся как
+`Scheduled` и сразу занимает глобальный exclusive slot. Если exclusive session
+этого же рынка уже существует, новая не создаётся и возвращается существующая
+session без повторного запроса Gamma. Если slot занят другим рынком, endpoint
+возвращает `409` с кодом `collector.start.global_session_conflict`.
 
-Перед созданием новой session backend повторно запрашивает Gamma. Рынок доступен
-для сбора только при `active: true`, `closed: false`, `acceptingOrders: true`,
-`enableOrderBook: true`. Внешние даты не переопределяют эти status flags.
-Недоступный рынок возвращает `409` с кодом `market.collection.unavailable`;
-ошибка Gamma возвращается без замены исходного кода и сообщения.
+Перед созданием новой session backend повторно запрашивает Gamma и сохраняет
+неизменяемый snapshot identity, расписания и ordered tokens. Временная readiness
+policy не применяется на этом шаге, поэтому корректный future market может иметь
+`acceptingOrders: false`. Ошибка Gamma возвращается без замены исходного кода и
+сообщения.
 
-Для новой session проверка выполняется до её создания и запуска runtime. Повторный
-Start при существующей активной session остаётся идемпотентным и возвращает эту
-session без запроса Gamma. Live-проверка является авторитетной, даже если закрытый
-рынок ещё присутствует в нефильтрованном `GET /api/Market`.
+Для новой session проверка выполняется до её создания. `POST /api/Collector` не
+подключает WebSocket: session остаётся `Scheduled/WaitingForPreparation`, пока
+lifecycle scheduler не начнёт preparation. Snapshot live-проверки остаётся
+авторитетным для всей session.
 
 Удалённое закрытие WebSocket переводит session в `Failed` с кодом
 `collector.runtime.receive.closed`, в том числе если Polymarket закрывает connection

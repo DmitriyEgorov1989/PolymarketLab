@@ -18,6 +18,11 @@ public interface ICollectorSessionRepository
         CollectorSessionId sessionId,
         CancellationToken cancellationToken);
 
+    /// <summary>Получает единственную сессию, занимающую глобальный exclusive slot.</summary>
+    /// <param name="cancellationToken">Токен отмены операции.</param>
+    /// <returns>Exclusive session либо <see langword="null" />, если slot свободен.</returns>
+    Task<CollectorSession?> GetExclusiveAsync(CancellationToken cancellationToken);
+
     /// <summary>Получает активную сессию рынка.</summary>
     /// <param name="marketId">Идентификатор рынка.</param>
     /// <param name="cancellationToken">Токен отмены операции.</param>
@@ -40,7 +45,7 @@ public interface ICollectorSessionRepository
     Task<IReadOnlyCollection<CollectorSession>> GetActiveAsync(
         CancellationToken cancellationToken);
 
-    /// <summary>Пытается добавить новую сессию с учётом уникальности активной сессии рынка.</summary>
+    /// <summary>Пытается добавить новую сессию с учётом глобального exclusive slot.</summary>
     /// <param name="session">Добавляемая сессия.</param>
     /// <param name="cancellationToken">Токен отмены операции.</param>
     /// <returns>Статус вставки либо ошибка persistence.</returns>

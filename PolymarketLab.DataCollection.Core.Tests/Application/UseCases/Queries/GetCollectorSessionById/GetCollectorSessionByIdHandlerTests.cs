@@ -5,6 +5,7 @@ using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
+using PolymarketLab.DataCollection.Core.Tests.TestSupport;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using Xunit;
@@ -21,7 +22,7 @@ public sealed class GetCollectorSessionByIdHandlerTests
     public async Task Handle_WithFailedSession_ShouldReturnMappedFailure()
     {
         var session = CreateSession();
-        session.MarkRunning(CreatedAt.AddSeconds(1));
+        CollectorSessionTestFactory.MarkRunning(session, CreatedAt.AddSeconds(1));
         session.Fail(
             CreatedAt.AddMinutes(1),
             CollectorStopReason.FatalWebSocketError,
@@ -85,10 +86,7 @@ public sealed class GetCollectorSessionByIdHandlerTests
 
     private static CollectorSessionAggregate CreateSession()
     {
-        return CollectorSessionAggregate.Create(
-            CollectorSessionId.Create(Guid.NewGuid()).Value,
-            MarketId.Create(Guid.NewGuid()).Value,
-            CreatedAt).Value;
+        return CollectorSessionTestFactory.CreateScheduled(createdAt: CreatedAt);
     }
 
     private sealed class StubRepository(CollectorSessionAggregate? session = null)
@@ -101,6 +99,9 @@ public sealed class GetCollectorSessionByIdHandlerTests
             return Task.FromResult(
                 session?.Id == sessionId ? session : null);
         }
+
+        public Task<CollectorSessionAggregate?> GetExclusiveAsync(
+            CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<CollectorSessionAggregate?> GetActiveByMarketIdAsync(
             MarketId marketId,

@@ -7,6 +7,8 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres
     public sealed class DataCollectionDbContext(DbContextOptions<DataCollectionDbContext> options) : DbContext(options)
     {
         public DbSet<CollectorSession> CollectorSessions => Set<CollectorSession>();
+        internal DbSet<CollectorSessionToken> CollectorSessionTokens =>
+            Set<CollectorSessionToken>();
         internal DbSet<RawMarketMessageRecord> RawMarketMessages =>
             Set<RawMarketMessageRecord>();
         internal DbSet<CollectorSessionProgressRecord> CollectorSessionProgress =>

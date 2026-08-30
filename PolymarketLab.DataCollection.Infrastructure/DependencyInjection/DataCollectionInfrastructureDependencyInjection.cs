@@ -130,6 +130,7 @@ public static class DataCollectionInfrastructureDependencyInjection
         });
 
         services.AddScoped<ICollectorSessionRepository, CollectorSessionRepository>();
+        services.AddSingleton<IProjectionVersionProvider, ProjectionVersionProvider>();
         services.AddScoped<
             ICollectorSessionProgressRepository,
             CollectorSessionProgressRepository>();

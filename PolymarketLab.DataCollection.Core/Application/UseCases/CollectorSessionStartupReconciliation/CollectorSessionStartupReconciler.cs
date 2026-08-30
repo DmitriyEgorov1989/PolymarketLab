@@ -78,8 +78,10 @@ public sealed class CollectorSessionStartupReconciler(
 
     private static bool IsActive(CollectorSessionStatus status)
     {
-        return status is CollectorSessionStatus.Starting
+        return status is CollectorSessionStatus.Scheduled
+            or CollectorSessionStatus.Starting
             or CollectorSessionStatus.Running
-            or CollectorSessionStatus.Stopping;
+            or CollectorSessionStatus.Stopping
+            or CollectorSessionStatus.Invalidating;
     }
 }

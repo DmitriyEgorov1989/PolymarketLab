@@ -6,6 +6,7 @@ using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
+using PolymarketLab.DataCollection.Core.Tests.TestSupport;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using Xunit;
@@ -256,23 +257,21 @@ public sealed class StopCollectorHandlerTests
     private static CollectorSessionAggregate CreateRunningSession(
         CollectorSessionId sessionId)
     {
-        var session = CollectorSessionAggregate.Create(
+        return CollectorSessionTestFactory.CreateRunning(
             sessionId,
-            MarketId.Create(Guid.NewGuid()).Value,
-            Now.AddMinutes(-1)).Value;
-        session.MarkRunning(Now.AddSeconds(-30));
-        return session;
+            createdAt: Now.AddMinutes(-1),
+            subscriptionReadyAt: Now.AddSeconds(-30));
     }
 
     private static CollectorSessionAggregate CloneRunningSession(
         CollectorSessionAggregate source,
         CollectorSessionStatus status)
     {
-        var session = CollectorSessionAggregate.Create(
+        var session = CollectorSessionTestFactory.CreateRunning(
             source.Id,
             source.MarketId,
-            source.CreatedAt).Value;
-        session.MarkRunning(source.StartedAt!.Value);
+            source.CreatedAt,
+            source.SubscriptionReadyAt);
 
         if (status == CollectorSessionStatus.Stopping)
             session.MarkStopping();
@@ -356,6 +355,9 @@ public sealed class StopCollectorHandlerTests
             return Task.FromResult(
                 Sessions.TryDequeue(out var session) ? session : null);
         }
+
+        public Task<CollectorSessionAggregate?> GetExclusiveAsync(
+            CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
             CollectorSessionAggregate session,

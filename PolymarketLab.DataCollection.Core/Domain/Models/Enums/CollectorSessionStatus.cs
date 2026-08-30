@@ -1,5 +1,6 @@
 ﻿namespace PolymarketLab.DataCollection.Core.Domain.Models.Enums
 {
+    /// <summary>Durable lifecycle-состояние session сбора данных.</summary>
     public enum CollectorSessionStatus
     {
         /// <summary>
@@ -30,6 +31,16 @@
         /// <summary>
         /// Работа сессии была прервана до штатного завершения.
         /// </summary>
-        Interrupted = 5
+        Interrupted = 5,
+
+        /// <summary>
+        /// Сессия ожидает начала подготовки к предметному окну рынка.
+        /// </summary>
+        Scheduled = 6,
+
+        /// <summary>
+        /// Сессия запрещает новые записи и очищает непригодный dataset.
+        /// </summary>
+        Invalidating = 7
     }
 }

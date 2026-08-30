@@ -2,6 +2,7 @@ using CSharpFunctionalExtensions;
 using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.Errors;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
+using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
@@ -15,335 +16,198 @@ namespace PolymarketLab.DataCollection.Core.Tests.Application.UseCases.Commands.
 
 public sealed class StartCollectorHandlerTests
 {
-    private static readonly DateTimeOffset Now = new(2026, 7, 23, 12, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset Now =
+        new(2026, 8, 27, 11, 57, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task Handle_WithMissingMarket_ShouldReturnNotFound()
-    {
-        var fixture = new Fixture { Market = null };
-
-        var result = await fixture.HandleAsync();
-
-        result.IsFailure.Should().BeTrue();
-        result.Error.Single().Code.Should().Be("collector.start.market.not_found");
-        fixture.Repository.TryAddCallCount.Should().Be(0);
-        fixture.Runtime.StartCallCount.Should().Be(0);
-    }
-
-    [Fact]
-    public async Task Handle_WhenMarketCheckFails_ShouldReturnErrorWithoutCreatingSession()
-    {
-        var error = new Error(
-            "market.collection.unavailable",
-            "Market is unavailable.",
-            ErrorType.Conflict);
-        var fixture = new Fixture { MarketError = error };
-
-        var result = await fixture.HandleAsync();
-
-        result.IsFailure.Should().BeTrue();
-        result.Error.Single().Should().Be(error);
-        fixture.Repository.TryAddCallCount.Should().Be(0);
-        fixture.Runtime.StartCallCount.Should().Be(0);
-    }
-
-    [Theory]
-    [InlineData(false, false, true, true)]
-    [InlineData(true, true, true, true)]
-    [InlineData(true, false, false, true)]
-    [InlineData(true, false, true, false)]
-    public async Task Handle_WithUnavailableOperationalFlags_ShouldReturnConflictWithoutCreatingSession(
-        bool active,
-        bool closed,
-        bool acceptingOrders,
-        bool orderBookEnabled)
-    {
-        var fixture = new Fixture
-        {
-            Market = CreateMarket() with
-            {
-                Active = active,
-                Closed = closed,
-                AcceptingOrders = acceptingOrders,
-                OrderBookEnabled = orderBookEnabled
-            }
-        };
-
-        var result = await fixture.HandleAsync();
-
-        result.IsFailure.Should().BeTrue();
-        result.Error.Single().Should().Be(
-            StartCollectorErrors.MarketUnavailable(fixture.MarketId.Value));
-        fixture.Repository.TryAddCallCount.Should().Be(0);
-        fixture.Runtime.StartCallCount.Should().Be(0);
-    }
-
-    [Theory]
-    [InlineData(InvalidTokens.TooFew, "collector.start.tokens.insufficient")]
-    [InlineData(InvalidTokens.EmptyOutcome, "collector.start.token.outcome.required")]
-    [InlineData(InvalidTokens.DuplicateTokenId, "collector.start.token.id.duplicate")]
-    [InlineData(InvalidTokens.DuplicateOutcomeIndex, "collector.start.token.outcome_index.duplicate")]
-    public async Task Handle_WithInvalidTokens_ShouldReturnError(
-        InvalidTokens invalidTokens,
-        string expectedCode)
-    {
-        var fixture = new Fixture { Market = CreateMarket(invalidTokens) };
-
-        var result = await fixture.HandleAsync();
-
-        result.IsFailure.Should().BeTrue();
-        result.Error.Single().Code.Should().Be(expectedCode);
-        fixture.Repository.TryAddCallCount.Should().Be(0);
-        fixture.Runtime.StartCallCount.Should().Be(0);
-    }
-
-    [Fact]
-    public async Task Handle_WithActiveSession_ShouldReturnExistingSession()
+    public async Task Handle_WithExistingSessionForSameMarket_ShouldReturnItWithoutGammaRequest()
     {
         var fixture = new Fixture();
-        var activeSession = CreateSession(fixture.MarketId);
-        fixture.Repository.ActiveResults.Enqueue(activeSession);
+        var existing = CreateSession(fixture.Market!);
+        fixture.Repository.ExclusiveResults.Enqueue(existing);
 
-        var result = await fixture.HandleAsync();
+        var result = await fixture.HandleAsync(fixture.Market!.MarketId.Value);
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.SessionId.Should().Be(activeSession.Id.Value);
-        result.Value.Status.Should().Be("Starting");
+        result.Value.SessionId.Should().Be(existing.Id.Value);
+        result.Value.Status.Should().Be("Scheduled");
         fixture.MarketSource.CallCount.Should().Be(0);
         fixture.Repository.TryAddCallCount.Should().Be(0);
-        fixture.Runtime.StartCallCount.Should().Be(0);
     }
 
     [Fact]
-    public async Task Handle_WithNewSession_ShouldStartRuntimeAndMarkRunning()
+    public async Task Handle_WithExistingSessionForDifferentMarket_ShouldReturnGlobalConflictBeforeGamma()
     {
         var fixture = new Fixture();
+        fixture.Repository.ExclusiveResults.Enqueue(
+            CreateSession(CreateMarket(MarketId.Create(Guid.NewGuid()).Value)));
+
+        var result = await fixture.HandleAsync();
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Should().Be(StartCollectorErrors.GlobalSessionConflict);
+        fixture.MarketSource.CallCount.Should().Be(0);
+        fixture.Repository.TryAddCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Handle_WithNewMarket_ShouldPersistExactScheduledSnapshot()
+    {
+        var fixture = new Fixture(projectionVersion: 3)
+        {
+            Market = CreateMarket() with { AcceptingOrders = false }
+        };
+
+        var result = await fixture.HandleAsync(fixture.Market!.MarketId.Value);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Status.Should().Be("Scheduled");
+        var session = fixture.Repository.InsertedSession!;
+        session.Status.Should().Be(CollectorSessionStatus.Scheduled);
+        session.Phase.Should().Be(CollectorSessionPhase.WaitingForPreparation);
+        session.ExternalEventId.Should().Be(fixture.Market.ExternalEventId);
+        session.EventSlug.Should().Be(fixture.Market.EventSlug);
+        session.ExternalMarketId.Should().Be(fixture.Market.ExternalMarketId);
+        session.MarketSlug.Should().Be(fixture.Market.MarketSlug);
+        session.ConditionId.Should().Be(fixture.Market.ConditionId);
+        session.EventStartsAt.Should().Be(fixture.Market.EventStartsAt);
+        session.EventEndsAt.Should().Be(fixture.Market.EventEndsAt);
+        session.ProjectionVersion.Should().Be(3);
+        session.Tokens.Select(token => (token.TokenId, token.Outcome, token.OutcomeIndex))
+            .Should()
+            .Equal(
+                (fixture.Market.Tokens[0].TokenId, "Yes", 0),
+                (fixture.Market.Tokens[1].TokenId, "No", 1));
+    }
+
+    [Fact]
+    public async Task Handle_WhenGammaFails_ShouldPreserveIntegrationError()
+    {
+        var integrationError = new Error(
+            "market.collection.gamma.unavailable",
+            "Gamma request failed.",
+            ErrorType.Failure);
+        var fixture = new Fixture { MarketError = integrationError };
+
+        var result = await fixture.HandleAsync();
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Should().Be(integrationError);
+        fixture.Repository.TryAddCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Handle_WhenInsertLosesRaceToSameMarket_ShouldReturnWinner()
+    {
+        var fixture = new Fixture();
+        var winner = CreateSession(fixture.Market!);
+        fixture.Repository.InsertResult = CollectorSessionInsertStatus.ExclusiveSessionConflict;
+        fixture.Repository.ExclusiveResults.Enqueue(null);
+        fixture.Repository.ExclusiveResults.Enqueue(winner);
 
         var result = await fixture.HandleAsync();
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.MarketId.Should().Be(fixture.MarketId.Value);
-        result.Value.Status.Should().Be("Running");
-        fixture.Repository.InsertedSession.Should().NotBeNull();
-        fixture.Runtime.StartCallCount.Should().Be(1);
-        fixture.Runtime.StartRequest!.Market.Should().BeSameAs(fixture.Market);
-        fixture.Runtime.StartRequest.SessionId.Should().Be(fixture.Repository.InsertedSession!.Id);
-        fixture.Repository.UpdateCalls.Should().ContainSingle();
-        fixture.Repository.UpdateCalls[0].Status.Should().Be(CollectorSessionStatus.Running);
-        fixture.Repository.UpdateCalls[0].CancellationToken.Should().Be(CancellationToken.None);
+        result.Value.SessionId.Should().Be(winner.Id.Value);
     }
 
     [Fact]
-    public async Task Handle_WhenInsertLosesRace_ShouldReturnConcurrentActiveSession()
+    public async Task Handle_WhenInsertLosesRaceToDifferentMarket_ShouldReturnGlobalConflict()
     {
         var fixture = new Fixture();
-        var concurrentSession = CreateSession(fixture.MarketId);
-        fixture.Repository.InsertResult = CollectorSessionInsertStatus.ActiveSessionConflict;
-        fixture.Repository.ActiveResults.Enqueue(null);
-        fixture.Repository.ActiveResults.Enqueue(concurrentSession);
+        var winnerMarket = CreateMarket(MarketId.Create(Guid.NewGuid()).Value);
+        fixture.Repository.InsertResult = CollectorSessionInsertStatus.ExclusiveSessionConflict;
+        fixture.Repository.ExclusiveResults.Enqueue(null);
+        fixture.Repository.ExclusiveResults.Enqueue(CreateSession(winnerMarket));
 
         var result = await fixture.HandleAsync();
 
-        result.IsSuccess.Should().BeTrue();
-        result.Value.SessionId.Should().Be(concurrentSession.Id.Value);
-        fixture.Runtime.StartCallCount.Should().Be(0);
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Should().Be(StartCollectorErrors.GlobalSessionConflict);
     }
 
     [Fact]
     public async Task Handle_WhenInsertRaceCannotBeResolved_ShouldReturnConflict()
     {
         var fixture = new Fixture();
-        fixture.Repository.InsertResult = CollectorSessionInsertStatus.ActiveSessionConflict;
-        fixture.Repository.ActiveResults.Enqueue(null);
-        fixture.Repository.ActiveResults.Enqueue(null);
+        fixture.Repository.InsertResult = CollectorSessionInsertStatus.ExclusiveSessionConflict;
+        fixture.Repository.ExclusiveResults.Enqueue(null);
+        fixture.Repository.ExclusiveResults.Enqueue(null);
 
         var result = await fixture.HandleAsync();
 
         result.IsFailure.Should().BeTrue();
         result.Error.Single().Should().Be(StartCollectorErrors.RaceUnresolved);
-        fixture.Runtime.StartCallCount.Should().Be(0);
     }
 
     [Fact]
-    public async Task Handle_WhenRuntimeFails_ShouldMarkSessionFailedAndReturnRuntimeError()
+    public async Task Handle_WithMissingMarket_ShouldReturnNotFound()
     {
-        var runtimeError = new Error(
-            "collector.runtime.start.failed",
-            "Runtime failed to start.",
-            ErrorType.Failure);
-        var fixture = new Fixture();
-        fixture.Runtime.StartResult = UnitResult.Failure(runtimeError);
+        var fixture = new Fixture { Market = null };
 
-        var result = await fixture.HandleAsync();
+        var result = await fixture.HandleAsync(fixture.RequestedMarketId.Value);
 
         result.IsFailure.Should().BeTrue();
-        result.Error.Single().Should().Be(runtimeError);
-        fixture.Repository.UpdateCalls.Should().ContainSingle();
-        fixture.Repository.UpdateCalls[0].Status.Should().Be(CollectorSessionStatus.Failed);
-        fixture.Repository.UpdateCalls[0].StopReason.Should().Be(CollectorStopReason.StartupFailure);
-        fixture.Repository.UpdateCalls[0].FailureCode.Should().Be(runtimeError.Code);
-        fixture.Repository.UpdateCalls[0].CancellationToken.Should().Be(CancellationToken.None);
-        fixture.Runtime.StopCallCount.Should().Be(0);
+        result.Error.Single().Code.Should().Be("collector.start.market.not_found");
+        fixture.Repository.TryAddCallCount.Should().Be(0);
     }
 
-    [Fact]
-    public async Task Handle_WhenRuntimeStartIsCancelled_ShouldMarkSessionFailedAndPropagateCancellation()
-    {
-        var fixture = new Fixture();
-        using var cancellationTokenSource = new CancellationTokenSource();
-        fixture.Runtime.StartHandler = token =>
-        {
-            cancellationTokenSource.Cancel();
-            return Task.FromCanceled<UnitResult<Error>>(token);
-        };
-
-        var action = () => fixture.HandleAsync(cancellationToken: cancellationTokenSource.Token);
-
-        await action.Should().ThrowAsync<OperationCanceledException>();
-        fixture.Repository.UpdateCalls.Should().ContainSingle();
-        fixture.Repository.UpdateCalls[0].Status.Should().Be(CollectorSessionStatus.Failed);
-        fixture.Repository.UpdateCalls[0].FailureCode.Should()
-            .Be(StartCollectorErrors.RuntimeStartCancelled.Code);
-        fixture.Repository.UpdateCalls[0].CancellationToken.Should().Be(CancellationToken.None);
-    }
-
-    [Fact]
-    public async Task Handle_WhenRunningStateCannotBeSaved_ShouldStopRuntimeAndMarkFailed()
-    {
-        var persistenceError = new Error(
-            "collector.session.update.failed",
-            "Session state could not be saved.",
-            ErrorType.Failure);
-        var fixture = new Fixture();
-        fixture.Repository.UpdateResults.Enqueue(
-            Result.Failure<CollectorSessionUpdateStatus, Error>(persistenceError));
-        fixture.Repository.UpdateResults.Enqueue(CollectorSessionUpdateStatus.Updated);
-
-        var result = await fixture.HandleAsync();
-
-        result.IsFailure.Should().BeTrue();
-        result.Error.Single().Should().Be(persistenceError);
-        fixture.Runtime.StopCallCount.Should().Be(1);
-        fixture.Runtime.StopCancellationToken.Should().Be(CancellationToken.None);
-        fixture.Repository.UpdateCalls.Should().HaveCount(2);
-        fixture.Repository.UpdateCalls[0].Status.Should().Be(CollectorSessionStatus.Running);
-        fixture.Repository.UpdateCalls[1].Status.Should().Be(CollectorSessionStatus.Failed);
-        fixture.Repository.UpdateCalls[1].StopReason.Should().Be(CollectorStopReason.PersistenceFailure);
-    }
-
-    [Fact]
-    public async Task Handle_WhenRuntimeFailureWinsRunningUpdate_ShouldNotResurrectSession()
-    {
-        var runtimeError = new Error(
-            "collector.runtime.receive.closed",
-            "Remote endpoint closed the connection.",
-            ErrorType.Failure);
-        var fixture = new Fixture();
-        fixture.Repository.UpdateResults.Enqueue(
-            CollectorSessionUpdateStatus.ConcurrencyConflict);
-        fixture.Repository.GetByIdHandler = sessionId =>
-        {
-            var persisted = CollectorSessionAggregate.Create(
-                sessionId,
-                fixture.MarketId,
-                Now).Value;
-            persisted.Fail(
-                Now,
-                CollectorStopReason.FatalWebSocketError,
-                runtimeError.Code,
-                runtimeError.Message);
-            return persisted;
-        };
-
-        var result = await fixture.HandleAsync();
-
-        result.IsFailure.Should().BeTrue();
-        result.Error.Single().Should().Be(runtimeError);
-        fixture.Runtime.StopCallCount.Should().Be(1);
-        fixture.Repository.UpdateCalls.Should().ContainSingle();
-        fixture.Repository.UpdateCalls[0].ExpectedStatus.Should()
-            .Be(CollectorSessionStatus.Starting);
-    }
-
-    private static CollectionMarket CreateMarket(InvalidTokens invalidTokens = InvalidTokens.None)
-    {
-        var marketId = MarketId.Create(Guid.NewGuid()).Value;
-        var yesToken = TokenId.Create("token-yes").Value;
-        var noToken = invalidTokens == InvalidTokens.DuplicateTokenId
-            ? yesToken
-            : TokenId.Create("token-no").Value;
-
-        IReadOnlyCollection<CollectionMarketToken> tokens = invalidTokens switch
-        {
-            InvalidTokens.TooFew => [new CollectionMarketToken(yesToken, "Yes", 0)],
-            InvalidTokens.EmptyOutcome =>
-            [
-                new CollectionMarketToken(yesToken, " ", 0),
-                new CollectionMarketToken(noToken, "No", 1)
-            ],
-            InvalidTokens.DuplicateOutcomeIndex =>
-            [
-                new CollectionMarketToken(yesToken, "Yes", 0),
-                new CollectionMarketToken(noToken, "No", 0)
-            ],
-            _ =>
-            [
-                new CollectionMarketToken(yesToken, "Yes", 0),
-                new CollectionMarketToken(noToken, "No", 1)
-            ]
-        };
-
-        return new CollectionMarket(
-            marketId,
+    private static CollectionMarket CreateMarket(MarketId? marketId = null) =>
+        new(
+            marketId ?? MarketId.Create(Guid.NewGuid()).Value,
             "event-123",
-            "rain-event",
+            "btc-updown-5m-1200",
             "market-123",
-            "will-it-rain",
-            "0xcondition",
-            Now.AddHours(1),
-            Now.AddHours(1).AddMinutes(5),
+            "btc-updown-5m-1200",
+            "0xabc",
+            Now.AddMinutes(3),
+            Now.AddMinutes(8),
             true,
             false,
             true,
             true,
-            tokens.OrderBy(token => token.OutcomeIndex).ToArray());
-    }
+            [
+                new CollectionMarketToken(TokenId.Create("1001").Value, "Yes", 0),
+                new CollectionMarketToken(TokenId.Create("1002").Value, "No", 1)
+            ]);
 
-    private static CollectorSessionAggregate CreateSession(MarketId marketId)
-    {
-        return CollectorSessionAggregate.Create(
+    private static CollectorSessionAggregate CreateSession(CollectionMarket market) =>
+        CollectorSessionAggregate.Create(
             CollectorSessionId.Create(Guid.NewGuid()).Value,
-            marketId,
+            market.MarketId,
+            market.ExternalEventId,
+            market.EventSlug,
+            market.ExternalMarketId,
+            market.MarketSlug,
+            market.ConditionId,
+            market.EventStartsAt,
+            market.EventEndsAt,
+            3,
+            market.Tokens.Select(token => new CollectorSessionTokenDefinition(
+                token.TokenId,
+                token.Outcome,
+                token.OutcomeIndex)).ToArray(),
             Now).Value;
-    }
-
-    public enum InvalidTokens
-    {
-        None,
-        TooFew,
-        EmptyOutcome,
-        DuplicateTokenId,
-        DuplicateOutcomeIndex
-    }
 
     private sealed class Fixture
     {
         private CollectionMarket? _market = CreateMarket();
 
-        public Fixture()
+        public Fixture(int projectionVersion = 3)
         {
+            RequestedMarketId = _market!.MarketId;
             MarketSource = new StubMarketSource(() => _market, () => MarketError);
             Handler = new StartCollectorHandler(
                 MarketSource,
                 Repository,
-                Runtime,
+                new StubProjectionVersionProvider(projectionVersion),
                 new FixedTimeProvider(Now));
         }
 
         public StartCollectorHandler Handler { get; }
         public StubMarketSource MarketSource { get; }
         public StubCollectorSessionRepository Repository { get; } = new();
-        public StubCollectorRuntime Runtime { get; } = new();
+        public MarketId RequestedMarketId { get; }
         public Error? MarketError { get; init; }
 
         public CollectionMarket? Market
@@ -352,23 +216,17 @@ public sealed class StartCollectorHandlerTests
             init => _market = value;
         }
 
-        public MarketId MarketId => _market?.MarketId
-            ?? PolymarketLab.SharedKernel.DomainModels.Ids.MarketId.Create(Guid.NewGuid()).Value;
-
         public Task<Result<StartCollectorResponse, Error.ErrorList>> HandleAsync(
             Guid? marketId = null,
-            CancellationToken cancellationToken = default)
-        {
-            return Handler.Handle(
-                new StartCollectorCommand(marketId ?? MarketId.Value),
+            CancellationToken cancellationToken = default) =>
+            Handler.Handle(
+                new StartCollectorCommand(marketId ?? RequestedMarketId.Value),
                 cancellationToken);
-        }
     }
 
     private sealed class StubMarketSource(
         Func<CollectionMarket?> marketFactory,
-        Func<Error?> errorFactory)
-        : IMarketCollectionSource
+        Func<Error?> errorFactory) : IMarketCollectionSource
     {
         public int CallCount { get; private set; }
 
@@ -383,32 +241,22 @@ public sealed class StartCollectorHandlerTests
 
             var market = marketFactory();
             return Task.FromResult<Result<CollectionMarket?, Error>>(
-                market?.MarketId.Equals(marketId) == true ? market : null);
+                market?.MarketId == marketId ? market : null);
         }
     }
 
     private sealed class StubCollectorSessionRepository : ICollectorSessionRepository
     {
-        public Queue<CollectorSessionAggregate?> ActiveResults { get; } = [];
-        public Queue<Result<CollectorSessionUpdateStatus, Error>> UpdateResults { get; } = [];
-        public List<UpdateCall> UpdateCalls { get; } = [];
-        public Func<CollectorSessionId, CollectorSessionAggregate?>? GetByIdHandler { get; set; }
-        public CollectorSessionInsertStatus InsertResult { get; set; }
-            = CollectorSessionInsertStatus.Inserted;
+        public Queue<CollectorSessionAggregate?> ExclusiveResults { get; } = [];
+        public CollectorSessionInsertStatus InsertResult { get; set; } =
+            CollectorSessionInsertStatus.Inserted;
         public CollectorSessionAggregate? InsertedSession { get; private set; }
         public int TryAddCallCount { get; private set; }
 
-        public Task<CollectorSessionAggregate?> GetActiveByMarketIdAsync(
-            MarketId marketId,
-            CancellationToken cancellationToken)
-        {
-            return Task.FromResult(
-                ActiveResults.TryDequeue(out var session) ? session : null);
-        }
-
-        public Task<CollectorSessionAggregate?> GetCurrentByMarketIdAsync(
-            MarketId marketId,
-            CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<CollectorSessionAggregate?> GetExclusiveAsync(
+            CancellationToken cancellationToken) =>
+            Task.FromResult(
+                ExclusiveResults.TryDequeue(out var session) ? session : null);
 
         public Task<Result<CollectorSessionInsertStatus, Error>> TryAddAsync(
             CollectorSessionAggregate session,
@@ -419,76 +267,35 @@ public sealed class StartCollectorHandlerTests
             return Task.FromResult<Result<CollectorSessionInsertStatus, Error>>(InsertResult);
         }
 
-        public Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
-            CollectorSessionAggregate session,
-            CollectorSessionStatus expectedStatus,
-            CancellationToken cancellationToken)
-        {
-            UpdateCalls.Add(new UpdateCall(
-                session.Status,
-                expectedStatus,
-                session.StopReason,
-                session.FailureCode,
-                session.FailureMessage,
-                cancellationToken));
-
-            return Task.FromResult(
-                UpdateResults.TryDequeue(out var result)
-                    ? result
-                    : Result.Success<CollectorSessionUpdateStatus, Error>(
-                        CollectorSessionUpdateStatus.Updated));
-        }
-
         public Task<CollectorSessionAggregate?> GetByIdAsync(
             CollectorSessionId sessionId,
-            CancellationToken cancellationToken)
-        {
-            return Task.FromResult(GetByIdHandler?.Invoke(sessionId));
-        }
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<CollectorSessionAggregate?> GetActiveByMarketIdAsync(
+            MarketId marketId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<CollectorSessionAggregate?> GetCurrentByMarketIdAsync(
+            MarketId marketId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<IReadOnlyCollection<CollectorSessionAggregate>> GetActiveAsync(
             CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
+            CollectorSessionAggregate session,
+            CollectorSessionStatus expectedStatus,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
-    private sealed class StubCollectorRuntime : ICollectorRuntime
+    private sealed class StubProjectionVersionProvider(int projectionVersion)
+        : IProjectionVersionProvider
     {
-        public UnitResult<Error> StartResult { get; set; } = UnitResult.Success<Error>();
-        public UnitResult<Error> StopResult { get; set; } = UnitResult.Success<Error>();
-        public Func<CancellationToken, Task<UnitResult<Error>>>? StartHandler { get; set; }
-        public CollectorRuntimeStartRequest? StartRequest { get; private set; }
-        public int StartCallCount { get; private set; }
-        public int StopCallCount { get; private set; }
-        public CancellationToken StopCancellationToken { get; private set; }
-
-        public Task<UnitResult<Error>> StartAsync(
-            CollectorRuntimeStartRequest request,
-            CancellationToken cancellationToken)
-        {
-            StartCallCount++;
-            StartRequest = request;
-            return StartHandler?.Invoke(cancellationToken) ?? Task.FromResult(StartResult);
-        }
-
-        public Task<UnitResult<Error>> StopAsync(
-            CollectorSessionId sessionId,
-            CancellationToken cancellationToken)
-        {
-            StopCallCount++;
-            StopCancellationToken = cancellationToken;
-            return Task.FromResult(StopResult);
-        }
+        public int ProjectionVersion { get; } = projectionVersion;
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
     }
-
-    private sealed record UpdateCall(
-        CollectorSessionStatus Status,
-        CollectorSessionStatus ExpectedStatus,
-        CollectorStopReason? StopReason,
-        string? FailureCode,
-        string? FailureMessage,
-        CancellationToken CancellationToken);
 }

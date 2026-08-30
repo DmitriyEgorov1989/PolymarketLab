@@ -4,6 +4,7 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShu
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
+using PolymarketLab.DataCollection.Core.Tests.TestSupport;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using Xunit;
@@ -61,11 +62,11 @@ public sealed class CollectorSessionShutdownHandlerTests
     public async Task MarkStoppedAsync_WhenUpdateConflicts_ShouldReloadAndRetry()
     {
         var first = CreateRunningSession();
-        var replacement = CollectorSessionAggregate.Create(
+        var replacement = CollectorSessionTestFactory.CreateRunning(
             first.Id,
             first.MarketId,
-            Now.AddMinutes(-1)).Value;
-        replacement.MarkRunning(Now.AddSeconds(-30));
+            Now.AddMinutes(-1),
+            Now.AddSeconds(-30));
         replacement.MarkStopping();
         var repository = new StubRepository(first, replacement);
         repository.UpdateResults.Enqueue(
@@ -122,12 +123,9 @@ public sealed class CollectorSessionShutdownHandlerTests
 
     private static CollectorSessionAggregate CreateRunningSession()
     {
-        var session = CollectorSessionAggregate.Create(
-            CollectorSessionId.Create(Guid.NewGuid()).Value,
-            MarketId.Create(Guid.NewGuid()).Value,
-            Now.AddMinutes(-1)).Value;
-        session.MarkRunning(Now.AddSeconds(-30));
-        return session;
+        return CollectorSessionTestFactory.CreateRunning(
+            createdAt: Now.AddMinutes(-1),
+            subscriptionReadyAt: Now.AddSeconds(-30));
     }
 
     private sealed class StubRepository(
@@ -146,6 +144,9 @@ public sealed class CollectorSessionShutdownHandlerTests
             return Task.FromResult<CollectorSessionAggregate?>(
                 _sessions.TryDequeue(out var session) ? session : null);
         }
+
+        public Task<CollectorSessionAggregate?> GetExclusiveAsync(
+            CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
             CollectorSessionAggregate session,

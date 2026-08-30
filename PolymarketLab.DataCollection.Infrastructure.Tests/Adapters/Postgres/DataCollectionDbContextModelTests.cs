@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using PolymarketLab.DataCollection.Core.Application.Normalization.Models;
+using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Models;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
@@ -15,7 +16,7 @@ public sealed class DataCollectionDbContextModelTests
     private readonly IModel _model = CreateContext().Model;
 
     [Fact]
-    public void Model_ShouldMapCollectorSessionAndActiveMarketIndex()
+    public void Model_ShouldMapCollectorSessionSnapshotAndGlobalExclusiveIndex()
     {
         var session = _model.FindEntityType(typeof(CollectorSessionAggregate));
 
@@ -31,15 +32,30 @@ public sealed class DataCollectionDbContextModelTests
         session.FindProperty(nameof(CollectorSessionAggregate.Status))!
             .IsConcurrencyToken.Should().BeTrue();
 
-        var activeMarketIndex = session.GetIndexes().Single(index =>
-            index.GetDatabaseName() == "ux_collector_sessions_active_market");
+        session.FindProperty(nameof(CollectorSessionAggregate.Phase))!
+            .IsNullable.Should().BeTrue();
+        session.FindProperty(nameof(CollectorSessionAggregate.ProjectionVersion))!
+            .IsNullable.Should().BeTrue();
 
-        activeMarketIndex.IsUnique.Should().BeTrue();
-        activeMarketIndex.GetFilter().Should().Be("\"status\" IN (0, 1, 2)");
-        activeMarketIndex.Properties
+        var exclusiveIndex = session.GetIndexes().Single(index =>
+            index.GetDatabaseName() == "ux_collector_sessions_exclusive_slot");
+
+        exclusiveIndex.IsUnique.Should().BeTrue();
+        exclusiveIndex.GetFilter().Should().Be("\"status\" IN (0, 1, 2, 6, 7)");
+        exclusiveIndex.Properties
             .Select(property => property.Name)
             .Should()
-            .Equal(nameof(CollectorSessionAggregate.MarketId));
+            .Equal("ExclusiveSlot");
+
+        var token = _model.FindEntityType(typeof(CollectorSessionToken));
+        token.Should().NotBeNull();
+        token!.GetTableName().Should().Be("collector_session_tokens");
+        token.FindPrimaryKey()!.Properties.Select(property => property.Name)
+            .Should()
+            .Equal(
+                nameof(CollectorSessionToken.SessionId),
+                nameof(CollectorSessionToken.OutcomeIndex));
+        token.GetForeignKeys().Single().DeleteBehavior.Should().Be(DeleteBehavior.Cascade);
     }
 
     [Fact]

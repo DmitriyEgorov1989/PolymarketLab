@@ -17,6 +17,48 @@ internal static class CollectorSessionErrors
         ErrorType.ValueIsInvalid,
         "startedAt");
 
+    public static Error InvalidSubscriptionReadyAt => new(
+        "collector.session.subscription_ready_at.invalid",
+        "Collector subscription readiness cannot precede preparation.",
+        ErrorType.ValueIsInvalid,
+        "subscriptionReadyAt");
+
+    public static Error InvalidWindow => new(
+        "collector.session.window.invalid",
+        "Collector session end time must be later than its start time.",
+        ErrorType.ValueIsInvalid,
+        "eventEndsAt");
+
+    public static Error InvalidProjectionVersion => new(
+        "collector.session.projection_version.invalid",
+        "Collector session projection version must be positive.",
+        ErrorType.ValueIsInvalid,
+        "projectionVersion");
+
+    public static Error TokensRequired => new(
+        "collector.session.tokens.insufficient",
+        "Collector session requires at least two snapshot tokens.",
+        ErrorType.CollectionIsTooSmall,
+        "tokens");
+
+    public static Error TokenOutcomeRequired(int outcomeIndex) => new(
+        "collector.session.token_outcome.required",
+        $"Collector session token outcome is required at index '{outcomeIndex}'.",
+        ErrorType.ValueIsRequired,
+        "tokens");
+
+    public static Error DuplicateTokenId(string tokenId) => new(
+        "collector.session.token_id.duplicate",
+        $"Collector session token id '{tokenId}' is duplicated.",
+        ErrorType.Conflict,
+        "tokens");
+
+    public static Error DuplicateOutcomeIndex(int outcomeIndex) => new(
+        "collector.session.outcome_index.duplicate",
+        $"Collector session outcome index '{outcomeIndex}' is duplicated.",
+        ErrorType.Conflict,
+        "tokens");
+
     public static Error InvalidStoppedAt => new(
         "collector.session.stopped_at.invalid",
         "Collector session stop time cannot precede its start time.",
@@ -35,4 +77,13 @@ internal static class CollectorSessionErrors
         $"Collector session cannot transition from '{current}' to '{target}'.",
         ErrorType.Conflict,
         "status");
+
+    public static Error InvalidPhaseTransition(
+        CollectorSessionStatus status,
+        CollectorSessionPhase? current,
+        CollectorSessionPhase target) => new(
+        "collector.session.phase_transition.invalid",
+        $"Collector session cannot transition from '{status}/{current?.ToString() ?? "null"}' to phase '{target}'.",
+        ErrorType.Conflict,
+        "phase");
 }
