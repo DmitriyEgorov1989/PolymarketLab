@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using PolymarketLab.Core.Options;
 using PolymarketLab.DataCollection.Core.Application.Normalization;
 using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.ClobResolution;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime.WebSockets;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.GammaResolution;
@@ -152,6 +153,7 @@ public static class DataCollectionInfrastructureDependencyInjection
         services.AddScoped<IMarketCollectionSource, MarketCollectionSource>();
         services.AddHttpClient<IOrderBookSnapshotSource, PolymarketOrderBookClient>();
         services.AddHttpClient<IGammaTerminalResolutionSource, GammaTerminalResolutionClient>();
+        services.AddHttpClient<IClobTerminalResolutionSource, ClobTerminalResolutionClient>();
         services.AddScoped<IRawMarketMessageWriter, RawMarketMessageWriter>();
         services.AddScoped<
             IRawMessageNormalizationClaimRepository,

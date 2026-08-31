@@ -83,6 +83,7 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
         AssertScoped<INormalizationBacklogReader>(firstScope, secondScope);
         AssertTransient<IOrderBookSnapshotSource>(firstScope);
         AssertTransient<IGammaTerminalResolutionSource>(firstScope);
+        AssertTransient<IClobTerminalResolutionSource>(firstScope);
         AssertScoped<DataCollectionDbContext>(firstScope, secondScope);
         AssertSingleton<NormalizerTelemetry>(firstScope, secondScope);
         AssertSingleton<IRawMessageDecoder>(firstScope, secondScope);
