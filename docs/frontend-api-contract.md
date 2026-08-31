@@ -233,8 +233,9 @@ Identity включает event ID/slug, market ID/slug, condition и упоря
 входят `price_change`, `book`, `best_bid_ask`, `last_trade_price` и другие типы
 Polymarket WebSocket events. При `custom_feature_enabled: true` принимаются также
 глобальные события, например `new_market`. `messagesPersisted` считает сообщения,
-подтверждённые PostgreSQL. Counters накопительные в пределах session. Reconnect пока
-не реализован, поэтому `reconnectCount` остаётся `0`.
+подтверждённые PostgreSQL. Counters накопительные в пределах session.
+`reconnectCount` считает успешные повторные WebSocket подключения до readiness
+deadline; initial connect не входит в это значение.
 
 ## GET /api/Collector/{sessionId}
 

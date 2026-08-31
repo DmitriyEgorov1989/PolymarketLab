@@ -16,5 +16,8 @@ internal enum CollectorWorkerCompletionOrigin
     RequestedStop,
 
     /// <summary>Обработчик завершился при остановке приложения.</summary>
-    ApplicationShutdown
+    ApplicationShutdown,
+
+    /// <summary>Обработчик уже сохранил invalidation и завершился без повторного failure dispatch.</summary>
+    Invalidated
 }

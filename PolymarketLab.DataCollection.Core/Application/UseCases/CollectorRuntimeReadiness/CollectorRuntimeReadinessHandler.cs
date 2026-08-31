@@ -1,0 +1,113 @@
+using CSharpFunctionalExtensions;
+using PolymarketLab.DataCollection.Core.Application.Errors;
+using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
+using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Core.Ports.Enums;
+using PolymarketLab.SharedKernel.DomainModels.Ids;
+using PolymarketLab.SharedKernel.Errors;
+
+namespace PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeReadiness;
+
+/// <inheritdoc />
+public sealed class CollectorRuntimeReadinessHandler(
+    ICollectorSessionRepository sessionRepository)
+    : ICollectorRuntimeReadinessHandler
+{
+    private const int MaximumUpdateAttempts = 2;
+
+    public Task<UnitResult<Error>> MarkAwaitingInitialBooksAsync(
+        CollectorSessionId sessionId,
+        CancellationToken cancellationToken) =>
+        UpdateStartingPhaseAsync(
+            sessionId,
+            session => session.MarkAwaitingInitialBooks(),
+            cancellationToken);
+
+    public Task<UnitResult<Error>> MarkAwaitingHeartbeatAsync(
+        CollectorSessionId sessionId,
+        CancellationToken cancellationToken) =>
+        UpdateStartingPhaseAsync(
+            sessionId,
+            session => session.MarkAwaitingHeartbeat(),
+            cancellationToken);
+
+    public Task<UnitResult<Error>> MarkRunningAsync(
+        CollectorSessionId sessionId,
+        DateTimeOffset subscriptionReadyAt,
+        CancellationToken cancellationToken) =>
+        UpdateStartingPhaseAsync(
+            sessionId,
+            session => session.MarkRunning(subscriptionReadyAt),
+            cancellationToken);
+
+    public async Task<UnitResult<Error>> BeginInvalidationAsync(
+        CollectorSessionId sessionId,
+        Error failure,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < MaximumUpdateAttempts; attempt++)
+        {
+            var session = await sessionRepository.GetByIdAsync(
+                sessionId,
+                cancellationToken);
+
+            if (session is null || session.Status is
+                CollectorSessionStatus.Stopped or
+                CollectorSessionStatus.Failed or
+                CollectorSessionStatus.Interrupted or
+                CollectorSessionStatus.Invalidating)
+            {
+                return UnitResult.Success<Error>();
+            }
+
+            var expectedStatus = session.Status;
+            var transition = session.BeginInvalidation();
+            if (transition.IsFailure)
+                return transition;
+
+            var update = await sessionRepository.TryUpdateAsync(
+                session,
+                expectedStatus,
+                cancellationToken);
+            if (update.IsFailure)
+                return UnitResult.Failure(update.Error);
+            if (update.Value == CollectorSessionUpdateStatus.Updated)
+                return UnitResult.Success<Error>();
+        }
+
+        return UnitResult.Failure(
+            CollectorRuntimeFailureErrors.StateTransitionConflict(sessionId));
+    }
+
+    private async Task<UnitResult<Error>> UpdateStartingPhaseAsync(
+        CollectorSessionId sessionId,
+        Func<Domain.Models.CollectorSession.CollectorSession, UnitResult<Error>> transition,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < MaximumUpdateAttempts; attempt++)
+        {
+            var session = await sessionRepository.GetByIdAsync(
+                sessionId,
+                cancellationToken);
+
+            if (session is null || session.Status != CollectorSessionStatus.Starting)
+                return UnitResult.Success<Error>();
+
+            var result = transition(session);
+            if (result.IsFailure)
+                return result;
+
+            var update = await sessionRepository.TryUpdateAsync(
+                session,
+                CollectorSessionStatus.Starting,
+                cancellationToken);
+            if (update.IsFailure)
+                return UnitResult.Failure(update.Error);
+            if (update.Value == CollectorSessionUpdateStatus.Updated)
+                return UnitResult.Success<Error>();
+        }
+
+        return UnitResult.Failure(
+            CollectorRuntimeFailureErrors.StateTransitionConflict(sessionId));
+    }
+}

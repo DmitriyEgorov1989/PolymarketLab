@@ -13,6 +13,7 @@ internal sealed class CollectorWebSocketWorkerFactory(
     IOptions<CollectorWebSocketOptions> options,
     IRawMarketMessageSink messageSink,
     RawMarketMessageTelemetry telemetry,
+    ICollectorRuntimeReadinessDispatcher readinessDispatcher,
     TimeProvider timeProvider,
     IHostApplicationLifetime applicationLifetime,
     ILogger<CollectorWebSocketWorker> logger)
@@ -26,6 +27,7 @@ internal sealed class CollectorWebSocketWorkerFactory(
             options.Value,
             messageSink,
             telemetry,
+            readinessDispatcher,
             timeProvider,
             applicationLifetime,
             logger);

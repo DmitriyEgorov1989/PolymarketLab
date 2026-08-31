@@ -7,6 +7,7 @@ using PolymarketLab.DataCollection.Core.Application.Normalization;
 using PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection;
 using PolymarketLab.DataCollection.Core.Application.OrderBooks.Resynchronization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeReadiness;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
@@ -47,6 +48,9 @@ public static class DataCollectionApplicationDependencyInjection
         services.AddScoped<
             ICollectorRuntimeFailureHandler,
             CollectorRuntimeFailureHandler>();
+        services.AddScoped<
+            ICollectorRuntimeReadinessHandler,
+            CollectorRuntimeReadinessHandler>();
         services.AddScoped<ICollectorScheduler, CollectorScheduler>();
         services.AddSingleton<CollectorBoundaryCheckRegistry>();
         services.AddScoped<

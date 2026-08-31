@@ -53,6 +53,21 @@ public static class DataCollectionInfrastructureDependencyInjection
                            CollectorWebSocketOptions.MaximumStopTimeout,
                 "Collector WebSocket stop timeout is outside the supported range.")
             .Validate(
+                options => options.HeartbeatInterval > TimeSpan.Zero
+                           && options.HeartbeatInterval <=
+                           CollectorWebSocketOptions.MaximumHeartbeatInterval,
+                "Collector WebSocket heartbeat interval is outside the supported range.")
+            .Validate(
+                options => options.HeartbeatTimeout > TimeSpan.Zero
+                           && options.HeartbeatTimeout <=
+                           CollectorWebSocketOptions.MaximumHeartbeatTimeout,
+                "Collector WebSocket heartbeat timeout is outside the supported range.")
+            .Validate(
+                options => options.ReconnectDelay > TimeSpan.Zero
+                           && options.ReconnectDelay <=
+                           CollectorWebSocketOptions.MaximumReconnectDelay,
+                "Collector WebSocket reconnect delay is outside the supported range.")
+            .Validate(
                 options => options.ReceiveBufferSize > 0
                            && options.ReceiveBufferSize <= options.MaximumMessageSize,
                 "Collector WebSocket receive buffer size must be positive and not exceed maximum message size.")
@@ -192,6 +207,9 @@ public static class DataCollectionInfrastructureDependencyInjection
         services.AddSingleton<
             ICollectorRuntimeFailureDispatcher,
             CollectorRuntimeFailureDispatcher>();
+        services.AddSingleton<
+            ICollectorRuntimeReadinessDispatcher,
+            CollectorRuntimeReadinessDispatcher>();
         services.AddSingleton<CollectorRuntime>();
         services.AddSingleton<ICollectorRuntime>(serviceProvider =>
             serviceProvider.GetRequiredService<CollectorRuntime>());

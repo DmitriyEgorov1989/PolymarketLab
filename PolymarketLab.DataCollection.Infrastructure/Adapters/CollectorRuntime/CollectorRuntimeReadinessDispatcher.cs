@@ -1,0 +1,85 @@
+using CSharpFunctionalExtensions;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeReadiness;
+using PolymarketLab.SharedKernel.DomainModels.Ids;
+using PolymarketLab.SharedKernel.Errors;
+
+namespace PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime;
+
+internal sealed class CollectorRuntimeReadinessDispatcher(
+    IServiceScopeFactory scopeFactory,
+    IHostApplicationLifetime applicationLifetime,
+    ILogger<CollectorRuntimeReadinessDispatcher> logger)
+    : ICollectorRuntimeReadinessDispatcher
+{
+    public Task<UnitResult<Error>> MarkAwaitingInitialBooksAsync(
+        CollectorSessionId sessionId,
+        CancellationToken cancellationToken) =>
+        DispatchAsync(
+            sessionId,
+            handler => handler.MarkAwaitingInitialBooksAsync(sessionId, cancellationToken));
+
+    public Task<UnitResult<Error>> MarkAwaitingHeartbeatAsync(
+        CollectorSessionId sessionId,
+        CancellationToken cancellationToken) =>
+        DispatchAsync(
+            sessionId,
+            handler => handler.MarkAwaitingHeartbeatAsync(sessionId, cancellationToken));
+
+    public Task<UnitResult<Error>> MarkRunningAsync(
+        CollectorSessionId sessionId,
+        DateTimeOffset subscriptionReadyAt,
+        CancellationToken cancellationToken) =>
+        DispatchAsync(
+            sessionId,
+            handler => handler.MarkRunningAsync(
+                sessionId,
+                subscriptionReadyAt,
+                cancellationToken));
+
+    public Task<UnitResult<Error>> BeginInvalidationAsync(
+        CollectorSessionId sessionId,
+        Error failure,
+        CancellationToken cancellationToken) =>
+        DispatchAsync(
+            sessionId,
+            handler => handler.BeginInvalidationAsync(
+                sessionId,
+                failure,
+                cancellationToken));
+
+    private async Task<UnitResult<Error>> DispatchAsync(
+        CollectorSessionId sessionId,
+        Func<ICollectorRuntimeReadinessHandler, Task<UnitResult<Error>>> action)
+    {
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var handler = scope.ServiceProvider
+                .GetRequiredService<ICollectorRuntimeReadinessHandler>();
+            var result = await action(handler);
+
+            if (result.IsSuccess)
+                return result;
+
+            logger.LogCritical(
+                "Collector runtime readiness update for session {SessionId} failed: {ErrorCode}.",
+                sessionId.Value,
+                result.Error.Code);
+            applicationLifetime.StopApplication();
+            return result;
+        }
+        catch (Exception exception)
+        {
+            logger.LogCritical(
+                exception,
+                "Collector runtime readiness update for session {SessionId} failed unexpectedly.",
+                sessionId.Value);
+            applicationLifetime.StopApplication();
+            return UnitResult.Failure(
+                CollectorRuntimeErrors.ReadinessPersistenceFailed(sessionId));
+        }
+    }
+}

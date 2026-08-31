@@ -117,4 +117,38 @@ internal static class CollectorRuntimeErrors
             $"Collector runtime is stopping and cannot start session '{sessionId.Value}'.",
             ErrorType.Failure);
     }
+
+    public static Error ReadinessPersistenceFailed(CollectorSessionId sessionId)
+    {
+        return new Error(
+            "collector.runtime.readiness.persistence_failed",
+            $"Collector runtime readiness update failed for session '{sessionId.Value}'.",
+            ErrorType.Failure);
+    }
+
+    public static Error ReadinessTimedOut(CollectorSessionId sessionId)
+    {
+        return new Error(
+            "collector.runtime.readiness.timeout",
+            $"Collector runtime '{sessionId.Value}' did not become ready before the readiness deadline.",
+            ErrorType.Failure);
+    }
+
+    public static Error HeartbeatTimedOut(
+        CollectorSessionId sessionId,
+        TimeSpan timeout)
+    {
+        return new Error(
+            "collector.runtime.heartbeat.timeout",
+            $"Collector runtime '{sessionId.Value}' did not receive PONG within {timeout}.",
+            ErrorType.Failure);
+    }
+
+    public static Error ProtocolViolation(CollectorSessionId sessionId)
+    {
+        return new Error(
+            "collector.runtime.protocol.violation",
+            $"Collector runtime '{sessionId.Value}' observed a protocol or identity violation.",
+            ErrorType.Failure);
+    }
 }

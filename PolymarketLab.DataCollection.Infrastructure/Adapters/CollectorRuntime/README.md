@@ -212,11 +212,11 @@ public sealed record RawMarketMessage(
 
 | Результат | Что означает |
 |---|---|
-| `StartAsync` | Connection установлен и subscription отправлена |
+| `StartAsync` | Connection установлен и subscription отправлена; WebSocket readiness ещё не доказана |
 | `StopAsync` | Запрошенная остановка завершилась или исчерпала deadline |
 | `Completion` | Весь долгоживущий lifecycle worker завершён |
 
-> **Важно:** успешный `StartAsync` не гарантирует, что server семантически принял subscription, что будет получено хотя бы одно сообщение или что connection не завершится сразу после start.
+> **Важно:** успешный `StartAsync` не гарантирует `Running`. Session переходит в `Running` только после initial `book` каждого snapshot token и matching text `PONG` текущей connection epoch.
 
 ## Запуск collector
 
@@ -232,7 +232,9 @@ Application flow разделён между [`StartCollectorHandler`](../../../
 6. Начиная с `T-60s`, проверить exact snapshot и operational flags.
 7. CAS-переходом установить `Starting/Connecting` и вызвать `ICollectorRuntime.StartAsync`.
 8. Оставить session в `Starting`: connect и отправка subscription не доказывают readiness.
-9. При startup failure перевести session в `Invalidating/Cleaning` и остановить runtime как compensation.
+9. Runtime получает initial `book` по каждому snapshot token, успешно передаёт их в bounded ingestion, отправляет text `PING` и ждёт text `PONG` до readiness deadline.
+10. Только после этой readiness boundary runtime сохраняет `Starting -> Running` через scoped dispatcher и CAS.
+11. При startup failure перевести session в `Invalidating/Cleaning` и остановить runtime как compensation.
 
 DataCollection Application и Presentation подключены к API host. Публичные endpoints collector session:
 
@@ -1056,8 +1058,8 @@ Singleton runtime/factory не должны напрямую зависеть о
 
 ## Известные ограничения
 
-1. Нет reconnect, exponential backoff и повторной subscription.
-2. Нет heartbeat и detection состояния «socket открыт, но данные не приходят».
+1. Нет exponential backoff: pre-readiness reconnect использует фиксированную паузу.
+2. Durable raw connection epoch относится к отдельной задаче; текущая epoch хранится только в runtime process memory.
 3. Между автономной ошибкой обработчика и записью сессии нет надёжного сохраняемого уведомления; после сбоя остаточная активная сессия исправляется только при следующем запуске.
 4. Остановка collector session опубликована только по `CollectorSessionId`, не по `MarketId`.
 5. Channel in-memory: process crash теряет непросохранённый tail.

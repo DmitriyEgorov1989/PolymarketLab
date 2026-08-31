@@ -10,6 +10,7 @@ using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 using Xunit;
 
@@ -30,7 +31,7 @@ public sealed class CollectorWebSocketWorkerTests
         connection.Endpoint.Should().Be(
             new Uri("wss://ws-subscriptions-clob.polymarket.com/ws/market"));
         connection.ConnectCallCount.Should().Be(1);
-        connection.SendCallCount.Should().Be(1);
+        connection.SendCallCount.Should().BeGreaterThanOrEqualTo(1);
         connection.IsDisposed.Should().BeFalse();
 
         using var subscription = JsonDocument.Parse(connection.SentMessage!);
@@ -124,7 +125,7 @@ public sealed class CollectorWebSocketWorkerTests
         completion.Result.IsFailure.Should().BeTrue();
         completion.Result.Error.Code.Should().Be(
             "collector.runtime.receive.message_type.unsupported");
-        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Autonomous);
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
         connection.IsDisposed.Should().BeTrue();
     }
 
@@ -147,7 +148,7 @@ public sealed class CollectorWebSocketWorkerTests
         completion.Result.IsFailure.Should().BeTrue();
         completion.Result.Error.Code.Should().Be(
             "collector.runtime.receive.message_too_large");
-        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Autonomous);
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
     }
 
     [Fact]
@@ -162,7 +163,7 @@ public sealed class CollectorWebSocketWorkerTests
 
         completion.Result.IsFailure.Should().BeTrue();
         completion.Result.Error.Code.Should().Be("collector.runtime.receive.closed");
-        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Autonomous);
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
         connection.CloseCallCount.Should().Be(1);
         connection.IsDisposed.Should().BeTrue();
     }
@@ -183,7 +184,7 @@ public sealed class CollectorWebSocketWorkerTests
 
         completion.Result.IsFailure.Should().BeTrue();
         completion.Result.Error.Code.Should().Be("collector.runtime.receive.failed");
-        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Autonomous);
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
     }
 
     [Fact]
@@ -218,6 +219,38 @@ public sealed class CollectorWebSocketWorkerTests
         await sink.WaitForMessageAsync();
         connection.ReceiveCallCount.Should().Be(3);
         await worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ReceiveAsync_WithInitialBooksAndPong_ShouldMarkRunningAndNotEnqueuePong()
+    {
+        var connection = new StubWebSocketConnection();
+        connection.AddFrame(BookMessage("yes-token"));
+        connection.AddFrame(BookMessage("no-token"));
+        connection.AddFrame("PONG"u8);
+        var sink = new StubRawMarketMessageSink();
+        var dispatcher = new StubReadinessDispatcher();
+        var worker = CreateWorker(
+            CreateRequest(),
+            connection,
+            messageSink: sink,
+            timeProvider: new StubTimeProvider(DateTimeOffset.Parse("2026-08-28T11:59:40Z")),
+            readinessDispatcher: dispatcher);
+
+        await worker.StartAsync(CancellationToken.None);
+        await sink.WaitForMessageAsync();
+        await sink.WaitForMessageAsync();
+        await dispatcher.WaitForRunningAsync();
+        await worker.StopAsync(CancellationToken.None);
+
+        dispatcher.AwaitingInitialBooksCount.Should().Be(1);
+        dispatcher.AwaitingHeartbeatCount.Should().Be(1);
+        dispatcher.RunningCount.Should().Be(1);
+        sink.Count.Should().Be(2);
+        connection.SentMessages
+            .Select(Encoding.UTF8.GetString)
+            .Should()
+            .Contain("PING");
     }
 
     [Fact]
@@ -367,6 +400,7 @@ public sealed class CollectorWebSocketWorkerTests
             options,
             new StubRawMarketMessageSink(),
             new RawMarketMessageTelemetry(),
+            new StubReadinessDispatcher(),
             TimeProvider.System,
             new StubHostApplicationLifetime(),
             NullLogger<CollectorWebSocketWorker>.Instance);
@@ -582,7 +616,8 @@ public sealed class CollectorWebSocketWorkerTests
         IHostApplicationLifetime? lifetime = null,
         StubRawMarketMessageSink? messageSink = null,
         RawMarketMessageTelemetry? telemetry = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ICollectorRuntimeReadinessDispatcher? readinessDispatcher = null)
     {
         return new CollectorWebSocketWorker(
             request,
@@ -590,6 +625,7 @@ public sealed class CollectorWebSocketWorkerTests
             options ?? CreateOptions(),
             messageSink ?? new StubRawMarketMessageSink(),
             telemetry ?? new RawMarketMessageTelemetry(),
+            readinessDispatcher ?? new StubReadinessDispatcher(),
             timeProvider ?? TimeProvider.System,
             lifetime ?? new StubHostApplicationLifetime(),
             NullLogger<CollectorWebSocketWorker>.Instance);
@@ -634,6 +670,10 @@ public sealed class CollectorWebSocketWorkerTests
             DateTimeOffset.Parse("2026-08-28T11:59:50Z"));
     }
 
+    private static byte[] BookMessage(string tokenId) =>
+        Encoding.UTF8.GetBytes(
+            $"{{\"event_type\":\"book\",\"market\":\"0xcondition\",\"asset_id\":\"{tokenId}\",\"bids\":[],\"asks\":[]}}");
+
     private sealed class StubWebSocketFactory(StubWebSocketConnection connection)
         : ICollectorWebSocketFactory
     {
@@ -649,6 +689,7 @@ public sealed class CollectorWebSocketWorkerTests
     private sealed class StubWebSocketConnection : ICollectorWebSocketConnection
     {
         private readonly Queue<StubFrame> _frames = new();
+        private readonly List<byte[]> _sentMessages = [];
 
         public Func<CancellationToken, Task>? ConnectHandler { get; init; }
         public Func<CancellationToken, Task>? CloseHandler { get; init; }
@@ -656,6 +697,7 @@ public sealed class CollectorWebSocketWorkerTests
             ValueTask<CollectorWebSocketReceiveResult>>? ReceiveHandler { get; init; }
         public Uri? Endpoint { get; private set; }
         public byte[]? SentMessage { get; private set; }
+        public IReadOnlyList<byte[]> SentMessages => _sentMessages;
         public int ConnectCallCount { get; private set; }
         public int SendCallCount { get; private set; }
         public int CloseCallCount { get; private set; }
@@ -675,7 +717,10 @@ public sealed class CollectorWebSocketWorkerTests
             CancellationToken cancellationToken)
         {
             SendCallCount++;
-            SentMessage = message.ToArray();
+            var payload = message.ToArray();
+            _sentMessages.Add(payload);
+            if (SentMessage is null || !payload.SequenceEqual("PING"u8.ToArray()))
+                SentMessage = payload;
             return Task.CompletedTask;
         }
 
@@ -771,6 +816,67 @@ public sealed class CollectorWebSocketWorkerTests
             {
                 return _messages[^1];
             }
+        }
+
+        public int Count
+        {
+            get
+            {
+                lock (_messages)
+                {
+                    return _messages.Count;
+                }
+            }
+        }
+    }
+
+    private sealed class StubReadinessDispatcher : ICollectorRuntimeReadinessDispatcher
+    {
+        public int AwaitingInitialBooksCount { get; private set; }
+        public int AwaitingHeartbeatCount { get; private set; }
+        public int RunningCount { get; private set; }
+        public int InvalidationCount { get; private set; }
+        private readonly TaskCompletionSource _running = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<UnitResult<Error>> MarkAwaitingInitialBooksAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken)
+        {
+            AwaitingInitialBooksCount++;
+            return Task.FromResult(UnitResult.Success<Error>());
+        }
+
+        public Task<UnitResult<Error>> MarkAwaitingHeartbeatAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken)
+        {
+            AwaitingHeartbeatCount++;
+            return Task.FromResult(UnitResult.Success<Error>());
+        }
+
+        public Task<UnitResult<Error>> MarkRunningAsync(
+            CollectorSessionId sessionId,
+            DateTimeOffset subscriptionReadyAt,
+            CancellationToken cancellationToken)
+        {
+            RunningCount++;
+            _running.TrySetResult();
+            return Task.FromResult(UnitResult.Success<Error>());
+        }
+
+        public async Task WaitForRunningAsync()
+        {
+            await _running.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+
+        public Task<UnitResult<Error>> BeginInvalidationAsync(
+            CollectorSessionId sessionId,
+            Error failure,
+            CancellationToken cancellationToken)
+        {
+            InvalidationCount++;
+            return Task.FromResult(UnitResult.Success<Error>());
         }
     }
 
