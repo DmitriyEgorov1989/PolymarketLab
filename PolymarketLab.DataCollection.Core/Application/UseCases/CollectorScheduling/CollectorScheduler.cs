@@ -1,5 +1,6 @@
 using CSharpFunctionalExtensions;
 using PolymarketLab.DataCollection.Core.Application.Errors;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
@@ -13,6 +14,7 @@ public sealed class CollectorScheduler(
     IMarketCollectionSource marketSource,
     ICollectorSessionRepository sessionRepository,
     ICollectorRuntime runtime,
+    ICollectorSessionInvalidationCoordinator invalidationCoordinator,
     CollectorBoundaryCheckRegistry boundaryChecks,
     TimeProvider timeProvider) : ICollectorScheduler
 {
@@ -66,7 +68,10 @@ public sealed class CollectorScheduler(
             using var compensation = new CancellationTokenSource(
                 CompensationTimeout,
                 timeProvider);
-            var compensationResult = await InvalidateAsync(session, compensation.Token);
+            var compensationResult = await InvalidateAsync(
+                session,
+                CollectorSchedulingErrors.RuntimeStartFailed,
+                compensation.Token);
             if (compensationResult.IsFailure)
                 return compensationResult.Error;
 
@@ -75,7 +80,10 @@ public sealed class CollectorScheduler(
         if (runtimeResult.IsSuccess)
             return session;
 
-        var invalidationResult = await InvalidateAsync(session, cancellationToken);
+        var invalidationResult = await InvalidateAsync(
+            session,
+            runtimeResult.Error,
+            cancellationToken);
         return invalidationResult.IsFailure
             ? invalidationResult.Error
             : runtimeResult.Error;
@@ -143,50 +151,40 @@ public sealed class CollectorScheduler(
         CollectorSessionAggregate initialSession,
         CancellationToken cancellationToken)
     {
-        CollectorSessionAggregate? session = initialSession;
-        for (var attempt = 0; attempt < MaximumUpdateAttempts; attempt++)
-        {
-            if (session.Status == CollectorSessionStatus.Invalidating)
-                return session;
-            if (!IsExclusive(session.Status))
-                return session;
+        return await InvalidateAsync(
+            initialSession,
+            CollectorSchedulingErrors.SessionInvalid,
+            cancellationToken);
+    }
 
-            var expectedStatus = session.Status;
-            var transition = session.BeginInvalidation();
-            if (transition.IsFailure)
-                return transition.Error;
+    private async Task<Result<CollectorSessionAggregate, Error>> InvalidateAsync(
+        CollectorSessionAggregate initialSession,
+        Error failure,
+        CancellationToken cancellationToken)
+    {
+        var shouldStopRuntime = initialSession.Status is
+            CollectorSessionStatus.Starting or CollectorSessionStatus.Running;
+        var result = await invalidationCoordinator.InvalidateAsync(
+            initialSession.Id,
+            timeProvider.GetUtcNow(),
+            CollectorStopReason.StartupFailure,
+            failure,
+            cancellationToken);
+        if (result.IsFailure)
+            return result.Error;
+        if (result.Value is null)
+            return CollectorSchedulingErrors.StateTransitionConflict(initialSession.Id);
 
-            var updateResult = await sessionRepository.TryUpdateAsync(
-                session,
-                expectedStatus,
-                cancellationToken);
-            if (updateResult.IsFailure)
-                return updateResult.Error;
-            if (updateResult.Value == CollectorSessionUpdateStatus.Updated)
-            {
-                if (expectedStatus is CollectorSessionStatus.Starting
-                    or CollectorSessionStatus.Running)
-                {
-                    await runtime.StopAsync(session.Id, cancellationToken);
-                }
-
-                return session;
-            }
-
-            session = await sessionRepository.GetByIdAsync(
-                initialSession.Id,
-                cancellationToken);
-            if (session is null)
-                return CollectorSchedulingErrors.StateTransitionConflict(initialSession.Id);
-        }
-
+        var session = result.Value;
         if (session.Status == CollectorSessionStatus.Invalidating
-            || !IsExclusive(session.Status))
+            && (shouldStopRuntime || session.StartedAt is not null))
         {
-            return session;
+            var stop = await runtime.StopAsync(session.Id, cancellationToken);
+            if (stop.IsFailure)
+                return stop.Error;
         }
 
-        return CollectorSchedulingErrors.StateTransitionConflict(initialSession.Id);
+        return session;
     }
 
     private async Task<UnitResult<Error>> CheckReadinessBoundaryAsync(

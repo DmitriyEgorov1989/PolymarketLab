@@ -1,6 +1,7 @@
 using CSharpFunctionalExtensions;
 using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
@@ -154,7 +155,11 @@ public sealed class CollectorSchedulerTests
             CreatedAt);
         fixture.Repository.UpdateResults.Enqueue(
             CollectorSessionUpdateStatus.ConcurrencyConflict);
-        fixture.Repository.ReloadedSession = winner;
+        fixture.Repository.ReloadedSessions.Enqueue(winner);
+        fixture.Repository.ReloadedSessions.Enqueue(CollectorSessionTestFactory.CreateStarting(
+            fixture.Session.Id,
+            fixture.Session.MarketId,
+            CreatedAt));
 
         var result = await fixture.Scheduler.PrepareAsync(
             fixture.Session,
@@ -211,7 +216,11 @@ public sealed class CollectorSchedulerTests
             CreatedAt);
         fixture.Repository.UpdateResults.Enqueue(
             CollectorSessionUpdateStatus.ConcurrencyConflict);
-        fixture.Repository.ReloadedSession = winner;
+        fixture.Repository.ReloadedSessions.Enqueue(winner);
+        fixture.Repository.ReloadedSessions.Enqueue(CollectorSessionTestFactory.CreateStarting(
+            fixture.Session.Id,
+            fixture.Session.MarketId,
+            CreatedAt));
         var mismatched = fixture.Market with { ConditionId = "0xdifferent" };
 
         var result = await fixture.Scheduler.PrepareAsync(
@@ -241,7 +250,11 @@ public sealed class CollectorSchedulerTests
             fixture.Session.Id,
             fixture.Session.MarketId,
             CreatedAt);
-        completed.BeginInvalidation();
+        completed.BeginInvalidation(
+            CreatedAt.AddMinutes(2),
+            CollectorStopReason.StartupFailure,
+            "collector.scheduler.session.invalid",
+            "Collector session no longer satisfies its boundaries.");
         fixture.Repository.UpdateResults.Enqueue(CollectorSessionUpdateStatus.ConcurrencyConflict);
         fixture.Repository.UpdateResults.Enqueue(CollectorSessionUpdateStatus.ConcurrencyConflict);
         fixture.Repository.UpdateResults.Enqueue(CollectorSessionUpdateStatus.ConcurrencyConflict);
@@ -333,6 +346,7 @@ public sealed class CollectorSchedulerTests
                 Source,
                 Repository,
                 Runtime,
+                new CollectorSessionInvalidationCoordinator(Repository, Runtime),
                 BoundaryChecks,
                 new FixedTimeProvider(now));
         }
@@ -407,7 +421,7 @@ public sealed class CollectorSchedulerTests
             Task.FromResult<CollectorSessionAggregate?>(
                 ReloadedSessions.TryDequeue(out var session)
                     ? session
-                    : ReloadedSession);
+                    : ReloadedSession ?? exclusiveSession);
 
         public Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
             CollectorSessionAggregate session,
@@ -444,6 +458,10 @@ public sealed class CollectorSchedulerTests
     {
         public List<CollectorRuntimeStartRequest> StartRequests { get; } = [];
         public List<CollectorSessionId> StoppedSessions { get; } = [];
+
+        public void FenceSession(CollectorSessionId sessionId)
+        {
+        }
 
         public Task<UnitResult<Error>> StartAsync(
             CollectorRuntimeStartRequest request,

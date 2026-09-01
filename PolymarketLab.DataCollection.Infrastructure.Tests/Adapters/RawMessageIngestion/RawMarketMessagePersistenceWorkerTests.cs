@@ -335,12 +335,15 @@ public sealed class RawMarketMessagePersistenceWorkerTests
             state.RecordWriterCreated();
         }
 
-        public Task WriteBatchAsync(
+        public async Task<RawMarketMessageWriteResult> WriteBatchAsync(
             IReadOnlyCollection<RawMarketMessage> messages,
             IReadOnlyCollection<CollectorSessionProgressCheckpoint> checkpoints,
             CancellationToken cancellationToken)
         {
-            return _state.WriteAsync(messages, cancellationToken);
+            await _state.WriteAsync(messages, cancellationToken);
+            return new RawMarketMessageWriteResult(
+                messages.Select(message => message.SessionId).ToHashSet(),
+                new HashSet<CollectorSessionId>());
         }
     }
 

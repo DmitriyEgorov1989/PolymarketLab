@@ -65,6 +65,12 @@ internal static class CollectorSessionErrors
         ErrorType.ValueIsInvalid,
         "stoppedAt");
 
+    public static Error InvalidInvalidatingAt => new(
+        "collector.session.invalidating_at.invalid",
+        "Collector session invalidation time cannot precede its start time.",
+        ErrorType.ValueIsInvalid,
+        "invalidatingAt");
+
     public static Error NotActive => new(
         "collector.session.not_active",
         "Collector session is not active.",

@@ -16,6 +16,34 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
     private static readonly TimeSpan ClaimTimeout = TimeSpan.FromMinutes(5);
 
     [Fact]
+    public async Task WriteProcessed_AfterInvalidationFence_ShouldReturnClaimLost()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        await SeedRawMessagesAsync(database.ConnectionString, 1);
+        var claim = (await ClaimAsync(database.ConnectionString, 1, 1)).Single();
+        await ExecuteAsync(
+            database.ConnectionString,
+            "UPDATE data_collection.collector_sessions SET status = 7, invalidating_at = CURRENT_TIMESTAMP WHERE id = @session_id",
+            new NpgsqlParameter("session_id", claim.Message.SessionId.Value));
+
+        var result = await WriteAsync(
+            database.ConnectionString,
+            claim,
+            NormalizationCompletion.Processed(
+            [
+                CreateEvent(
+                    claim,
+                    "last_trade_price",
+                    new LastTradeRecord(0.4m, 1m, TradeSide.Buy, null, null))
+            ]));
+
+        result.Should().Be(NormalizationWriteStatus.ClaimLost);
+        (await CountAsync(database.ConnectionString, "normalized_events")).Should().Be(0);
+        var ledger = await ReadLedgerAsync(database.ConnectionString);
+        ledger[claim.Message.RawMessageId].Status.Should().Be((int)NormalizationStatus.Processing);
+    }
+
+    [Fact]
     public async Task WriteProcessed_ShouldPersistAllTypedRowsAndCompleteLedger()
     {
         await using var database = await CreateMigratedDatabaseAsync();

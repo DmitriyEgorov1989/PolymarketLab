@@ -36,6 +36,12 @@ public sealed class DataCollectionDbContextModelTests
             .IsNullable.Should().BeTrue();
         session.FindProperty(nameof(CollectorSessionAggregate.ProjectionVersion))!
             .IsNullable.Should().BeTrue();
+        var invalidatingAt = session.FindProperty(
+            nameof(CollectorSessionAggregate.InvalidatingAt));
+        invalidatingAt.Should().NotBeNull();
+        invalidatingAt!.GetColumnName().Should().Be("invalidating_at");
+        invalidatingAt.GetColumnType().Should().Be("timestamp with time zone");
+        invalidatingAt.IsNullable.Should().BeTrue();
 
         var exclusiveIndex = session.GetIndexes().Single(index =>
             index.GetDatabaseName() == "ux_collector_sessions_exclusive_slot");

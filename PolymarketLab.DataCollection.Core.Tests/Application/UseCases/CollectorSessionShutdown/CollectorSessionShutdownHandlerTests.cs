@@ -1,8 +1,10 @@
 using CSharpFunctionalExtensions;
 using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.DataCollection.Core.Tests.TestSupport;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
@@ -18,7 +20,7 @@ public sealed class CollectorSessionShutdownHandlerTests
         new(2026, 7, 29, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task MarkStoppingAsync_WithRunningSession_ShouldPersistStopping()
+    public async Task MarkStoppingAsync_WithRunningSession_ShouldPersistInvalidating()
     {
         var session = CreateRunningSession();
         var repository = new StubRepository(session);
@@ -31,13 +33,15 @@ public sealed class CollectorSessionShutdownHandlerTests
         result.IsSuccess.Should().BeTrue();
         repository.UpdateCalls.Should().ContainSingle();
         repository.UpdateCalls[0].Status.Should()
-            .Be(CollectorSessionStatus.Stopping);
+            .Be(CollectorSessionStatus.Invalidating);
+        repository.UpdateCalls[0].Reason.Should()
+            .Be(CollectorStopReason.ApplicationShutdown);
         repository.UpdateCalls[0].ExpectedStatus.Should()
             .Be(CollectorSessionStatus.Running);
     }
 
     [Fact]
-    public async Task MarkStoppedAsync_WithStoppingSession_ShouldPersistStopped()
+    public async Task MarkStoppedAsync_WithStoppingSession_ShouldRemainInvalidating()
     {
         var session = CreateRunningSession();
         session.MarkStopping();
@@ -51,7 +55,7 @@ public sealed class CollectorSessionShutdownHandlerTests
         result.IsSuccess.Should().BeTrue();
         repository.UpdateCalls.Should().ContainSingle();
         repository.UpdateCalls[0].Status.Should()
-            .Be(CollectorSessionStatus.Stopped);
+            .Be(CollectorSessionStatus.Invalidating);
         repository.UpdateCalls[0].Reason.Should()
             .Be(CollectorStopReason.ApplicationShutdown);
         repository.UpdateCalls[0].ExpectedStatus.Should()
@@ -106,7 +110,7 @@ public sealed class CollectorSessionShutdownHandlerTests
         result.IsSuccess.Should().BeTrue();
         repository.UpdateCalls.Should().ContainSingle();
         repository.UpdateCalls[0].Status.Should()
-            .Be(CollectorSessionStatus.Failed);
+            .Be(CollectorSessionStatus.Invalidating);
         repository.UpdateCalls[0].Reason.Should()
             .Be(CollectorStopReason.PersistenceFailure);
         repository.UpdateCalls[0].FailureCode.Should()
@@ -117,7 +121,9 @@ public sealed class CollectorSessionShutdownHandlerTests
         StubRepository repository)
     {
         return new CollectorSessionShutdownHandler(
-            repository,
+            new CollectorSessionInvalidationCoordinator(
+                repository,
+                new StubRuntime()),
             new FixedTimeProvider(Now));
     }
 
@@ -190,5 +196,20 @@ public sealed class CollectorSessionShutdownHandlerTests
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private sealed class StubRuntime : ICollectorRuntime
+    {
+        public void FenceSession(CollectorSessionId sessionId)
+        {
+        }
+
+        public Task<UnitResult<Error>> StartAsync(
+            CollectorRuntimeStartRequest request,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<UnitResult<Error>> StopAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

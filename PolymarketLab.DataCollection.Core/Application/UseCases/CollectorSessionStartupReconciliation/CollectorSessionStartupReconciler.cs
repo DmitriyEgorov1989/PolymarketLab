@@ -1,19 +1,19 @@
 using CSharpFunctionalExtensions;
 using PolymarketLab.DataCollection.Core.Application.Errors;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
-using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.SharedKernel.Errors;
 using CollectorSessionAggregate = PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.CollectorSession;
 
 namespace PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
 
 public sealed class CollectorSessionStartupReconciler(
-    ICollectorSessionRepository sessionRepository)
+    ICollectorSessionRepository sessionRepository,
+    ICollectorSessionInvalidationCoordinator invalidationCoordinator,
+    TimeProvider timeProvider)
     : ICollectorSessionStartupReconciler
 {
-    private const int MaximumUpdateAttempts = 3;
-
     public async Task<UnitResult<Error>> ReconcileAsync(
         CancellationToken cancellationToken)
     {
@@ -21,63 +21,16 @@ public sealed class CollectorSessionStartupReconciler(
 
         foreach (var session in activeSessions)
         {
-            var result = await ReconcileSessionAsync(session, cancellationToken);
+            var result = await invalidationCoordinator.InvalidateAsync(
+                session.Id,
+                timeProvider.GetUtcNow(),
+                CollectorStopReason.ProcessTerminated,
+                CollectorSessionStartupReconciliationErrors.ProcessTerminated,
+                cancellationToken);
             if (result.IsFailure)
-                return result;
+                return UnitResult.Failure(result.Error);
         }
 
         return UnitResult.Success<Error>();
-    }
-
-    private async Task<UnitResult<Error>> ReconcileSessionAsync(
-        CollectorSessionAggregate initialSession,
-        CancellationToken cancellationToken)
-    {
-        CollectorSessionAggregate? session = initialSession;
-
-        for (var attempt = 0; attempt < MaximumUpdateAttempts; attempt++)
-        {
-            if (session is null || !IsIncomplete(session.Status))
-                return UnitResult.Success<Error>();
-            if (session.Status == CollectorSessionStatus.Invalidating)
-                return UnitResult.Success<Error>();
-
-            var expectedStatus = session.Status;
-            var invalidationResult = session.BeginInvalidation();
-            if (invalidationResult.IsFailure)
-                return invalidationResult;
-
-            var updateResult = await sessionRepository.TryUpdateAsync(
-                session,
-                expectedStatus,
-                cancellationToken);
-            if (updateResult.IsFailure)
-                return UnitResult.Failure(updateResult.Error);
-
-            if (updateResult.Value == CollectorSessionUpdateStatus.Updated)
-                return UnitResult.Success<Error>();
-
-            session = await sessionRepository.GetByIdAsync(
-                initialSession.Id,
-                cancellationToken);
-        }
-
-        if (session is null
-            || !IsIncomplete(session.Status)
-            || session.Status == CollectorSessionStatus.Invalidating)
-            return UnitResult.Success<Error>();
-
-        return UnitResult.Failure(
-            CollectorSessionStartupReconciliationErrors.StateTransitionConflict(
-                initialSession.Id));
-    }
-
-    private static bool IsIncomplete(CollectorSessionStatus status)
-    {
-        return status is CollectorSessionStatus.Scheduled
-            or CollectorSessionStatus.Starting
-            or CollectorSessionStatus.Running
-            or CollectorSessionStatus.Stopping
-            or CollectorSessionStatus.Invalidating;
     }
 }

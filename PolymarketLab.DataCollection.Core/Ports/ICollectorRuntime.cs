@@ -8,6 +8,13 @@ namespace PolymarketLab.DataCollection.Core.Ports;
 /// <summary>Управляет выполняющимися в процессе WebSocket-сборщиками.</summary>
 public interface ICollectorRuntime
 {
+    /// <summary>
+    /// Необратимо запрещает запуск новых producers сессии. Уже зарегистрированный
+    /// producer останавливает вызывающий lifecycle-сценарий либо его собственный observer.
+    /// </summary>
+    /// <param name="sessionId">Идентификатор аннулируемой сессии.</param>
+    void FenceSession(CollectorSessionId sessionId);
+
     /// <summary>Запускает сборщик для сохранённой сессии и рынка.</summary>
     /// <param name="request">Данные сессии и рынка для запуска.</param>
     /// <param name="cancellationToken">Токен отмены ожидания запуска.</param>

@@ -205,8 +205,13 @@ internal sealed class RawMarketMessagePersistenceWorker(
             .Distinct()
             .Select(telemetry.GetCheckpoint)
             .ToArray();
-        await writer.WriteBatchAsync(messages, checkpoints, cancellationToken);
-        foreach (var sessionGroup in messages.GroupBy(message => message.SessionId))
+        var writeResult = await writer.WriteBatchAsync(
+            messages,
+            checkpoints,
+            cancellationToken);
+        foreach (var sessionGroup in messages
+                     .Where(message => writeResult.PersistedSessionIds.Contains(message.SessionId))
+                     .GroupBy(message => message.SessionId))
         {
             var counters = telemetry.RecordPersisted(
                 sessionGroup.Key,
@@ -217,6 +222,13 @@ internal sealed class RawMarketMessagePersistenceWorker(
                 counters.ReceivedComplete,
                 counters.Enqueued,
                 counters.Persisted);
+        }
+
+        foreach (var sessionId in writeResult.FencedSessionIds)
+        {
+            logger.LogInformation(
+                "Raw market message batch was rejected by the invalidation fence for session {SessionId}.",
+                sessionId.Value);
         }
 
         Interlocked.Exchange(ref _inFlightMessageCount, 0);

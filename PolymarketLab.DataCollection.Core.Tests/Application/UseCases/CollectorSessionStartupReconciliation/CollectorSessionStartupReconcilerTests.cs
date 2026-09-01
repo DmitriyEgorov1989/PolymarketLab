@@ -1,8 +1,10 @@
 using CSharpFunctionalExtensions;
 using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.DataCollection.Core.Tests.TestSupport;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
@@ -29,7 +31,7 @@ public sealed class CollectorSessionStartupReconcilerTests
             CreateSession(CollectorSessionStatus.Invalidating)
         };
         var repository = new StubRepository(sessions);
-        var reconciler = new CollectorSessionStartupReconciler(repository);
+        var reconciler = CreateReconciler(repository);
 
         var result = await reconciler.ReconcileAsync(CancellationToken.None);
 
@@ -62,7 +64,7 @@ public sealed class CollectorSessionStartupReconcilerTests
         repository.UpdateResults.Enqueue(
             CollectorSessionUpdateStatus.ConcurrencyConflict);
         repository.UpdateResults.Enqueue(CollectorSessionUpdateStatus.Updated);
-        var reconciler = new CollectorSessionStartupReconciler(repository);
+        var reconciler = CreateReconciler(repository);
 
         var result = await reconciler.ReconcileAsync(CancellationToken.None);
 
@@ -92,13 +94,13 @@ public sealed class CollectorSessionStartupReconcilerTests
             CollectorSessionUpdateStatus.ConcurrencyConflict);
         repository.UpdateResults.Enqueue(
             CollectorSessionUpdateStatus.ConcurrencyConflict);
-        var reconciler = new CollectorSessionStartupReconciler(repository);
+        var reconciler = CreateReconciler(repository);
 
         var result = await reconciler.ReconcileAsync(CancellationToken.None);
 
         result.IsFailure.Should().BeTrue();
         result.Error.Code.Should().Be(
-            "collector.session.reconciliation.state_changed");
+            "collector.invalidation.session.state_changed");
         repository.UpdateCalls.Should().HaveCount(3);
     }
 
@@ -127,9 +129,19 @@ public sealed class CollectorSessionStartupReconcilerTests
         if (status == CollectorSessionStatus.Stopping)
             session.MarkStopping();
         if (status == CollectorSessionStatus.Invalidating)
-            session.BeginInvalidation();
+            session.BeginInvalidation(
+                Now,
+                CollectorStopReason.ProcessTerminated,
+                "collector.session.process_terminated",
+                "Previous process terminated.");
         return session;
     }
+
+    private static CollectorSessionStartupReconciler CreateReconciler(
+        ICollectorSessionRepository repository) => new(
+            repository,
+            new CollectorSessionInvalidationCoordinator(repository, new StubRuntime()),
+            new FixedTimeProvider(Now));
 
     private sealed class StubRepository(
         IReadOnlyCollection<CollectorSessionAggregate> activeSessions,
@@ -137,7 +149,7 @@ public sealed class CollectorSessionStartupReconcilerTests
         : ICollectorSessionRepository
     {
         private readonly Queue<CollectorSessionAggregate> _reloadSessions =
-            new(reloadSessions);
+            new(activeSessions.Concat(reloadSessions));
 
         public Queue<Result<CollectorSessionUpdateStatus, Error>> UpdateResults { get; } = [];
         public List<UpdateCall> UpdateCalls { get; } = [];
@@ -189,4 +201,24 @@ public sealed class CollectorSessionStartupReconcilerTests
         CollectorSessionStatus Status,
         CollectorSessionStatus ExpectedStatus,
         CollectorSessionPhase? Phase);
+
+    private sealed class StubRuntime : ICollectorRuntime
+    {
+        public void FenceSession(CollectorSessionId sessionId)
+        {
+        }
+
+        public Task<UnitResult<Error>> StartAsync(
+            CollectorRuntimeStartRequest request,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<UnitResult<Error>> StopAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
 }

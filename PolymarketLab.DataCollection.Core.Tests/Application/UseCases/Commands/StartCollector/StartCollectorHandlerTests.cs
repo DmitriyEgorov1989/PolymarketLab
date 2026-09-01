@@ -2,6 +2,7 @@ using CSharpFunctionalExtensions;
 using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.Errors;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
 using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
@@ -264,6 +265,7 @@ public sealed class StartCollectorHandlerTests
                 MarketSource,
                 Repository,
                 Runtime,
+                new CollectorSessionInvalidationCoordinator(Repository, Runtime),
                 new CollectorBoundaryCheckRegistry(),
                 actualTimeProvider);
             Handler = new StartCollectorHandler(
@@ -375,6 +377,10 @@ public sealed class StartCollectorHandlerTests
     private sealed class StubCollectorRuntime : ICollectorRuntime
     {
         public List<CollectorRuntimeStartRequest> StartRequests { get; } = [];
+
+        public void FenceSession(CollectorSessionId sessionId)
+        {
+        }
 
         public Task<UnitResult<Error>> StartAsync(
             CollectorRuntimeStartRequest request,

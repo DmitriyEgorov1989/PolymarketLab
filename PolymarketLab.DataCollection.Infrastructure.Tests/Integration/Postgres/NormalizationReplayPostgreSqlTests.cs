@@ -22,6 +22,50 @@ namespace PolymarketLab.DataCollection.Infrastructure.Tests.Integration.Postgres
 public sealed class NormalizationReplayPostgreSqlTests(PostgreSqlFixture fixture)
 {
     [Fact]
+    public async Task ReplayClaim_AfterInvalidationFence_ShouldNotCreateTargetLedger()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var sessionId = Guid.NewGuid();
+        await SeedSessionAsync(
+            database.ConnectionString,
+            sessionId,
+            [ReadFixture("last-trade-price.json")]);
+        await using var provider = CreateProvider(database.ConnectionString);
+        await ProcessSourceAsync(provider);
+        await ExecuteAsync(
+            database.ConnectionString,
+            "UPDATE data_collection.collector_sessions SET status = 7, invalidating_at = CURRENT_TIMESTAMP WHERE id = @session_id",
+            new NpgsqlParameter("session_id", sessionId));
+        await using var scope = provider.CreateAsyncScope();
+        var repository = scope.ServiceProvider
+            .GetRequiredService<IRawMessageNormalizationReplayClaimRepository>();
+        var snapshot = await repository.CaptureSnapshotAsync(default);
+        var filter = new NormalizationReplayFilter(
+            1,
+            2,
+            CollectorSessionId.Create(sessionId).Value,
+            null);
+
+        var claims = await repository.ClaimBatchAsync(
+            filter,
+            snapshot,
+            100,
+            TimeSpan.FromMinutes(5),
+            default);
+        var hasRemaining = await repository.HasRemainingAsync(
+            filter,
+            snapshot,
+            default);
+
+        claims.Should().BeEmpty();
+        hasRemaining.Should().BeFalse();
+        (await CountAsync(
+            database.ConnectionString,
+            "raw_message_normalizations",
+            "projection_version = 2")).Should().Be(0);
+    }
+
+    [Fact]
     public async Task Replay_FiltersShouldPreserveRawAndVersionsAndBeIdempotent()
     {
         await using var database = await CreateMigratedDatabaseAsync();

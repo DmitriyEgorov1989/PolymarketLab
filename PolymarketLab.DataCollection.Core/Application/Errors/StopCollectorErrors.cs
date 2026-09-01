@@ -5,6 +5,11 @@ namespace PolymarketLab.DataCollection.Core.Application.Errors;
 
 public static class StopCollectorErrors
 {
+    public static Error RequestedBeforeSuccess => new(
+        "collector.stop.requested",
+        "Collector stop was requested before successful completion.",
+        ErrorType.Failure);
+
     public static Error SessionIdRequired => new(
         "collector.stop.session_id.required",
         "Collector session id is required.",

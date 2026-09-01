@@ -1,5 +1,6 @@
 using CSharpFunctionalExtensions;
 using PolymarketLab.DataCollection.Core.Application.Errors;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
@@ -10,7 +11,9 @@ namespace PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntim
 
 /// <inheritdoc />
 public sealed class CollectorRuntimeReadinessHandler(
-    ICollectorSessionRepository sessionRepository)
+    ICollectorSessionRepository sessionRepository,
+    ICollectorSessionInvalidationCoordinator invalidationCoordinator,
+    TimeProvider timeProvider)
     : ICollectorRuntimeReadinessHandler
 {
     private const int MaximumUpdateAttempts = 2;
@@ -45,38 +48,15 @@ public sealed class CollectorRuntimeReadinessHandler(
         Error failure,
         CancellationToken cancellationToken)
     {
-        for (var attempt = 0; attempt < MaximumUpdateAttempts; attempt++)
-        {
-            var session = await sessionRepository.GetByIdAsync(
-                sessionId,
-                cancellationToken);
-
-            if (session is null || session.Status is
-                CollectorSessionStatus.Stopped or
-                CollectorSessionStatus.Failed or
-                CollectorSessionStatus.Interrupted or
-                CollectorSessionStatus.Invalidating)
-            {
-                return UnitResult.Success<Error>();
-            }
-
-            var expectedStatus = session.Status;
-            var transition = session.BeginInvalidation();
-            if (transition.IsFailure)
-                return transition;
-
-            var update = await sessionRepository.TryUpdateAsync(
-                session,
-                expectedStatus,
-                cancellationToken);
-            if (update.IsFailure)
-                return UnitResult.Failure(update.Error);
-            if (update.Value == CollectorSessionUpdateStatus.Updated)
-                return UnitResult.Success<Error>();
-        }
-
-        return UnitResult.Failure(
-            CollectorRuntimeFailureErrors.StateTransitionConflict(sessionId));
+        var result = await invalidationCoordinator.InvalidateAsync(
+            sessionId,
+            timeProvider.GetUtcNow(),
+            CollectorStopReason.FatalWebSocketError,
+            failure,
+            cancellationToken);
+        return result.IsFailure
+            ? UnitResult.Failure(result.Error)
+            : UnitResult.Success<Error>();
     }
 
     private async Task<UnitResult<Error>> UpdateStartingPhaseAsync(

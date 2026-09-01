@@ -73,6 +73,9 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Configur
             builder.Property(x => x.StoppedAt)
                 .HasColumnName("stopped_at");
 
+            builder.Property(x => x.InvalidatingAt)
+                .HasColumnName("invalidating_at");
+
             builder.Property(x => x.StopReason)
                 .HasColumnName("stop_reason")
                 .HasConversion<int?>();

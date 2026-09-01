@@ -131,7 +131,11 @@ public sealed class CollectorSessionRepositoryTests
         MarkRunning(stopping, Now.AddSeconds(1));
         stopping.MarkStopping();
         var invalidating = CreateSession();
-        invalidating.BeginInvalidation();
+        invalidating.BeginInvalidation(
+            Now,
+            CollectorStopReason.Requested,
+            "collector.stop.requested",
+            "Collector stop was requested before successful completion.");
         var stopped = CreateSession();
         stopped.Stop(Now.AddSeconds(1), CollectorStopReason.Requested);
         var failed = CreateSession();

@@ -12,6 +12,23 @@ namespace PolymarketLab.DataCollection.Infrastructure.Tests.Adapters.CollectorRu
 public sealed class CollectorRuntimeStartTests
 {
     [Fact]
+    public async Task StartAsync_AfterSessionFence_ShouldNotCreateWorker()
+    {
+        var worker = new StubCollectorWorker();
+        var factory = new StubCollectorWorkerFactory(() => worker);
+        var runtime = CreateRuntime(factory);
+        var request = CreateRequest();
+        runtime.FenceSession(request.SessionId);
+
+        var result = await runtime.StartAsync(request, CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be("collector.runtime.session.invalidating");
+        factory.CreateCallCount.Should().Be(0);
+        worker.StartCallCount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task StartAsync_ShouldCreateAndStartWorker()
     {
         var worker = new StubCollectorWorker();

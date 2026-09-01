@@ -6,6 +6,7 @@ using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Models;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.CollectorSession;
 
 namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.Normalization;
 
@@ -28,6 +29,17 @@ internal sealed class VersionedNormalizedWriter(
             cancellationToken);
         try
         {
+            var fencedSessions = await CollectorSessionWriteFence.LockAsync(
+                dbContext,
+                transaction,
+                [claim.Message.SessionId],
+                cancellationToken);
+            if (fencedSessions.Contains(claim.Message.SessionId))
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return NormalizationWriteStatus.ClaimLost;
+            }
+
             var ledger = await LockLedgerAsync(claim, transaction, cancellationToken);
             if (ledger is null
                 || ledger.Value.Status != NormalizationStatus.Processing

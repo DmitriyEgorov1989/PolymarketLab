@@ -446,7 +446,7 @@ Worker использует два token sources:
 | `_receiveCts` | Немедленно остановить получение данных после вызова `StopAsync` |
 | `_enqueueCts` | Дать уже полученному payload шанс попасть в channel до stop deadline |
 
-Оба источника отмены намеренно не связаны напрямую с `ApplicationStopping`. Остановку начинает `CollectorRuntimeShutdownService`: это не позволяет обработчикам исчезнуть из реестра до сохранения `Stopping` и сохраняет порядок «остановить сборщики, затем закрыть очередь».
+Оба источника отмены намеренно не связаны напрямую с `ApplicationStopping`. Остановку начинает `CollectorRuntimeShutdownService`: сначала общий invalidation coordinator запрещает новые producers и сохраняет durable write fence, затем runtime останавливает сборщики и только после этого закрывается очередь.
 
 ### Stop во время active receive
 
@@ -531,7 +531,7 @@ Observer:
 3. Удаляет entry conditional remove-операцией.
 4. Для autonomous failure передаёт session ID, timestamp и runtime error в scoped Application handler.
 
-Application handler переводит `Starting` или `Running` session в `Failed` с `FatalWebSocketError`. Переход сохраняется compare-and-set update по ожидаемому `Status`; это не позволяет позднему `Starting -> Running` перезаписать уже сохранённый `Failed`. При concurrency conflict handler перечитывает session и повторяет переход. Terminal состояния и `Stopping` обрабатываются идемпотентно.
+Application handler переводит `Starting` или `Running` session в `Invalidating/Cleaning` с `FatalWebSocketError`. Coordinator сначала устанавливает in-memory runtime fence, затем сохраняет `InvalidatingAt` compare-and-set update по ожидаемому `Status`; это не позволяет позднему `Starting -> Running` открыть новые producers. При concurrency conflict coordinator перечитывает session и повторяет переход. Terminal состояния и уже начатая invalidation обрабатываются идемпотентно с сохранением первой причины.
 
 Если failure не удаётся сохранить из-за handler/repository error, dispatcher пишет critical log и вызывает `StopApplication()`, чтобы процесс не продолжал работу со stale `Running` session.
 
@@ -574,12 +574,12 @@ Runtime ждёт completion, удаляет именно старую entry и �
 ```text
 ApplicationStopping
   -> CollectorRuntimeShutdownService запрещает новые starts
-  -> сохранённые сессии переходят в Stopping
+  -> сохранённые сессии переходят в Invalidating/Cleaning
   -> runtime останавливает активные сборщики
-  -> успешно остановленные сессии переходят в Stopped/ApplicationShutdown
-  -> in-flight payloads получают шанс попасть в channel
+  -> in-flight database transactions завершаются до фиксации write fence
+  -> более поздние raw writes ожидаемо отклоняются
   -> RawMarketMessagePersistenceWorker закрывает channel
-  -> consumer сохраняет оставшийся tail
+  -> consumer безопасно отбрасывает fenced tail
   -> host завершает работу
 ```
 
@@ -595,12 +595,12 @@ sequenceDiagram
     Host->>Shutdown: StopAsync
     Shutdown->>Runtime: BeginShutdown
     Runtime->>Runtime: reject future starts
-    Shutdown->>DB: sessions -> Stopping
+    Shutdown->>DB: sessions -> Invalidating/Cleaning
     Shutdown->>Runtime: ShutdownAsync
     Runtime->>Workers: StopAsync all entries
     Workers-->>Runtime: completions
     Runtime-->>Shutdown: stopped
-    Shutdown->>DB: successful sessions -> Stopped
+    Shutdown->>DB: confirm durable write fence
     Host->>Consumer: StopAsync
     Consumer->>Consumer: complete channel
     Consumer->>DB: flush remaining batches
@@ -682,10 +682,11 @@ in-memory snapshot, а `messages_persisted` увеличивается атом�
 upsert в одной транзакции с raw batch. Поэтому read API обычно отстаёт
 от receive loop не более чем на `FlushInterval`.
 
-При пользовательском Stop runtime сначала прекращает receive/enqueue, затем
-ожидает `persisted >= enqueued`, выполняет финальный progress checkpoint и
-только после этого сохраняет `Stopped`. Ошибка или timeout persistence переводит
-session в `Failed/PersistenceFailure` вместо ложного `Stopped`.
+При пользовательском Stop coordinator сначала запрещает новые runtime producers и
+сохраняет `InvalidatingAt`. Raw writer берёт совместную блокировку строки session:
+уже начатая транзакция завершается перед fence, а последующие сообщения и progress
+этой session ожидаемо не сохраняются. Очистка данных и финальный переход выполняются
+отдельным lifecycle-сценарием.
 
 После аварийного завершения `messages_persisted` сохраняется точно, а
 `messages_received` и `messages_enqueued` являются durable lower bounds: хвост, оставшийся только в
@@ -771,11 +772,12 @@ ON DELETE RESTRICT
 `RawMarketMessageWriter`:
 
 1. Возвращается сразу для пустого batch.
-2. Создаёт EF records.
-3. Копирует payload.
-4. Открывает явную PostgreSQL transaction и сохраняет raw rows.
-5. Атомарным upsert обновляет progress каждой session без lost increments.
-6. Commit-ит raw rows и progress вместе.
+2. Открывает явную PostgreSQL transaction.
+3. В стабильном порядке берёт `FOR SHARE` на строки session и проверяет `InvalidatingAt`.
+4. Отделяет fenced session и создаёт EF records только для разрешённых сообщений.
+5. Копирует payload.
+6. Сохраняет raw rows и атомарным upsert обновляет progress без lost increments.
+7. Commit-ит raw rows и progress вместе.
 
 ```text
 data_collection.collector_session_progress
@@ -826,6 +828,8 @@ reconnect_count     bigint not null
 3. Существует один consumer.
 4. На batch создаётся отдельный scope.
 5. После fatal writer exception channel больше не принимает сообщения.
+6. `InvalidatingAt` навсегда запрещает новые raw rows, progress, normalization claims и projections этой session, включая состояние после `Invalidating -> Failed`.
+7. Все writers берут `FOR SHARE`, поэтому CAS-переход в invalidation ждёт уже начатые транзакции и образует точную durable boundary.
 
 ### State machine runtime
 
@@ -877,6 +881,7 @@ stateDiagram-v2
 | `collector.runtime.receive.message_too_large` | Logical message превысил byte limit |
 | `collector.runtime.ingestion.closed` | Raw ingestion channel закрыт |
 | `collector.runtime.stopping` | Start вызван после global shutdown |
+| `collector.runtime.session.invalidating` | Start вызван после необратимого fence этой session |
 
 Все перечисленные runtime errors имеют `ErrorType.Failure`.
 
@@ -1085,13 +1090,13 @@ Singleton runtime/factory не должны напрямую зависеть о
 
 ## Что делать дальше
 
-Пользовательская остановка сборщика уже реализована:
+Пользовательская остановка сборщика устанавливает write fence:
 
 ```text
 stop command
-  -> active session -> Stopping
+  -> active session -> Invalidating/Cleaning
   -> CollectorRuntime.StopAsync
-  -> session -> Stopped/Requested
+  -> следующий cleanup lifecycle удаляет неполный dataset и завершает session
 ```
 
 Следующий этап — проектировать reconnect, повторную subscription и heartbeat.

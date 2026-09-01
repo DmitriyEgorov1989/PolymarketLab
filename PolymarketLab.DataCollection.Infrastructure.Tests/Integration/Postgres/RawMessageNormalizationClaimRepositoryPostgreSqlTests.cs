@@ -15,6 +15,28 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
     private static readonly TimeSpan ClaimTimeout = TimeSpan.FromMinutes(5);
 
     [Fact]
+    public async Task ClaimBatch_AfterInvalidationFence_ShouldNotCreateLedger()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        await SeedRawMessagesAsync(database.ConnectionString, 2);
+        await ExecuteAsync(
+            database.ConnectionString,
+            """
+            UPDATE data_collection.collector_sessions
+            SET status = 7, invalidating_at = CURRENT_TIMESTAMP
+            WHERE id = (SELECT session_id FROM data_collection.raw_market_messages LIMIT 1)
+            """);
+        await using var context = CreateContext(database.ConnectionString);
+
+        var claims = await new RawMessageNormalizationClaimRepository(context)
+            .ClaimBatchAsync(1, 10, ClaimTimeout, CancellationToken.None);
+
+        claims.Should().BeEmpty();
+        var ledger = await ReadLeasesAsync(database.ConnectionString, 1);
+        ledger.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task ClaimBatch_ShouldRespectLimitAndOrderByRawMessageId()
     {
         await using var database = await CreateMigratedDatabaseAsync();

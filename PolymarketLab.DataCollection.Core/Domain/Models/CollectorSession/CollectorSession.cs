@@ -96,6 +96,12 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
     /// <summary>Дата завершения; <see langword="null" />, пока session нетерминальна.</summary>
     public DateTimeOffset? StoppedAt { get; private set; }
 
+    /// <summary>
+    /// Момент установки durable write fence;
+    /// <see langword="null" />, если invalidation ещё не начиналась.
+    /// </summary>
+    public DateTimeOffset? InvalidatingAt { get; private set; }
+
     /// <summary>Причина terminal transition; <see langword="null" />, пока session нетерминальна.</summary>
     public CollectorStopReason? StopReason { get; private set; }
 
@@ -260,14 +266,40 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
             CollectorSessionPhase.DrainingRaw,
             CollectorSessionPhase.AwaitingNormalization);
 
-    /// <summary>Необратимо начинает invalidation неполной session.</summary>
-    public UnitResult<Error> BeginInvalidation()
+    /// <summary>
+    /// Необратимо начинает invalidation неполной session и сохраняет первую безопасную
+    /// diagnostic; повторный вызов не меняет исходную причину.
+    /// </summary>
+    public UnitResult<Error> BeginInvalidation(
+        DateTimeOffset invalidatingAt,
+        CollectorStopReason reason,
+        string failureCode,
+        string failureMessage)
     {
-        if (!IsExclusive(Status))
+        if (Status == CollectorSessionStatus.Invalidating)
+            return UnitResult.Success<Error>();
+        if (Status is not CollectorSessionStatus.Scheduled
+            and not CollectorSessionStatus.Starting
+            and not CollectorSessionStatus.Running
+            and not CollectorSessionStatus.Stopping)
+        {
             return InvalidTransition(CollectorSessionStatus.Invalidating);
+        }
+
+        var lowerBound = StartedAt ?? CreatedAt;
+        if (invalidatingAt < lowerBound)
+            return UnitResult.Failure(CollectorSessionErrors.InvalidInvalidatingAt);
+        if (string.IsNullOrWhiteSpace(failureCode))
+            return UnitResult.Failure(GeneralErrors.ValueIsRequired(nameof(failureCode)));
+        if (string.IsNullOrWhiteSpace(failureMessage))
+            return UnitResult.Failure(GeneralErrors.ValueIsRequired(nameof(failureMessage)));
 
         Status = CollectorSessionStatus.Invalidating;
         Phase = CollectorSessionPhase.Cleaning;
+        InvalidatingAt = invalidatingAt;
+        StopReason = reason;
+        FailureCode = failureCode;
+        FailureMessage = failureMessage;
         return UnitResult.Success<Error>();
     }
 

@@ -13,9 +13,18 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
 {
     private const string ClaimSql =
         """
-        WITH candidates AS MATERIALIZED (
+        WITH writable_sessions AS MATERIALIZED (
+            SELECT session.id
+            FROM data_collection.collector_sessions AS session
+            WHERE session.invalidating_at IS NULL
+            ORDER BY session.id
+            FOR SHARE
+        ),
+        candidates AS MATERIALIZED (
             SELECT raw.id
             FROM data_collection.raw_market_messages AS raw
+            INNER JOIN writable_sessions AS session
+              ON session.id = raw.session_id
             LEFT JOIN data_collection.raw_message_normalizations AS normalization
               ON normalization.raw_message_id = raw.id
              AND normalization.projection_version = @projection_version

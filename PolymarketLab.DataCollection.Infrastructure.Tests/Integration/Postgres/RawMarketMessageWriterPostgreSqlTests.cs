@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql;
 using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
+using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
@@ -27,6 +28,77 @@ public sealed class RawMarketMessageWriterPostgreSqlTests(PostgreSqlFixture fixt
         "20260831121534_PersistConnectionEpochAndExactRawAccounting";
     private static readonly DateTimeOffset CreatedAt =
         DateTimeOffset.Parse("2026-08-31T11:00:00Z");
+
+    [Theory]
+    [InlineData(CollectorSessionStatus.Invalidating)]
+    [InlineData(CollectorSessionStatus.Failed)]
+    public async Task WriteBatchAsync_AfterInvalidationFence_ShouldNotPersistRawOrProgress(
+        CollectorSessionStatus status)
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var session = await InsertSessionAsync(database.ConnectionString);
+        await using (var fenceContext = CreateContext(database.ConnectionString))
+        {
+            await fenceContext.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE data_collection.collector_sessions SET status = {(int)status}, invalidating_at = CURRENT_TIMESTAMP WHERE id = {session.Id.Value}");
+        }
+        await using var context = CreateContext(database.ConnectionString);
+
+        var result = await new RawMarketMessageWriter(context).WriteBatchAsync(
+            CreateMessages(session.Id, 1, 2, "fenced"),
+            [CreateCheckpoint(session.Id, 1, 2)],
+            CancellationToken.None);
+
+        result.FencedSessionIds.Should().Equal(session.Id);
+        result.PersistedSessionIds.Should().BeEmpty();
+        await using var verificationContext = CreateContext(database.ConnectionString);
+        var progress = await new CollectorSessionProgressRepository(verificationContext)
+            .GetAsync(session.Id, CancellationToken.None);
+        progress.MessagesPersisted.Should().Be(0);
+        progress.RawMessageCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task InvalidationFence_WhenRawWriteIsInFlight_ShouldWaitAndRejectLaterWrites()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var session = await InsertSessionAsync(database.ConnectionString);
+        var writeBarrier = new SessionFenceLockBarrierInterceptor();
+        var invalidationStarted = new CommandStartedInterceptor(
+            "UPDATE data_collection.collector_sessions");
+
+        var inFlightWrite = WriteAsync(
+            database.ConnectionString,
+            CreateMessages(session.Id, 1, 1, "before-fence"),
+            CreateCheckpoint(session.Id, 1, 1),
+            writeBarrier);
+        await writeBarrier.LockAcquired;
+
+        await using var invalidationContext = CreateContext(
+            database.ConnectionString,
+            invalidationStarted);
+        var invalidation = invalidationContext.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE data_collection.collector_sessions SET status = {(int)CollectorSessionStatus.Invalidating}, invalidating_at = CURRENT_TIMESTAMP WHERE id = {session.Id.Value}");
+        await invalidationStarted.Started;
+        invalidation.IsCompleted.Should().BeFalse();
+
+        writeBarrier.Release();
+        await inFlightWrite;
+        await invalidation;
+
+        await using var staleWriterContext = CreateContext(database.ConnectionString);
+        var staleWrite = await new RawMarketMessageWriter(staleWriterContext).WriteBatchAsync(
+            CreateMessages(session.Id, 2, 1, "after-fence"),
+            [CreateCheckpoint(session.Id, 2, 2)],
+            CancellationToken.None);
+
+        staleWrite.FencedSessionIds.Should().Equal(session.Id);
+        await using var verificationContext = CreateContext(database.ConnectionString);
+        var progress = await new CollectorSessionProgressRepository(verificationContext)
+            .GetAsync(session.Id, CancellationToken.None);
+        progress.MessagesPersisted.Should().Be(1);
+        progress.RawMessageCount.Should().Be(1);
+    }
 
     [Fact]
     public async Task WriteAndCheckpoint_ShouldRoundTripExactDurableAccountingAfterRestart()
@@ -382,6 +454,57 @@ public sealed class RawMarketMessageWriterPostgreSqlTests(PostgreSqlFixture fixt
 
             await _allArrived.Task.WaitAsync(cancellationToken);
             return result;
+        }
+    }
+
+    private sealed class SessionFenceLockBarrierInterceptor : DbCommandInterceptor
+    {
+        private readonly TaskCompletionSource _lockAcquired = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task LockAcquired => _lockAcquired.Task;
+
+        public void Release() => _release.TrySetResult();
+
+        public override async ValueTask<DbDataReader> ReaderExecutedAsync(
+            DbCommand command,
+            CommandExecutedEventData eventData,
+            DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains(
+                    "FROM data_collection.collector_sessions",
+                    StringComparison.Ordinal)
+                && command.CommandText.Contains("FOR SHARE", StringComparison.Ordinal))
+            {
+                _lockAcquired.TrySetResult();
+                await _release.Task.WaitAsync(cancellationToken);
+            }
+
+            return result;
+        }
+    }
+
+    private sealed class CommandStartedInterceptor(string commandFragment)
+        : DbCommandInterceptor
+    {
+        private readonly TaskCompletionSource _started = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Started => _started.Task;
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains(commandFragment, StringComparison.Ordinal))
+                _started.TrySetResult();
+
+            return ValueTask.FromResult(result);
         }
     }
 }

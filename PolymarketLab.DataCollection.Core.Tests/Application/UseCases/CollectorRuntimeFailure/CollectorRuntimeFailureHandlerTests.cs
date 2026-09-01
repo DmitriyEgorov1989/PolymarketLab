@@ -1,6 +1,7 @@
 using CSharpFunctionalExtensions;
 using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
@@ -26,13 +27,12 @@ public sealed class CollectorRuntimeFailureHandlerTests
     [Theory]
     [InlineData(CollectorSessionStatus.Running)]
     [InlineData(CollectorSessionStatus.Stopping)]
-    public async Task HandleAsync_WithActiveSession_ShouldPersistFailedState(
+    public async Task HandleAsync_WithActiveSession_ShouldPersistInvalidatingState(
         CollectorSessionStatus status)
     {
         var session = CreateSession(status);
         var repository = new StubCollectorSessionRepository(session);
-        var progressCompletion = new StubProgressCompletion();
-        var handler = new CollectorRuntimeFailureHandler(repository, progressCompletion);
+        var handler = CreateHandler(repository);
         var failedAt = CreatedAt.AddMinutes(1);
 
         var result = await handler.HandleAsync(
@@ -43,12 +43,12 @@ public sealed class CollectorRuntimeFailureHandlerTests
         repository.UpdateCalls.Should().ContainSingle();
         var update = repository.UpdateCalls[0];
         update.ExpectedStatus.Should().Be(status);
-        update.Session.Status.Should().Be(CollectorSessionStatus.Failed);
-        update.Session.StoppedAt.Should().Be(failedAt);
+        update.Session.Status.Should().Be(CollectorSessionStatus.Invalidating);
+        update.Session.InvalidatingAt.Should().Be(failedAt);
+        update.Session.StoppedAt.Should().BeNull();
         update.Session.StopReason.Should().Be(CollectorStopReason.FatalWebSocketError);
         update.Session.FailureCode.Should().Be(RuntimeError.Code);
         update.Session.FailureMessage.Should().Be(RuntimeError.Message);
-        progressCompletion.CallCount.Should().Be(1);
     }
 
     [Fact]
@@ -61,9 +61,7 @@ public sealed class CollectorRuntimeFailureHandlerTests
         var repository = new StubCollectorSessionRepository(starting, running);
         repository.UpdateResults.Enqueue(CollectorSessionUpdateStatus.ConcurrencyConflict);
         repository.UpdateResults.Enqueue(CollectorSessionUpdateStatus.Updated);
-        var handler = new CollectorRuntimeFailureHandler(
-            repository,
-            new StubProgressCompletion());
+        var handler = CreateHandler(repository);
 
         var result = await handler.HandleAsync(
             new RuntimeFailureNotification(
@@ -89,9 +87,7 @@ public sealed class CollectorRuntimeFailureHandlerTests
     {
         var session = CreateSession(status);
         var repository = new StubCollectorSessionRepository(session);
-        var handler = new CollectorRuntimeFailureHandler(
-            repository,
-            new StubProgressCompletion());
+        var handler = CreateHandler(repository);
 
         var result = await handler.HandleAsync(
             new RuntimeFailureNotification(
@@ -143,6 +139,12 @@ public sealed class CollectorRuntimeFailureHandlerTests
 
         return session;
     }
+
+    private static CollectorRuntimeFailureHandler CreateHandler(
+        ICollectorSessionRepository repository) => new(
+            new CollectorSessionInvalidationCoordinator(
+                repository,
+                new StubRuntime()));
 
     private sealed class StubCollectorSessionRepository(
         params CollectorSessionAggregate[] sessions)
@@ -197,16 +199,18 @@ public sealed class CollectorRuntimeFailureHandlerTests
         CollectorSessionAggregate Session,
         CollectorSessionStatus ExpectedStatus);
 
-    private sealed class StubProgressCompletion : ICollectorSessionProgressCompletion
+    private sealed class StubRuntime : ICollectorRuntime
     {
-        public int CallCount { get; private set; }
-
-        public Task<UnitResult<Error>> CompleteAsync(
-            CollectorSessionId sessionId,
-            CancellationToken cancellationToken)
+        public void FenceSession(CollectorSessionId sessionId)
         {
-            CallCount++;
-            return Task.FromResult(UnitResult.Success<Error>());
         }
+
+        public Task<UnitResult<Error>> StartAsync(
+            CollectorRuntimeStartRequest request,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<UnitResult<Error>> StopAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

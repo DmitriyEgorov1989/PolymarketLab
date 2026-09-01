@@ -118,6 +118,14 @@ internal static class CollectorRuntimeErrors
             ErrorType.Failure);
     }
 
+    public static Error SessionInvalidating(CollectorSessionId sessionId)
+    {
+        return new Error(
+            "collector.runtime.session.invalidating",
+            $"Collector runtime cannot start invalidating session '{sessionId.Value}'.",
+            ErrorType.Failure);
+    }
+
     public static Error ReadinessPersistenceFailed(CollectorSessionId sessionId)
     {
         return new Error(

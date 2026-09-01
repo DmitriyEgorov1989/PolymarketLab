@@ -138,12 +138,47 @@ public sealed class CollectorSessionTests
     public void BeginInvalidation_WithScheduledSession_ShouldSetCleaningPhase()
     {
         var session = CreateSession();
+        var invalidatingAt = CreatedAt.AddSeconds(1);
 
-        var result = session.BeginInvalidation();
+        var result = session.BeginInvalidation(
+            invalidatingAt,
+            CollectorStopReason.Requested,
+            "collector.stop.requested",
+            "Collector stop was requested before successful completion.");
 
         result.IsSuccess.Should().BeTrue();
         session.Status.Should().Be(CollectorSessionStatus.Invalidating);
         session.Phase.Should().Be(CollectorSessionPhase.Cleaning);
+        session.InvalidatingAt.Should().Be(invalidatingAt);
+        session.StopReason.Should().Be(CollectorStopReason.Requested);
+        session.FailureCode.Should().Be("collector.stop.requested");
+        session.FailureMessage.Should().Be(
+            "Collector stop was requested before successful completion.");
+        session.StoppedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public void BeginInvalidation_WhenRepeated_ShouldPreserveFirstDiagnostic()
+    {
+        var session = CreateRunningSession();
+        var firstInvalidatingAt = CreatedAt.AddMinutes(2).AddSeconds(30);
+        session.BeginInvalidation(
+            firstInvalidatingAt,
+            CollectorStopReason.FatalWebSocketError,
+            "collector.runtime.receive.failed",
+            "WebSocket receive failed.");
+
+        var result = session.BeginInvalidation(
+            firstInvalidatingAt.AddSeconds(1),
+            CollectorStopReason.ApplicationShutdown,
+            "collector.shutdown.application",
+            "Application shutdown started.");
+
+        result.IsSuccess.Should().BeTrue();
+        session.InvalidatingAt.Should().Be(firstInvalidatingAt);
+        session.StopReason.Should().Be(CollectorStopReason.FatalWebSocketError);
+        session.FailureCode.Should().Be("collector.runtime.receive.failed");
+        session.FailureMessage.Should().Be("WebSocket receive failed.");
     }
 
     [Fact]

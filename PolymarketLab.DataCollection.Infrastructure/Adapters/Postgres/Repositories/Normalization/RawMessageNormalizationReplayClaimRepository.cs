@@ -14,13 +14,16 @@ internal sealed class RawMessageNormalizationReplayClaimRepository(
     private const string EligibilitySql =
         """
         FROM data_collection.raw_market_messages AS raw
+        INNER JOIN data_collection.collector_sessions AS session
+          ON session.id = raw.session_id
         INNER JOIN data_collection.raw_message_normalizations AS source
           ON source.raw_message_id = raw.id
          AND source.projection_version = @source_projection_version
         LEFT JOIN data_collection.raw_message_normalizations AS target
           ON target.raw_message_id = raw.id
          AND target.projection_version = @target_projection_version
-        WHERE raw.id <= @high_watermark_raw_message_id
+        WHERE session.invalidating_at IS NULL
+          AND raw.id <= @high_watermark_raw_message_id
           AND source.completed_at <= @source_completed_before
           AND source.status IN (
               @processed_status,
@@ -42,9 +45,18 @@ internal sealed class RawMessageNormalizationReplayClaimRepository(
 
     private const string ClaimSql =
         """
-        WITH candidates AS MATERIALIZED (
+        WITH writable_sessions AS MATERIALIZED (
+            SELECT session.id
+            FROM data_collection.collector_sessions AS session
+            WHERE session.invalidating_at IS NULL
+            ORDER BY session.id
+            FOR SHARE
+        ),
+        candidates AS MATERIALIZED (
             SELECT raw.id
             FROM data_collection.raw_market_messages AS raw
+            INNER JOIN writable_sessions AS session
+              ON session.id = raw.session_id
             INNER JOIN data_collection.raw_message_normalizations AS source
               ON source.raw_message_id = raw.id
              AND source.projection_version = @source_projection_version

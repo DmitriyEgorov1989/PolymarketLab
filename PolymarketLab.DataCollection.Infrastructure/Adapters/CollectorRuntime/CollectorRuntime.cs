@@ -17,12 +17,23 @@ internal sealed class CollectorRuntime(
         Lazy<CollectorRuntimeEntry>> _entries = new();
     private readonly ConcurrentDictionary<Task, byte> _completionObservers = new();
     private readonly ConcurrentDictionary<CollectorSessionId, AutonomousFailure> _autonomousFailures = new();
+    private readonly ConcurrentDictionary<CollectorSessionId, byte> _fencedSessions = new();
     private int _shuttingDown;
+
+    public void FenceSession(CollectorSessionId sessionId)
+    {
+        _fencedSessions.TryAdd(sessionId, 0);
+    }
 
     public async Task<UnitResult<Error>> StartAsync(
         CollectorRuntimeStartRequest request,
         CancellationToken cancellationToken)
     {
+        if (_fencedSessions.ContainsKey(request.SessionId))
+        {
+            return UnitResult.Failure(
+                CollectorRuntimeErrors.SessionInvalidating(request.SessionId));
+        }
         if (Volatile.Read(ref _shuttingDown) != 0)
         {
             return UnitResult.Failure(
@@ -53,6 +64,12 @@ internal sealed class CollectorRuntime(
                 await StopAsync(request.SessionId, CancellationToken.None);
                 return UnitResult.Failure(
                     CollectorRuntimeErrors.RuntimeStopping(request.SessionId));
+            }
+            if (_fencedSessions.ContainsKey(request.SessionId))
+            {
+                await StopAsync(request.SessionId, CancellationToken.None);
+                return UnitResult.Failure(
+                    CollectorRuntimeErrors.SessionInvalidating(request.SessionId));
             }
 
             var completion = entry.ObserveCompletion();

@@ -2,6 +2,7 @@ using CSharpFunctionalExtensions;
 using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.Errors;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
@@ -83,7 +84,7 @@ public sealed class StopCollectorHandlerTests
     }
 
     [Fact]
-    public async Task Handle_WithStoppingSession_ShouldStopRuntimeAndMarkStopped()
+    public async Task Handle_WithStoppingSession_ShouldStopRuntimeAndRemainInvalidating()
     {
         var fixture = new Fixture();
         var session = CreateRunningSession(fixture.SessionId);
@@ -94,7 +95,7 @@ public sealed class StopCollectorHandlerTests
         var result = await fixture.HandleAsync();
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Session.Status.Should().Be("Stopped");
+        result.Value.Session.Status.Should().Be("Invalidating");
         fixture.Runtime.StopCallCount.Should().Be(1);
         fixture.Repository.UpdateCalls.Should().ContainSingle();
         fixture.Repository.UpdateCalls[0].ExpectedStatus.Should().Be(CollectorSessionStatus.Stopping);
@@ -102,7 +103,7 @@ public sealed class StopCollectorHandlerTests
     }
 
     [Fact]
-    public async Task Handle_WithRunningSession_ShouldMarkStoppingStopRuntimeAndMarkStopped()
+    public async Task Handle_WithRunningSession_ShouldInvalidateAndStopRuntime()
     {
         var fixture = new Fixture();
         fixture.ProgressRepository.Progress = fixture.ProgressRepository.Progress with
@@ -119,16 +120,14 @@ public sealed class StopCollectorHandlerTests
         var result = await fixture.HandleAsync();
 
         result.IsSuccess.Should().BeTrue();
-        result.Value.Session.Status.Should().Be("Stopped");
+        result.Value.Session.Status.Should().Be("Invalidating");
         fixture.Runtime.StopCallCount.Should().Be(1);
         fixture.Runtime.StoppedSessionId.Should().Be(fixture.SessionId);
-        fixture.Repository.UpdateCalls.Should().HaveCount(2);
-        fixture.Repository.UpdateCalls[0].Status.Should().Be(CollectorSessionStatus.Stopping);
+        fixture.Repository.UpdateCalls.Should().ContainSingle();
+        fixture.Repository.UpdateCalls[0].Status.Should().Be(CollectorSessionStatus.Invalidating);
         fixture.Repository.UpdateCalls[0].ExpectedStatus.Should().Be(CollectorSessionStatus.Running);
-        fixture.Repository.UpdateCalls[1].Status.Should().Be(CollectorSessionStatus.Stopped);
-        fixture.Repository.UpdateCalls[1].ExpectedStatus.Should().Be(CollectorSessionStatus.Stopping);
-        fixture.Repository.UpdateCalls[1].StopReason.Should().Be(CollectorStopReason.Requested);
-        fixture.ProgressCompletion.CallCount.Should().Be(1);
+        fixture.Repository.UpdateCalls[0].StopReason.Should().Be(CollectorStopReason.Requested);
+        fixture.ProgressCompletion.CallCount.Should().Be(0);
         result.Value.Session.MessagesReceived.Should().Be(8);
         result.Value.Session.MessagesPersisted.Should().Be(8);
         result.Value.Session.LastMessageAt.Should().Be(Now.AddSeconds(-1));
@@ -136,7 +135,7 @@ public sealed class StopCollectorHandlerTests
     }
 
     [Fact]
-    public async Task Handle_WhenProgressCompletionFails_ShouldMarkFailedAndNotMarkStopped()
+    public async Task Handle_ShouldNotWaitForSuccessfulProgressCompletionAfterFence()
     {
         var progressError = new Error(
             "collector.progress.persistence_failed",
@@ -151,16 +150,14 @@ public sealed class StopCollectorHandlerTests
 
         var result = await fixture.HandleAsync();
 
-        result.IsFailure.Should().BeTrue();
-        result.Error.Single().Should().Be(progressError);
-        fixture.Repository.UpdateCalls.Should().HaveCount(2);
-        fixture.Repository.UpdateCalls[1].Status.Should().Be(CollectorSessionStatus.Failed);
-        fixture.Repository.UpdateCalls[1].StopReason.Should().Be(
-            CollectorStopReason.PersistenceFailure);
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Session.Status.Should().Be("Invalidating");
+        fixture.ProgressCompletion.CallCount.Should().Be(0);
+        fixture.Repository.UpdateCalls.Should().ContainSingle();
     }
 
     [Fact]
-    public async Task Handle_WhenRuntimeStopFails_ShouldKeepSessionStoppingAndReturnRuntimeError()
+    public async Task Handle_WhenRuntimeStopFails_ShouldKeepSessionInvalidatingAndReturnRuntimeError()
     {
         var runtimeError = new Error(
             "collector.runtime.stop.failed",
@@ -178,11 +175,9 @@ public sealed class StopCollectorHandlerTests
         result.IsFailure.Should().BeTrue();
         result.Error.Single().Should().Be(runtimeError);
         fixture.Runtime.StopCallCount.Should().Be(1);
-        fixture.Repository.UpdateCalls.Should().HaveCount(2);
-        fixture.Repository.UpdateCalls[0].Status.Should().Be(CollectorSessionStatus.Stopping);
-        fixture.Repository.UpdateCalls[1].Status.Should().Be(CollectorSessionStatus.Failed);
-        fixture.Repository.UpdateCalls[1].StopReason.Should().Be(
-            CollectorStopReason.FatalWebSocketError);
+        fixture.Repository.UpdateCalls.Should().ContainSingle();
+        fixture.Repository.UpdateCalls[0].Status.Should().Be(CollectorSessionStatus.Invalidating);
+        fixture.Repository.UpdateCalls[0].StopReason.Should().Be(CollectorStopReason.Requested);
     }
 
     [Fact]
@@ -198,15 +193,17 @@ public sealed class StopCollectorHandlerTests
             "Receive failed.");
         fixture.Repository.Sessions.Enqueue(session);
         fixture.Repository.Sessions.Enqueue(failed);
+        fixture.Repository.UpdateResults.Enqueue(
+            CollectorSessionUpdateStatus.ConcurrencyConflict);
 
         var result = await fixture.HandleAsync();
 
         result.IsSuccess.Should().BeTrue();
         result.Value.Session.Status.Should().Be("Failed");
         result.Value.Session.FailureCode.Should().Be("collector.runtime.receive.failed");
-        fixture.Runtime.StopCallCount.Should().Be(1);
+        fixture.Runtime.StopCallCount.Should().Be(0);
         fixture.Repository.UpdateCalls.Should().ContainSingle();
-        fixture.Repository.UpdateCalls[0].Status.Should().Be(CollectorSessionStatus.Stopping);
+        fixture.Repository.UpdateCalls[0].Status.Should().Be(CollectorSessionStatus.Invalidating);
     }
 
     [Fact]
@@ -219,8 +216,6 @@ public sealed class StopCollectorHandlerTests
         var fixture = new Fixture();
         var session = CreateRunningSession(fixture.SessionId);
         fixture.Repository.Sessions.Enqueue(session);
-        fixture.Repository.Sessions.Enqueue(CloneRunningSession(session, CollectorSessionStatus.Stopping));
-        fixture.Repository.UpdateResults.Enqueue(CollectorSessionUpdateStatus.Updated);
         fixture.Repository.UpdateResults.Enqueue(
             Result.Failure<CollectorSessionUpdateStatus, Error>(persistenceError));
 
@@ -228,8 +223,8 @@ public sealed class StopCollectorHandlerTests
 
         result.IsFailure.Should().BeTrue();
         result.Error.Single().Should().Be(persistenceError);
-        fixture.Runtime.StopCallCount.Should().Be(1);
-        fixture.Repository.UpdateCalls.Should().HaveCount(2);
+        fixture.Runtime.StopCallCount.Should().Be(0);
+        fixture.Repository.UpdateCalls.Should().ContainSingle();
     }
 
     [Fact]
@@ -248,10 +243,9 @@ public sealed class StopCollectorHandlerTests
         var result = await fixture.HandleAsync();
 
         result.IsSuccess.Should().BeTrue();
-        fixture.Repository.UpdateCalls.Should().HaveCount(3);
+        fixture.Repository.UpdateCalls.Should().HaveCount(2);
         fixture.Repository.UpdateCalls[0].ExpectedStatus.Should().Be(CollectorSessionStatus.Running);
         fixture.Repository.UpdateCalls[1].ExpectedStatus.Should().Be(CollectorSessionStatus.Running);
-        fixture.Repository.UpdateCalls[2].ExpectedStatus.Should().Be(CollectorSessionStatus.Stopping);
     }
 
     private static CollectorSessionAggregate CreateRunningSession(
@@ -293,9 +287,8 @@ public sealed class StopCollectorHandlerTests
             Guid? sessionId = null)
         {
             var handler = new StopCollectorHandler(
-                Repository,
+                new CollectorSessionInvalidationCoordinator(Repository, Runtime),
                 ProgressRepository,
-                ProgressCompletion,
                 Runtime,
                 new FixedTimeProvider(Now));
 
@@ -399,6 +392,10 @@ public sealed class StopCollectorHandlerTests
         public UnitResult<Error> StopResult { get; set; } = UnitResult.Success<Error>();
         public int StopCallCount { get; private set; }
         public CollectorSessionId? StoppedSessionId { get; private set; }
+
+        public void FenceSession(CollectorSessionId sessionId)
+        {
+        }
 
         public Task<UnitResult<Error>> StopAsync(
             CollectorSessionId sessionId,

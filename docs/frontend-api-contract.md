@@ -345,12 +345,12 @@ session; mismatch инициирует `Invalidating/Cleaning`.
   "session": {
     "sessionId": "22222222-2222-2222-2222-222222222222",
     "marketId": "11111111-1111-1111-1111-111111111111",
-    "status": "Stopped",
+    "status": "Invalidating",
     "createdAt": "2026-08-06T12:00:00Z",
     "startedAt": "2026-08-06T12:00:01Z",
-    "stoppedAt": "2026-08-06T12:30:00Z",
-    "failureCode": null,
-    "failureMessage": null,
+    "stoppedAt": null,
+    "failureCode": "collector.stop.requested_before_success",
+    "failureMessage": "Collector session was stopped before successful completion.",
     "messagesReceived": 120,
     "messagesPersisted": 120,
     "lastMessageAt": "2026-08-06T12:29:59Z",
@@ -359,6 +359,7 @@ session; mismatch инициирует `Invalidating/Cleaning`.
 }
 ```
 
-Повторный Stop является идемпотентным и возвращает фактическое терминальное
-состояние. Для ранее завершившейся с ошибкой session сохраняется `Failed` с
-`failureCode` и `failureMessage`; статус вручную не заменяется на `Stopped`.
+Первый Stop до успешного завершения атомарно устанавливает durable write fence и
+возвращает `Invalidating` с первой сохранённой причиной. Повторный Stop является
+идемпотентным и возвращает фактическое состояние. Для ранее завершившейся session
+сохраняются её status, `failureCode` и `failureMessage`.
