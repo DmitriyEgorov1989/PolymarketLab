@@ -5,6 +5,7 @@ using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using PolymarketLab.DataCollection.Core.Application.DependencyInjection;
 using PolymarketLab.DataCollection.Core.Application.Normalization;
+using PolymarketLab.DataCollection.Core.Application.Resolution;
 using PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection;
 using PolymarketLab.DataCollection.Core.Application.OrderBooks.Resynchronization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
@@ -16,6 +17,7 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShu
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionById;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionByMarket;
+using PolymarketLab.DataCollection.Core.Application.UseCases.ResolutionConsensus;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.SharedKernel.Mediation;
 using static PolymarketLab.SharedKernel.Errors.Error;
@@ -89,6 +91,13 @@ public sealed class DataCollectionApplicationDependencyInjectionTests
             && descriptor.Lifetime == ServiceLifetime.Scoped);
         services.Should().ContainSingle(descriptor =>
             descriptor.ServiceType == typeof(CollectorBoundaryCheckRegistry)
+            && descriptor.Lifetime == ServiceLifetime.Singleton);
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(IResolutionConsensusCoordinator)
+            && descriptor.ImplementationType == typeof(ResolutionConsensusCoordinator)
+            && descriptor.Lifetime == ServiceLifetime.Scoped);
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(WebSocketResolutionValidator)
             && descriptor.Lifetime == ServiceLifetime.Singleton);
         services.Should().ContainSingle(descriptor =>
             descriptor.ServiceType == typeof(INormalizationDispatcher)

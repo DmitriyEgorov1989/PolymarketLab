@@ -1,4 +1,5 @@
 using CSharpFunctionalExtensions;
+using PolymarketLab.DataCollection.Core.Domain.Models.Resolution;
 using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.Errors;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.SharedKernel.DomainModels;
@@ -92,6 +93,21 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
 
     /// <summary>Момент доказанной готовности подписки; <see langword="null" />, пока readiness не доказана.</summary>
     public DateTimeOffset? SubscriptionReadyAt { get; private set; }
+
+    /// <summary>Момент получения подтверждающего WebSocket signal; <see langword="null" />, пока signal не принят.</summary>
+    public DateTimeOffset? ResolutionSignaledAt { get; private set; }
+
+    /// <summary>Момент согласования всех resolution sources; <see langword="null" />, пока consensus не достигнут.</summary>
+    public DateTimeOffset? ResolutionConfirmedAt { get; private set; }
+
+    /// <summary>Выигравший token id; <see langword="null" />, пока consensus не достигнут.</summary>
+    public string? WinningTokenId { get; private set; }
+
+    /// <summary>Выигравший outcome; <see langword="null" />, пока consensus не достигнут.</summary>
+    public string? WinningOutcome { get; private set; }
+
+    /// <summary>Connection epoch WebSocket signal; <see langword="null" />, пока consensus не достигнут.</summary>
+    public long? ResolutionConnectionEpoch { get; private set; }
 
     /// <summary>Дата завершения; <see langword="null" />, пока session нетерминальна.</summary>
     public DateTimeOffset? StoppedAt { get; private set; }
@@ -244,6 +260,46 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
             CollectorSessionStatus.Running,
             CollectorSessionPhase.CollectingWindow,
             CollectorSessionPhase.AwaitingResolution);
+
+    /// <summary>Фиксирует согласованный всеми источниками terminal winner.</summary>
+    public UnitResult<Error> ConfirmResolution(
+        DateTimeOffset signaledAt,
+        DateTimeOffset confirmedAt,
+        ResolutionWinner winner,
+        long connectionEpoch)
+    {
+        ArgumentNullException.ThrowIfNull(winner);
+
+        if (Status != CollectorSessionStatus.Running
+            || Phase != CollectorSessionPhase.AwaitingResolution)
+        {
+            return CollectorSessionErrors.InvalidPhaseTransition(
+                Status,
+                Phase,
+                CollectorSessionPhase.AwaitingResolution);
+        }
+        if (EventEndsAt is null
+            || signaledAt < EventEndsAt.Value
+            || confirmedAt < signaledAt)
+        {
+            return UnitResult.Failure(CollectorSessionErrors.InvalidResolutionTimestamps);
+        }
+        if (connectionEpoch <= 0)
+            return UnitResult.Failure(CollectorSessionErrors.InvalidResolutionConnectionEpoch);
+
+        var snapshotWinner = Tokens.SingleOrDefault(token =>
+            string.Equals(token.TokenId.Value, winner.TokenId, StringComparison.Ordinal)
+            && string.Equals(token.Outcome, winner.Outcome, StringComparison.Ordinal));
+        if (snapshotWinner is null)
+            return UnitResult.Failure(CollectorSessionErrors.InvalidResolutionWinner);
+
+        ResolutionSignaledAt = signaledAt;
+        ResolutionConfirmedAt = confirmedAt;
+        WinningTokenId = snapshotWinner.TokenId.Value;
+        WinningOutcome = snapshotWinner.Outcome;
+        ResolutionConnectionEpoch = connectionEpoch;
+        return UnitResult.Success<Error>();
+    }
 
     /// <summary>Начинает controlled raw drain.</summary>
     public UnitResult<Error> MarkStopping()

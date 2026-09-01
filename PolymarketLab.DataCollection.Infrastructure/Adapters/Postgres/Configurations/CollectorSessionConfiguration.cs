@@ -70,6 +70,23 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Configur
             builder.Property(x => x.SubscriptionReadyAt)
                 .HasColumnName("subscription_ready_at");
 
+            builder.Property(x => x.ResolutionSignaledAt)
+                .HasColumnName("resolution_signaled_at");
+
+            builder.Property(x => x.ResolutionConfirmedAt)
+                .HasColumnName("resolution_confirmed_at");
+
+            builder.Property(x => x.WinningTokenId)
+                .HasColumnName("winning_token_id")
+                .HasMaxLength(500);
+
+            builder.Property(x => x.WinningOutcome)
+                .HasColumnName("winning_outcome")
+                .HasMaxLength(500);
+
+            builder.Property(x => x.ResolutionConnectionEpoch)
+                .HasColumnName("resolution_connection_epoch");
+
             builder.Property(x => x.StoppedAt)
                 .HasColumnName("stopped_at");
 

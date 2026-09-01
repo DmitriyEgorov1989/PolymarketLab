@@ -40,6 +40,11 @@
         /// <summary>
         /// Работа сессии прервана из-за завершения предыдущего процесса приложения.
         /// </summary>
-        ProcessTerminated = 8
+        ProcessTerminated = 8,
+
+        /// <summary>
+        /// Сессия аннулирована из-за конфликта или timeout подтверждения resolution.
+        /// </summary>
+        ResolutionFailure = 9
     }
 }

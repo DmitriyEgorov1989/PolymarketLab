@@ -356,7 +356,7 @@ public sealed class NormalizationPostgreSqlIntegrationTests(PostgreSqlFixture fi
             FROM information_schema.columns
             WHERE table_schema = 'data_collection' AND data_type = 'numeric'
             """);
-        numericColumnCount.Should().Be(22);
+        numericColumnCount.Should().Be(23);
         var invalidNumericProfiles = await ExecuteScalarAsync<int>(
             database.ConnectionString,
             """

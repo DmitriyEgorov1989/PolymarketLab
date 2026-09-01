@@ -15,6 +15,7 @@ using PolymarketLab.DataCollection.Infrastructure.Adapters.Normalization;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.Normalization;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.Resolution;
 using PolymarketLab.DataCollection.Infrastructure.DependencyInjection;
 using PolymarketLab.Markets.Contracts;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
@@ -53,6 +54,8 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
             NullLogger<CollectorSchedulerBackgroundService>.Instance);
         services.AddSingleton<ILogger<CollectorSessionProgressCompletion>>(
             NullLogger<CollectorSessionProgressCompletion>.Instance);
+        services.AddSingleton<ILogger<ResolutionConsensusBackgroundService>>(
+            NullLogger<ResolutionConsensusBackgroundService>.Instance);
         services.AddSingleton<ILogger<NormalizationBackgroundService>>(
             NullLogger<NormalizationBackgroundService>.Instance);
         services.AddSingleton<ILogger<NormalizationMetricsBackgroundService>>(
@@ -76,6 +79,8 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
         AssertSingleton<IRawMarketMessageSink>(firstScope, secondScope);
         AssertScoped<IRawMarketMessageWriter>(firstScope, secondScope);
         AssertScoped<ICollectorSessionProgressRepository>(firstScope, secondScope);
+        AssertScoped<IResolutionObservationRepository>(firstScope, secondScope);
+        AssertScoped<IWebSocketResolutionCandidateSource>(firstScope, secondScope);
         AssertScoped<IRawMessageNormalizationClaimRepository>(firstScope, secondScope);
         AssertScoped<IRawMessageNormalizationReplayClaimRepository>(firstScope, secondScope);
         AssertScoped<INormalizedMessageWriter>(firstScope, secondScope);
@@ -112,6 +117,7 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
                 typeof(CollectorRuntimeShutdownService),
                 typeof(CollectorSessionStartupReconciliationService),
                 typeof(CollectorSchedulerBackgroundService),
+                typeof(ResolutionConsensusBackgroundService),
                 typeof(NormalizationBackgroundService),
                 typeof(NormalizationMetricsBackgroundService));
     }

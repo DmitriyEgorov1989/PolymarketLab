@@ -1,4 +1,6 @@
 using FluentAssertions;
+using PolymarketLab.DataCollection.Core.Application.Resolution;
+using PolymarketLab.DataCollection.Core.Domain.Models.Resolution;
 using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
@@ -120,6 +122,48 @@ public sealed class CollectorSessionTests
             .IsSuccess.Should().BeTrue();
         session.Status.Should().Be(CollectorSessionStatus.Stopped);
         session.Phase.Should().BeNull();
+    }
+
+    [Fact]
+    public void ConfirmResolution_WithAwaitingSession_ShouldPersistWinnerAndTimestamps()
+    {
+        var session = CreateRunningSession();
+        session.MarkCollectingWindow();
+        session.MarkAwaitingResolution();
+        var signaledAt = EventEndsAt.AddSeconds(1);
+        var confirmedAt = signaledAt.AddSeconds(2);
+
+        var result = session.ConfirmResolution(
+            signaledAt,
+            confirmedAt,
+            new ResolutionWinner("1001", "Yes"),
+            connectionEpoch: 3);
+
+        result.IsSuccess.Should().BeTrue();
+        session.ResolutionSignaledAt.Should().Be(signaledAt);
+        session.ResolutionConfirmedAt.Should().Be(confirmedAt);
+        session.WinningTokenId.Should().Be("1001");
+        session.WinningOutcome.Should().Be("Yes");
+        session.ResolutionConnectionEpoch.Should().Be(3);
+        session.Status.Should().Be(CollectorSessionStatus.Running);
+        session.Phase.Should().Be(CollectorSessionPhase.AwaitingResolution);
+    }
+
+    [Fact]
+    public void ConfirmResolution_WithWinnerOutsideSnapshot_ShouldReturnError()
+    {
+        var session = CreateRunningSession();
+        session.MarkCollectingWindow();
+        session.MarkAwaitingResolution();
+
+        var result = session.ConfirmResolution(
+            EventEndsAt,
+            EventEndsAt.AddSeconds(1),
+            new ResolutionWinner("9999", "Unknown"),
+            connectionEpoch: 3);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be("collector.session.resolution_winner.invalid");
     }
 
     [Fact]

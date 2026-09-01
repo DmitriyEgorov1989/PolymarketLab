@@ -18,6 +18,8 @@ using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.Normalization;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.RawMarketMessage;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.Resolution;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories;
 
 namespace PolymarketLab.DataCollection.Infrastructure.DependencyInjection;
 
@@ -146,6 +148,10 @@ public static class DataCollectionInfrastructureDependencyInjection
         });
 
         services.AddScoped<ICollectorSessionRepository, CollectorSessionRepository>();
+        services.AddScoped<IResolutionObservationRepository, ResolutionObservationRepository>();
+        services.AddScoped<
+            IWebSocketResolutionCandidateSource,
+            WebSocketResolutionCandidateSource>();
         services.AddSingleton<IProjectionVersionProvider, ProjectionVersionProvider>();
         services.AddScoped<
             ICollectorSessionProgressRepository,
@@ -232,6 +238,7 @@ public static class DataCollectionInfrastructureDependencyInjection
         services.AddHostedService<CollectorRuntimeShutdownService>();
         services.AddHostedService<CollectorSessionStartupReconciliationService>();
         services.AddHostedService<CollectorSchedulerBackgroundService>();
+        services.AddHostedService<ResolutionConsensusBackgroundService>();
         services.AddHostedService<NormalizationBackgroundService>();
         services.AddHostedService<NormalizationMetricsBackgroundService>();
 

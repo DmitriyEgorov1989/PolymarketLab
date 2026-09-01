@@ -71,6 +71,24 @@ internal static class CollectorSessionErrors
         ErrorType.ValueIsInvalid,
         "invalidatingAt");
 
+    public static Error InvalidResolutionTimestamps => new(
+        "collector.session.resolution_timestamps.invalid",
+        "Resolution signal must not precede the event end and confirmation must not precede the signal.",
+        ErrorType.ValueIsInvalid,
+        "resolutionConfirmedAt");
+
+    public static Error InvalidResolutionConnectionEpoch => new(
+        "collector.session.resolution_connection_epoch.invalid",
+        "Resolution connection epoch must be positive.",
+        ErrorType.ValueIsInvalid,
+        "resolutionConnectionEpoch");
+
+    public static Error InvalidResolutionWinner => new(
+        "collector.session.resolution_winner.invalid",
+        "Resolution winner must match one token/outcome pair in the collector session snapshot.",
+        ErrorType.Conflict,
+        "winningTokenId");
+
     public static Error NotActive => new(
         "collector.session.not_active",
         "Collector session is not active.",

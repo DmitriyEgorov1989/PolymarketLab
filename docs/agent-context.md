@@ -36,6 +36,7 @@
 - Ручной Stop, ошибка runtime, штатная остановка host и незавершённые сессии предыдущего процесса проходят через общий coordinator в `Invalidating/Cleaning`. `InvalidatingAt` является долговечным write fence и сохраняется при последующем переходе в `Failed`; такие сессии не возобновляются.
 - Переходы `CollectorSession` сохраняются compare-and-set по ожидаемому `Status`; `status` является EF concurrency token. При конфликте перечитай состояние и разреши переход, не выполняй unconditional update.
 - Автономная ошибка collector переводит сохранённую активную session в `Invalidating/Cleaning`; ошибка сохранения этого перехода останавливает приложение.
+- После `EventEndsAt` отдельный strict observer сканирует уже сохранённые raw `market_resolved`, проверяет current connection epoch и immutable session snapshot, а Gamma/CLOB polling выполняется без overlap каждые 2 секунды до общего срока `EventEndsAt + 5m`. Consensus требует одного winner от всех трёх sources; безопасные observations и raw provenance сохраняются отдельно от permissive archive normalizer.
 - Startup reconciliation рассчитан на один экземпляр приложения. Multi-instance ownership, reconnect и automatic resume не реализованы.
 - До изменения runtime, ingestion, ownership буферов или hosted-service ordering прочитай `PolymarketLab.DataCollection.Infrastructure/Adapters/CollectorRuntime/README.md`.
 - До изменения normalizer прочитай `docs/normalizer-input-contract.md` и root `README.md`. Raw payload не логируй и не включай в agent context без необходимости.

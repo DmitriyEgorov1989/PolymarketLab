@@ -37,6 +37,12 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres
             Set<MarketResolutionEntity>();
         internal DbSet<MarketResolutionAssetEntity> MarketResolutionAssets =>
             Set<MarketResolutionAssetEntity>();
+        internal DbSet<ResolutionStateEntity> ResolutionStates =>
+            Set<ResolutionStateEntity>();
+        internal DbSet<ResolutionObservationEntity> ResolutionObservations =>
+            Set<ResolutionObservationEntity>();
+        internal DbSet<ResolutionObservationOutcomeEntity> ResolutionObservationOutcomes =>
+            Set<ResolutionObservationOutcomeEntity>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
