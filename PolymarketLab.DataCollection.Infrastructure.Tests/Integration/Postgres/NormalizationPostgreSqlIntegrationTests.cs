@@ -24,10 +24,12 @@ public sealed class NormalizationPostgreSqlIntegrationTests(PostgreSqlFixture fi
         var migrator = context.GetService<IMigrator>();
 
         await migrator.MigrateAsync(BaselineMigration);
-        var seed = await SeedRawMessageAsync(database.ConnectionString);
+        var seed = await SeedRawMessageAsync(
+            database.ConnectionString,
+            includeConnectionEpoch: false);
         var expectedPayload = seed.Payload;
 
-        await migrator.MigrateAsync();
+        await migrator.MigrateAsync(NormalizationMigration);
 
         var migrations = await QueryStringsAsync(
             database.ConnectionString,
@@ -53,7 +55,7 @@ public sealed class NormalizationPostgreSqlIntegrationTests(PostgreSqlFixture fi
             """);
         payloadType.Should().Be("bytea");
 
-        await migrator.MigrateAsync();
+        await migrator.MigrateAsync(NormalizationMigration);
         (await CountNormalizationTablesAsync(database.ConnectionString)).Should().Be(12);
     }
 
@@ -506,7 +508,9 @@ public sealed class NormalizationPostgreSqlIntegrationTests(PostgreSqlFixture fi
         return new DataCollectionDbContext(options);
     }
 
-    private static async Task<RawSeed> SeedRawMessageAsync(string connectionString)
+    private static async Task<RawSeed> SeedRawMessageAsync(
+        string connectionString,
+        bool includeConnectionEpoch = true)
     {
         var sessionId = Guid.NewGuid();
         var marketId = Guid.NewGuid();
@@ -525,12 +529,19 @@ public sealed class NormalizationPostgreSqlIntegrationTests(PostgreSqlFixture fi
             new NpgsqlParameter("created_at", receivedAt.AddMinutes(-1)));
         var rawMessageId = await ExecuteScalarAsync<long>(
             connectionString,
-            """
-            INSERT INTO data_collection.raw_market_messages
-                (session_id, received_at, payload)
-            VALUES (@session_id, @received_at, @payload)
-            RETURNING id
-            """,
+            includeConnectionEpoch
+                ? """
+                  INSERT INTO data_collection.raw_market_messages
+                      (session_id, connection_epoch, received_at, payload)
+                  VALUES (@session_id, 1, @received_at, @payload)
+                  RETURNING id
+                  """
+                : """
+                  INSERT INTO data_collection.raw_market_messages
+                      (session_id, received_at, payload)
+                  VALUES (@session_id, @received_at, @payload)
+                  RETURNING id
+                  """,
             new NpgsqlParameter("session_id", sessionId),
             new NpgsqlParameter("received_at", receivedAt),
             new NpgsqlParameter("payload", payload));

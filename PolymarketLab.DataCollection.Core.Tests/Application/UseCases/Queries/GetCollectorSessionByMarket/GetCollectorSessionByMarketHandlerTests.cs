@@ -28,7 +28,10 @@ public sealed class GetCollectorSessionByMarketHandlerTests
             repository,
             new StubProgressRepository(new CollectorSessionProgress(
                 session.Id,
+                1,
                 5,
+                4,
+                4,
                 4,
                 CreatedAt.AddSeconds(10),
                 1)));

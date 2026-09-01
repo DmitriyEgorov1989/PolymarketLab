@@ -80,6 +80,9 @@ public sealed class DataCollectionDbContextModelTests
         receivedAt.Should().NotBeNull();
         receivedAt!.GetColumnType().Should().Be("timestamp with time zone");
 
+        message.FindProperty(nameof(RawMarketMessageRecord.ConnectionEpoch))!
+            .GetColumnType().Should().Be("bigint");
+
         var payload = message.FindProperty(nameof(RawMarketMessageRecord.Payload));
         payload.Should().NotBeNull();
         payload!.GetColumnType().Should().Be("bytea");
@@ -116,7 +119,11 @@ public sealed class DataCollectionDbContextModelTests
             nameof(CollectorSessionProgressRecord.SessionId));
         progress.FindProperty(nameof(CollectorSessionProgressRecord.MessagesReceived))!
             .GetColumnType().Should().Be("bigint");
+        progress.FindProperty(nameof(CollectorSessionProgressRecord.MessagesEnqueued))!
+            .GetColumnType().Should().Be("bigint");
         progress.FindProperty(nameof(CollectorSessionProgressRecord.MessagesPersisted))!
+            .GetColumnType().Should().Be("bigint");
+        progress.FindProperty(nameof(CollectorSessionProgressRecord.CurrentConnectionEpoch))!
             .GetColumnType().Should().Be("bigint");
         progress.FindProperty(nameof(CollectorSessionProgressRecord.LastMessageAt))!
             .GetColumnType().Should().Be("timestamp with time zone");

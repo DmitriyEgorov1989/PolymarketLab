@@ -34,6 +34,7 @@ public sealed class RawMarketMessageChannelTests
         var payload = BitConverter.GetBytes(1);
         var message = new RawMarketMessage(
             CollectorSessionId.Create(Guid.NewGuid()).Value,
+            1,
             DateTimeOffset.UtcNow,
             payload);
 
@@ -136,6 +137,7 @@ public sealed class RawMarketMessageChannelTests
     {
         return new RawMarketMessage(
             CollectorSessionId.Create(Guid.NewGuid()).Value,
+            1,
             DateTimeOffset.UtcNow,
             BitConverter.GetBytes(value));
     }

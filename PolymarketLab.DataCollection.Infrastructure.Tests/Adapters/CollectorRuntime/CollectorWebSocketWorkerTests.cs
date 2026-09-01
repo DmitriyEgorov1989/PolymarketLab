@@ -85,10 +85,11 @@ public sealed class CollectorWebSocketWorkerTests
 
         startResult.IsSuccess.Should().BeTrue();
         message.SessionId.Should().Be(request.SessionId);
+        message.ConnectionEpoch.Should().Be(1);
         message.ReceivedAt.Should().Be(receivedAt);
         message.Payload.Should().Equal("{\"price\":0.5}"u8.ToArray());
         telemetry.GetSnapshot(request.SessionId).Should().Be(
-            new RawMarketMessageCounters(1, 1, 0, receivedAt));
+            new RawMarketMessageCounters(1, 1, 0, receivedAt, 0, 1));
     }
 
     [Fact]
@@ -109,6 +110,44 @@ public sealed class CollectorWebSocketWorkerTests
 
         message.Payload.Should().Equal("hello"u8.ToArray());
         connection.ReceiveCallCount.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task ReceiveAsync_AfterReconnect_ShouldUseNextConnectionEpoch()
+    {
+        var firstConnection = new StubWebSocketConnection();
+        firstConnection.AddFrame("first"u8);
+        firstConnection.AddFrame([], WebSocketMessageType.Close);
+        var secondConnection = new StubWebSocketConnection();
+        secondConnection.AddFrame("second"u8);
+        var sink = new StubRawMarketMessageSink();
+        var telemetry = new RawMarketMessageTelemetry();
+        var request = CreateRequest();
+        var worker = CreateWorker(
+            request,
+            firstConnection,
+            options: new CollectorWebSocketOptions
+            {
+                ReconnectDelay = TimeSpan.FromMilliseconds(1)
+            },
+            messageSink: sink,
+            telemetry: telemetry,
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:40Z")),
+            webSocketFactory: new StubWebSocketFactory(
+                firstConnection,
+                secondConnection));
+
+        await worker.StartAsync(CancellationToken.None);
+        var first = await sink.WaitForMessageAsync();
+        var second = await sink.WaitForMessageAsync();
+        await worker.StopAsync(CancellationToken.None);
+
+        first.ConnectionEpoch.Should().Be(1);
+        second.ConnectionEpoch.Should().Be(2);
+        var checkpoint = telemetry.GetCheckpoint(request.SessionId);
+        checkpoint.CurrentConnectionEpoch.Should().Be(2);
+        checkpoint.ReconnectCount.Should().Be(1);
     }
 
     [Fact]
@@ -217,23 +256,28 @@ public sealed class CollectorWebSocketWorkerTests
         releaseEnqueue.SetResult();
         await sink.WaitForMessageAsync();
         await sink.WaitForMessageAsync();
+        await WaitUntilAsync(() => connection.ReceiveCallCount == 3);
         connection.ReceiveCallCount.Should().Be(3);
         await worker.StopAsync(CancellationToken.None);
     }
 
     [Fact]
-    public async Task ReceiveAsync_WithInitialBooksAndPong_ShouldMarkRunningAndNotEnqueuePong()
+    public async Task ReceiveAsync_WithInitialBooksAndHeartbeatMessages_ShouldNotEnqueueHeartbeatMessages()
     {
         var connection = new StubWebSocketConnection();
         connection.AddFrame(BookMessage("yes-token"));
         connection.AddFrame(BookMessage("no-token"));
+        connection.AddFrame("PING"u8);
         connection.AddFrame("PONG"u8);
         var sink = new StubRawMarketMessageSink();
+        var telemetry = new RawMarketMessageTelemetry();
         var dispatcher = new StubReadinessDispatcher();
+        var request = CreateRequest();
         var worker = CreateWorker(
-            CreateRequest(),
+            request,
             connection,
             messageSink: sink,
+            telemetry: telemetry,
             timeProvider: new StubTimeProvider(DateTimeOffset.Parse("2026-08-28T11:59:40Z")),
             readinessDispatcher: dispatcher);
 
@@ -247,6 +291,8 @@ public sealed class CollectorWebSocketWorkerTests
         dispatcher.AwaitingHeartbeatCount.Should().Be(1);
         dispatcher.RunningCount.Should().Be(1);
         sink.Count.Should().Be(2);
+        telemetry.GetSnapshot(request.SessionId).ReceivedComplete.Should().Be(2);
+        telemetry.GetSnapshot(request.SessionId).Enqueued.Should().Be(2);
         connection.SentMessages
             .Select(Encoding.UTF8.GetString)
             .Should()
@@ -617,11 +663,12 @@ public sealed class CollectorWebSocketWorkerTests
         StubRawMarketMessageSink? messageSink = null,
         RawMarketMessageTelemetry? telemetry = null,
         TimeProvider? timeProvider = null,
-        ICollectorRuntimeReadinessDispatcher? readinessDispatcher = null)
+        ICollectorRuntimeReadinessDispatcher? readinessDispatcher = null,
+        ICollectorWebSocketFactory? webSocketFactory = null)
     {
         return new CollectorWebSocketWorker(
             request,
-            new StubWebSocketFactory(connection),
+            webSocketFactory ?? new StubWebSocketFactory(connection),
             options ?? CreateOptions(),
             messageSink ?? new StubRawMarketMessageSink(),
             telemetry ?? new RawMarketMessageTelemetry(),
@@ -629,6 +676,13 @@ public sealed class CollectorWebSocketWorkerTests
             timeProvider ?? TimeProvider.System,
             lifetime ?? new StubHostApplicationLifetime(),
             NullLogger<CollectorWebSocketWorker>.Instance);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (!condition())
+            await Task.Delay(1, timeout.Token);
     }
 
     private static CollectorWebSocketOptions CreateOptions(
@@ -674,15 +728,16 @@ public sealed class CollectorWebSocketWorkerTests
         Encoding.UTF8.GetBytes(
             $"{{\"event_type\":\"book\",\"market\":\"0xcondition\",\"asset_id\":\"{tokenId}\",\"bids\":[],\"asks\":[]}}");
 
-    private sealed class StubWebSocketFactory(StubWebSocketConnection connection)
+    private sealed class StubWebSocketFactory(params StubWebSocketConnection[] connections)
         : ICollectorWebSocketFactory
     {
+        private readonly Queue<StubWebSocketConnection> _connections = new(connections);
         public int CreateCallCount { get; private set; }
 
         public ICollectorWebSocketConnection Create()
         {
             CreateCallCount++;
-            return connection;
+            return _connections.Dequeue();
         }
     }
 

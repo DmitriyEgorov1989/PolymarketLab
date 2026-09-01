@@ -33,7 +33,10 @@ public sealed class GetCollectorSessionByIdHandlerTests
             new StubRepository(session),
             new StubProgressRepository(new CollectorSessionProgress(
                 session.Id,
+                2,
                 12,
+                11,
+                10,
                 10,
                 lastMessageAt,
                 2)));

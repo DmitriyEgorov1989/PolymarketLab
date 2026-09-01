@@ -15,29 +15,29 @@ internal sealed class CollectorSessionProgressRepository(DataCollectionDbContext
     {
         var progress = await dbContext.CollectorSessionProgress
             .AsNoTracking()
+            .Where(current => current.SessionId == sessionId)
+            .Select(current => new
+            {
+                Progress = current,
+                RawMessageCount = dbContext.RawMarketMessages.LongCount(
+                    message => message.SessionId == sessionId)
+            })
             .SingleOrDefaultAsync(
-                current => current.SessionId == sessionId,
                 cancellationToken);
 
-        return progress?.ToProgress() ?? CollectorSessionProgress.Empty(sessionId);
+        return progress?.Progress.ToProgress(progress.RawMessageCount)
+            ?? CollectorSessionProgress.Empty(sessionId);
     }
 
     public async Task CheckpointAsync(
         CollectorSessionProgressCheckpoint checkpoint,
         CancellationToken cancellationToken)
     {
-        var progress = await dbContext.CollectorSessionProgress
-            .SingleOrDefaultAsync(
-                current => current.SessionId == checkpoint.SessionId,
-                cancellationToken);
-
-        if (progress is null)
-        {
-            progress = new CollectorSessionProgressRecord(checkpoint.SessionId);
-            dbContext.CollectorSessionProgress.Add(progress);
-        }
-
-        progress.Checkpoint(checkpoint);
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await CollectorSessionProgressUpsert.ExecuteAsync(
+            dbContext,
+            checkpoint,
+            0,
+            null,
+            cancellationToken);
     }
 }

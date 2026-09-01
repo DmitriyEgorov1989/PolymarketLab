@@ -311,6 +311,9 @@ public sealed class StopCollectorHandlerTests
             CollectorSessionId.Create(Guid.NewGuid()).Value,
             0,
             0,
+            0,
+            0,
+            0,
             null,
             0);
 

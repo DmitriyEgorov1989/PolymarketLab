@@ -315,6 +315,7 @@ public sealed class RawMarketMessagePersistenceWorkerTests
     {
         return new RawMarketMessage(
             sessionId ?? CollectorSessionId.Create(Guid.NewGuid()).Value,
+            1,
             DateTimeOffset.UtcNow,
             BitConverter.GetBytes(value));
     }

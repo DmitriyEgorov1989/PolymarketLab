@@ -25,6 +25,10 @@ internal sealed class RawMarketMessageConfiguration
                 value => CollectorSessionId.Create(value).Value)
             .IsRequired();
 
+        builder.Property(message => message.ConnectionEpoch)
+            .HasColumnName("connection_epoch")
+            .IsRequired();
+
         builder.Property(message => message.ReceivedAt)
             .HasColumnName("received_at")
             .IsRequired();
@@ -49,5 +53,9 @@ internal sealed class RawMarketMessageConfiguration
 
         builder.HasIndex(message => new { message.SessionId, message.Id })
             .HasDatabaseName("ix_raw_market_messages_session_id");
+
+        builder.ToTable(table => table.HasCheckConstraint(
+            "ck_raw_market_messages_connection_epoch_positive",
+            "connection_epoch > 0"));
     }
 }

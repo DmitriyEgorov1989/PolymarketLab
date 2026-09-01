@@ -144,7 +144,7 @@ sequenceDiagram
 | [`ICollectorRuntime`](../../../PolymarketLab.DataCollection.Core/Ports/ICollectorRuntime.cs) | Application-facing start/stop port |
 | [`CollectorRuntimeStartRequest`](../../../PolymarketLab.DataCollection.Core/Ports/Dtos/CollectorRuntimeStartRequest.cs) | Session ID и snapshot рынка с tokens |
 | [`IRawMarketMessageSink`](../RawMessageIngestion/IRawMarketMessageSink.cs) | Внутренний producer-side contract ingestion-конвейера |
-| [`RawMarketMessage`](../../../PolymarketLab.DataCollection.Core/Ports/Dtos/RawMarketMessage.cs) | Session ID, receive timestamp и payload |
+| [`RawMarketMessage`](../../../PolymarketLab.DataCollection.Core/Ports/Dtos/RawMarketMessage.cs) | Session ID, connection epoch, receive timestamp и payload |
 | [`IRawMarketMessageWriter`](../RawMessageIngestion/IRawMarketMessageWriter.cs) | Внутренний batch persistence contract ingestion-конвейера |
 
 ### Runtime orchestration
@@ -200,11 +200,12 @@ WebSocket frame — часть transport protocol. Одно logical WebSocket me
 ```csharp
 public sealed record RawMarketMessage(
     CollectorSessionId SessionId,
+    long ConnectionEpoch,
     DateTimeOffset ReceivedAt,
     byte[] Payload);
 ```
 
-`Payload` — исходные bytes text message. Runtime не выполняет JSON parsing, schema validation или domain mapping.
+`ConnectionEpoch` начинается с `1` и связывает сообщение с конкретным успешным подключением. `Payload` — исходные bytes text message. Runtime не выполняет JSON parsing, schema validation или domain mapping.
 
 ### Start result, Stop result и Completion
 
@@ -675,9 +676,10 @@ new BoundedChannelOptions(capacity)
 ### Durable progress
 
 Для каждой collector session хранится отдельная строка
-`data_collection.collector_session_progress`. `messages_received` и
-`last_message_at` берутся из in-memory snapshot, а `messages_persisted`
-увеличивается в одной транзакции с raw batch. Поэтому read API обычно отстаёт
+`data_collection.collector_session_progress`. Current connection epoch,
+`messages_received`, `messages_enqueued` и `last_message_at` берутся из
+in-memory snapshot, а `messages_persisted` увеличивается атомарным PostgreSQL
+upsert в одной транзакции с raw batch. Поэтому read API обычно отстаёт
 от receive loop не более чем на `FlushInterval`.
 
 При пользовательском Stop runtime сначала прекращает receive/enqueue, затем
@@ -686,7 +688,7 @@ new BoundedChannelOptions(capacity)
 session в `Failed/PersistenceFailure` вместо ложного `Stopped`.
 
 После аварийного завершения `messages_persisted` сохраняется точно, а
-`messages_received` является durable lower bound: хвост, оставшийся только в
+`messages_received` и `messages_enqueued` являются durable lower bounds: хвост, оставшийся только в
 памяти процесса, восстановить невозможно.
 
 ### Один pending channel wait
@@ -736,6 +738,7 @@ data_collection.raw_market_messages
 -----------------------------------
 id          bigint identity primary key
 session_id  uuid not null
+connection_epoch bigint not null
 received_at timestamptz not null
 payload     bytea not null
 ```
@@ -753,7 +756,9 @@ session_id -> data_collection.collector_sessions.id
 ON DELETE RESTRICT
 ```
 
-Миграция: [`AddRawMarketMessages`](../Postgres/Migrations/20260727081457_AddRawMarketMessages.cs).
+Миграции: [`AddRawMarketMessages`](../Postgres/Migrations/20260727081457_AddRawMarketMessages.cs) и [`PersistConnectionEpochAndExactRawAccounting`](../Postgres/Migrations/20260831121534_PersistConnectionEpochAndExactRawAccounting.cs).
+
+`PersistConnectionEpochAndExactRawAccounting` требует пустую `raw_market_messages` и прерывается до изменения схемы, если archive уже содержит строки: историческую connection epoch нельзя восстановить достоверно.
 
 ### Почему bytea, а не jsonb
 
@@ -768,15 +773,17 @@ ON DELETE RESTRICT
 1. Возвращается сразу для пустого batch.
 2. Создаёт EF records.
 3. Копирует payload.
-4. Выполняет `AddRange`.
-5. Обновляет progress каждой session.
-6. Вызывает один `SaveChangesAsync` для raw rows и counters.
+4. Открывает явную PostgreSQL transaction и сохраняет raw rows.
+5. Атомарным upsert обновляет progress каждой session без lost increments.
+6. Commit-ит raw rows и progress вместе.
 
 ```text
 data_collection.collector_session_progress
 ------------------------------------------
 session_id          uuid primary key
+current_connection_epoch bigint not null
 messages_received   bigint not null
+messages_enqueued   bigint not null
 messages_persisted  bigint not null
 last_message_at     timestamptz null
 reconnect_count     bigint not null
@@ -1031,7 +1038,7 @@ Singleton runtime/factory не должны напрямую зависеть о
 
 ### PostgreSQL tests
 
-[`RawMarketMessageWriterTests.cs`](../../../PolymarketLab.DataCollection.Infrastructure.Tests/Adapters/Postgres/RawMarketMessageWriterTests.cs) проверяет writer behavior через EF InMemory.
+[`RawMarketMessageWriterPostgreSqlTests.cs`](../../../PolymarketLab.DataCollection.Infrastructure.Tests/Integration/Postgres/RawMarketMessageWriterPostgreSqlTests.cs) проверяет exact accounting, restart read, concurrency, rollback и migration guard с реальным PostgreSQL.
 
 [`DataCollectionDbContextModelTests.cs`](../../../PolymarketLab.DataCollection.Infrastructure.Tests/Adapters/Postgres/DataCollectionDbContextModelTests.cs) проверяет Npgsql metadata, types, index и FK без реального PostgreSQL.
 
@@ -1048,8 +1055,6 @@ Singleton runtime/factory не должны напрямую зависеть о
 ### Что тестами не покрывается
 
 - реальное соединение с Polymarket;
-- реальный PostgreSQL;
-- применение migrations к базе;
 - API/Application/Runtime/PostgreSQL end-to-end;
 - реальный shutdown ordering Generic Host;
 - длительная нагрузка и memory pressure;
@@ -1059,25 +1064,24 @@ Singleton runtime/factory не должны напрямую зависеть о
 ## Известные ограничения
 
 1. Нет exponential backoff: pre-readiness reconnect использует фиксированную паузу.
-2. Durable raw connection epoch относится к отдельной задаче; текущая epoch хранится только в runtime process memory.
-3. Между автономной ошибкой обработчика и записью сессии нет надёжного сохраняемого уведомления; после сбоя остаточная активная сессия исправляется только при следующем запуске.
-4. Остановка collector session опубликована только по `CollectorSessionId`, не по `MarketId`.
-5. Channel in-memory: process crash теряет непросохранённый tail.
-6. Shutdown timeout допускает потерю tail.
-7. Нет persistence retry и dead-letter queue.
-8. Нет raw-message deduplication или idempotency key.
-9. Нет exactly-once guarantee.
-10. Используется EF `SaveChangesAsync`, а не PostgreSQL `COPY`.
-11. Capacity измеряется количеством сообщений, а не bytes.
-12. При 10,000 больших сообщений channel может потреблять много памяти.
-13. Payload копируется несколько раз.
-14. JSON не валидируется; сохраняется любой text payload.
-15. Binary message завершает collector.
-16. Remote close считается failure, если local stop ещё не начался.
-17. Runtime uniqueness основана на `CollectorSessionId`, не на `MarketId`.
-18. Ошибка одного persistence batch останавливает всю ingestion subsystem.
-19. Миграции не применяются автоматически при запуске приложения.
-20. Согласование при запуске безопасно только при одном экземпляре приложения: идентификатор владельца и аренда сессии отсутствуют.
+2. Между автономной ошибкой обработчика и записью сессии нет надёжного сохраняемого уведомления; после сбоя остаточная активная сессия исправляется только при следующем запуске.
+3. Остановка collector session опубликована только по `CollectorSessionId`, не по `MarketId`.
+4. Channel in-memory: process crash теряет непросохранённый tail.
+5. Shutdown timeout допускает потерю tail.
+6. Нет persistence retry и dead-letter queue.
+7. Нет raw-message deduplication или idempotency key.
+8. Нет exactly-once guarantee.
+9. Используется EF `SaveChangesAsync`, а не PostgreSQL `COPY`.
+10. Capacity измеряется количеством сообщений, а не bytes.
+11. При 10,000 больших сообщений channel может потреблять много памяти.
+12. Payload копируется несколько раз.
+13. JSON не валидируется; сохраняется любой text payload.
+14. Binary message завершает collector.
+15. Remote close считается failure, если local stop ещё не начался.
+16. Runtime uniqueness основана на `CollectorSessionId`, не на `MarketId`.
+17. Ошибка одного persistence batch останавливает всю ingestion subsystem.
+18. Миграции не применяются автоматически при запуске приложения.
+19. Согласование при запуске безопасно только при одном экземпляре приложения: идентификатор владельца и аренда сессии отсутствуют.
 
 ## Что делать дальше
 

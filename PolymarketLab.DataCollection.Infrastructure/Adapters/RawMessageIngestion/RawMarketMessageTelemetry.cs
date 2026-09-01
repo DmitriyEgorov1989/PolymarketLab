@@ -61,6 +61,14 @@ internal sealed class RawMarketMessageTelemetry : IDisposable
             .IncrementReconnect();
     }
 
+    public RawMarketMessageCounters RecordConnectionEpoch(
+        CollectorSessionId sessionId,
+        long connectionEpoch)
+    {
+        return _states.GetOrAdd(sessionId, _ => new CounterState())
+            .ObserveConnectionEpoch(connectionEpoch);
+    }
+
     public RawMarketMessageCounters GetSnapshot(CollectorSessionId sessionId)
     {
         return _states.TryGetValue(sessionId, out var state)
@@ -73,7 +81,10 @@ internal sealed class RawMarketMessageTelemetry : IDisposable
         var snapshot = GetSnapshot(sessionId);
         return new CollectorSessionProgressCheckpoint(
             sessionId,
+            snapshot.CurrentConnectionEpoch,
             snapshot.ReceivedComplete,
+            snapshot.Enqueued,
+            snapshot.Persisted,
             snapshot.LastMessageAt,
             snapshot.ReconnectCount);
     }
@@ -107,6 +118,7 @@ internal sealed class RawMarketMessageTelemetry : IDisposable
         private long _persisted;
         private long _lastMessageUtcTicks;
         private long _reconnectCount;
+        private long _currentConnectionEpoch;
         private readonly object _persistedSignalLock = new();
         private TaskCompletionSource _persistedChanged = CreateSignal();
 
@@ -143,6 +155,12 @@ internal sealed class RawMarketMessageTelemetry : IDisposable
             return GetSnapshot();
         }
 
+        public RawMarketMessageCounters ObserveConnectionEpoch(long connectionEpoch)
+        {
+            UpdateMaximum(ref _currentConnectionEpoch, connectionEpoch);
+            return GetSnapshot();
+        }
+
         public RawMarketMessageCounters GetSnapshot()
         {
             var lastMessageUtcTicks = Volatile.Read(ref _lastMessageUtcTicks);
@@ -153,7 +171,8 @@ internal sealed class RawMarketMessageTelemetry : IDisposable
                 lastMessageUtcTicks == 0
                     ? null
                     : new DateTimeOffset(lastMessageUtcTicks, TimeSpan.Zero),
-                Volatile.Read(ref _reconnectCount));
+                Volatile.Read(ref _reconnectCount),
+                Volatile.Read(ref _currentConnectionEpoch));
         }
 
         public async Task WaitUntilPersistedAsync(
@@ -193,9 +212,17 @@ internal sealed class RawMarketMessageTelemetry : IDisposable
     }
 }
 
+/// <summary>Снимок runtime-счётчиков raw ingestion.</summary>
+/// <param name="ReceivedComplete">Количество полностью полученных market messages.</param>
+/// <param name="Enqueued">Количество сообщений, успешно переданных в bounded ingestion.</param>
+/// <param name="Persisted">Количество сообщений, подтверждённых PostgreSQL.</param>
+/// <param name="LastMessageAt">Момент получения последнего market message; <see langword="null"/> означает отсутствие сообщений.</param>
+/// <param name="ReconnectCount">Количество повторных подключений.</param>
+/// <param name="CurrentConnectionEpoch">Текущая эпоха подключения; 0 означает отсутствие подключения.</param>
 internal sealed record RawMarketMessageCounters(
     long ReceivedComplete,
     long Enqueued,
     long Persisted,
     DateTimeOffset? LastMessageAt = null,
-    long ReconnectCount = 0);
+    long ReconnectCount = 0,
+    long CurrentConnectionEpoch = 0);

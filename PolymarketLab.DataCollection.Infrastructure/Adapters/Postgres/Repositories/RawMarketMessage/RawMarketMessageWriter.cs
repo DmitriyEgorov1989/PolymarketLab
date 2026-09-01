@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Models;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.CollectorSession;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
 using RawMessage = PolymarketLab.DataCollection.Core.Ports.Dtos.RawMarketMessage;
 
@@ -19,38 +20,43 @@ internal sealed class RawMarketMessageWriter(DataCollectionDbContext dbContext)
 
         var records = messages.Select(message => new RawMarketMessageRecord(
             message.SessionId,
+            message.ConnectionEpoch,
             message.ReceivedAt,
             message.Payload.ToArray())).ToArray();
 
+        await using var transaction = await dbContext.Database
+            .BeginTransactionAsync(cancellationToken);
         dbContext.RawMarketMessages.AddRange(records);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         var checkpointBySession = checkpoints.ToDictionary(
             checkpoint => checkpoint.SessionId);
         foreach (var group in messages.GroupBy(message => message.SessionId))
         {
-            var progress = await dbContext.CollectorSessionProgress
-                .SingleOrDefaultAsync(
-                    current => current.SessionId == group.Key,
-                    cancellationToken);
-            if (progress is null)
-            {
-                progress = new CollectorSessionProgressRecord(group.Key);
-                dbContext.CollectorSessionProgress.Add(progress);
-            }
-
             var lastPersistedAt = group.Max(message => message.ReceivedAt);
             var checkpoint = checkpointBySession.GetValueOrDefault(group.Key)
                 ?? new CollectorSessionProgressCheckpoint(
                     group.Key,
+                    group.Max(message => message.ConnectionEpoch),
                     group.LongCount(),
+                    group.LongCount(),
+                    0,
                     lastPersistedAt,
                     0);
-            progress.ApplyBatch(
+            checkpoint = checkpoint with
+            {
+                CurrentConnectionEpoch = Math.Max(
+                    checkpoint.CurrentConnectionEpoch,
+                    group.Max(message => message.ConnectionEpoch))
+            };
+            await CollectorSessionProgressUpsert.ExecuteAsync(
+                dbContext,
                 checkpoint,
                 group.LongCount(),
-                lastPersistedAt);
+                lastPersistedAt,
+                cancellationToken);
         }
 
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 }

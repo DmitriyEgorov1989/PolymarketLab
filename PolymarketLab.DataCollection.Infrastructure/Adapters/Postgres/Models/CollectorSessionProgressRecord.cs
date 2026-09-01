@@ -15,43 +15,24 @@ internal sealed class CollectorSessionProgressRecord
     }
 
     public CollectorSessionId SessionId { get; private set; } = null!;
+
+    /// <summary>Последняя сохранённая эпоха подключения; 0 означает отсутствие подключения.</summary>
+    public long CurrentConnectionEpoch { get; private set; }
     public long MessagesReceived { get; private set; }
+
+    /// <summary>Количество сообщений, успешно переданных в bounded ingestion.</summary>
+    public long MessagesEnqueued { get; private set; }
     public long MessagesPersisted { get; private set; }
     public DateTimeOffset? LastMessageAt { get; private set; }
     public long ReconnectCount { get; private set; }
 
-    public void ApplyBatch(
-        CollectorSessionProgressCheckpoint checkpoint,
-        long persistedCount,
-        DateTimeOffset lastPersistedAt)
-    {
-        MessagesPersisted += persistedCount;
-        MessagesReceived = Math.Max(
-            Math.Max(MessagesReceived, checkpoint.MessagesReceived),
-            MessagesPersisted);
-        LastMessageAt = Max(LastMessageAt, checkpoint.LastMessageAt, lastPersistedAt);
-        ReconnectCount = Math.Max(ReconnectCount, checkpoint.ReconnectCount);
-    }
-
-    public void Checkpoint(CollectorSessionProgressCheckpoint checkpoint)
-    {
-        MessagesReceived = Math.Max(
-            Math.Max(MessagesReceived, checkpoint.MessagesReceived),
-            MessagesPersisted);
-        LastMessageAt = Max(LastMessageAt, checkpoint.LastMessageAt);
-        ReconnectCount = Math.Max(ReconnectCount, checkpoint.ReconnectCount);
-    }
-
-    public CollectorSessionProgress ToProgress() => new(
+    public CollectorSessionProgress ToProgress(long rawMessageCount) => new(
         SessionId,
+        CurrentConnectionEpoch,
         MessagesReceived,
+        MessagesEnqueued,
         MessagesPersisted,
+        rawMessageCount,
         LastMessageAt,
         ReconnectCount);
-
-    private static DateTimeOffset? Max(params DateTimeOffset?[] values)
-    {
-        return values.Where(value => value.HasValue)
-            .Max();
-    }
 }

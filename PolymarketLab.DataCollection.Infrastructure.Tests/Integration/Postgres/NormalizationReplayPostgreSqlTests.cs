@@ -258,8 +258,8 @@ public sealed class NormalizationReplayPostgreSqlTests(PostgreSqlFixture fixture
             connectionString,
             """
             INSERT INTO data_collection.raw_market_messages
-                (session_id, received_at, payload)
-            VALUES (@session_id, CURRENT_TIMESTAMP, @payload)
+                (session_id, connection_epoch, received_at, payload)
+            VALUES (@session_id, 1, CURRENT_TIMESTAMP, @payload)
             RETURNING id
             """,
             new NpgsqlParameter("session_id", sessionId),

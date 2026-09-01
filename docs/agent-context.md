@@ -31,6 +31,7 @@
 
 - `CollectorController` публикует read/start/stop endpoints. Infrastructure регистрирует `DataCollectionDbContext`, repositories, singleton collector runtime и bounded raw-message ingestion worker.
 - WebSocket collector принимает text messages, собирает fragments и передаёт полные исходные UTF-8 bytes в bounded ingestion pipeline. Silent drop недопустим.
+- Каждый raw message сохраняет монотонную connection epoch. Durable progress атомарно хранит current epoch и received/enqueued/persisted counters, а raw count вычисляется авторитетно из PostgreSQL.
 - Lifecycle scheduler раз в секунду обрабатывает сохранённую global exclusive session: до `T-60s` она остаётся `Scheduled`, затем exact Gamma boundary check и CAS запускают preparation; обычный readiness deadline равен `T-10s`, late deadline равен `EventStartsAt`.
 - При старте незавершённые сессии предыдущего процесса переводятся в `Invalidating/Cleaning` и не возобновляются. При штатной остановке текущие сессии пока проходят `Stopping -> Stopped/ApplicationShutdown` до введения общего invalidation coordinator.
 - Переходы `CollectorSession` сохраняются compare-and-set по ожидаемому `Status`; `status` является EF concurrency token. При конфликте перечитай состояние и разреши переход, не выполняй unconditional update.

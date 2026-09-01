@@ -28,24 +28,19 @@ public sealed class CollectorSessionRepositoryTests
         {
             var repository = new CollectorSessionRepository(context);
             await repository.TryAddAsync(session, CancellationToken.None);
-            var progressRepository = new CollectorSessionProgressRepository(context);
-            await progressRepository.CheckpointAsync(
-                new CollectorSessionProgressCheckpoint(
-                    session.Id,
-                    4,
-                    Now.AddSeconds(1),
-                    2),
-                CancellationToken.None);
         }
 
         await using var verificationContext = new DataCollectionDbContext(options);
         var progress = await new CollectorSessionProgressRepository(verificationContext)
             .GetAsync(session.Id, CancellationToken.None);
 
-        progress.MessagesReceived.Should().Be(4);
+        progress.CurrentConnectionEpoch.Should().Be(0);
+        progress.MessagesReceived.Should().Be(0);
+        progress.MessagesEnqueued.Should().Be(0);
         progress.MessagesPersisted.Should().Be(0);
-        progress.LastMessageAt.Should().Be(Now.AddSeconds(1));
-        progress.ReconnectCount.Should().Be(2);
+        progress.RawMessageCount.Should().Be(0);
+        progress.LastMessageAt.Should().BeNull();
+        progress.ReconnectCount.Should().Be(0);
     }
 
     [Fact]

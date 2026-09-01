@@ -269,6 +269,7 @@ internal sealed class CollectorWebSocketWorker(
             request.Market.Tokens
                 .Select(token => token.TokenId.Value)
                 .ToArray());
+        telemetry.RecordConnectionEpoch(request.SessionId, state.Epoch);
 
         await readinessDispatcher.MarkAwaitingInitialBooksAsync(
             request.SessionId,
@@ -329,6 +330,7 @@ internal sealed class CollectorWebSocketWorker(
             if (reconnect.IsFailure)
                 continue;
 
+            telemetry.RecordConnectionEpoch(request.SessionId, state.Epoch);
             telemetry.RecordReconnect(request.SessionId);
             await RunConnectionAttemptsAsync(reconnect.Value, state);
             return;
@@ -455,6 +457,7 @@ internal sealed class CollectorWebSocketWorker(
                 break;
             }
 
+            telemetry.RecordConnectionEpoch(request.SessionId, state.Epoch);
             telemetry.RecordReconnect(request.SessionId);
             connection = reconnect.Value;
         }
@@ -627,15 +630,21 @@ internal sealed class CollectorWebSocketWorker(
                 var payload = messageBuffer.WrittenSpan.ToArray();
                 messageBuffer.Clear();
 
-                if (IsPong(payload))
+                var isPong = IsPong(payload);
+                if (isPong || IsPing(payload))
                 {
-                    state.ObservePong(timeProvider.GetTimestamp());
-                    await TryCompleteReadinessAsync(state, receiveToken);
+                    if (isPong)
+                    {
+                        state.ObservePong(timeProvider.GetTimestamp());
+                        await TryCompleteReadinessAsync(state, receiveToken);
+                    }
+
                     continue;
                 }
 
                 var message = new RawMarketMessage(
                     request.SessionId,
+                    state.Epoch,
                     timeProvider.GetUtcNow(),
                     payload);
                 var receivedCounters = telemetry.RecordReceivedComplete(
@@ -868,8 +877,11 @@ internal sealed class CollectorWebSocketWorker(
             state.MarkReady();
     }
 
+    private static bool IsPing(byte[] payload) =>
+        payload.AsSpan().SequenceEqual("PING"u8);
+
     private static bool IsPong(byte[] payload) =>
-        payload.SequenceEqual("PONG"u8.ToArray());
+        payload.AsSpan().SequenceEqual("PONG"u8);
 
     private async Task<UnitResult<Error>> CloseConnectionAsync(
         ICollectorWebSocketConnection connection)
