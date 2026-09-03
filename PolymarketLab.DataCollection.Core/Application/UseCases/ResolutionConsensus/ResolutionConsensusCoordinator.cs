@@ -1,5 +1,6 @@
 using CSharpFunctionalExtensions;
 using PolymarketLab.DataCollection.Core.Application.Resolution;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorNormalizationSuitability;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRawDatasetCompletion;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
@@ -23,6 +24,7 @@ public sealed class ResolutionConsensusCoordinator(
     ICollectorSessionInvalidationCoordinator invalidationCoordinator,
     ICollectorRuntime runtime,
     ICollectorRawDatasetCompletionCoordinator rawDatasetCompletion,
+    ICollectorNormalizationSuitabilityCoordinator normalizationSuitabilityCoordinator,
     WebSocketResolutionValidator webSocketValidator,
     TimeProvider timeProvider) : IResolutionConsensusCoordinator
 {
@@ -48,7 +50,18 @@ public sealed class ResolutionConsensusCoordinator(
     private async Task<UnitResult<Error>> TickCoreAsync(CancellationToken cancellationToken)
     {
         var session = await sessionRepository.GetExclusiveAsync(cancellationToken);
-        if (session is null || session.Status != CollectorSessionStatus.Running)
+        if (session is null)
+            return UnitResult.Success<Error>();
+
+        if (session.Status == CollectorSessionStatus.Stopping
+            && session.Phase == CollectorSessionPhase.AwaitingNormalization)
+        {
+            return await normalizationSuitabilityCoordinator.EvaluateAsync(
+                session.Id,
+                cancellationToken);
+        }
+
+        if (session.Status != CollectorSessionStatus.Running)
             return UnitResult.Success<Error>();
 
         var now = timeProvider.GetUtcNow();

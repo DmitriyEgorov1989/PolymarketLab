@@ -141,6 +141,8 @@ public sealed class CollectorRawDatasetCompletionCoordinator(
         if (session is null)
             return CollectorRawDatasetCompletionErrors.SessionNotFound(sessionId);
 
+        var awaitingNormalizationAt = timeProvider.GetUtcNow();
+
         for (var attempt = 0; attempt < MaximumUpdateAttempts; attempt++)
         {
             if (session.Status == CollectorSessionStatus.Stopping
@@ -155,7 +157,7 @@ public sealed class CollectorRawDatasetCompletionCoordinator(
                 return CollectorRawDatasetCompletionErrors.StateTransitionConflict(sessionId);
             }
 
-            var transition = session.MarkAwaitingNormalization();
+            var transition = session.MarkAwaitingNormalization(awaitingNormalizationAt);
             if (transition.IsFailure)
                 return transition.Error;
 

@@ -170,6 +170,7 @@ public static class DataCollectionInfrastructureDependencyInjection
             RawMessageNormalizationReplayClaimRepository>();
         services.AddScoped<INormalizedMessageWriter, VersionedNormalizedWriter>();
         services.AddScoped<INormalizationBacklogReader, NormalizationBacklogReader>();
+        services.AddScoped<INormalizationSuitabilityReader, NormalizationSuitabilityReader>();
         services.AddScoped<NormalizationProcessor>(serviceProvider =>
         {
             var options = serviceProvider

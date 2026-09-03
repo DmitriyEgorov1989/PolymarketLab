@@ -40,7 +40,7 @@
 
 ## Следующая задача: #26
 
-**Суть:** session сейчас остаётся в `Stopping/AwaitingNormalization` — терминальный переход (`Stopped/MarketResolved`) никто не выполняет. Нужен suitability gate: для каждого raw row должна существовать ровно одна ledger row с snapshot `ProjectionVersion` (зафиксированной при создании session) и status `Processed`; cardinality равна raw count; strict WS resolution observation указывает на `Processed` raw item. `Pending`/`Processing` — ждать до `EventEndsAt + 5m`. `Unsupported`/`Failed`/чужая version — durable invalidation. Полная спецификация: Task 11 roadmap (`docs/superpowers/plans/2026-08-27-first-full-five-minute-market-roadmap.md`, строки 378–405).
+**Суть:** session сейчас остаётся в `Stopping/AwaitingNormalization` — терминальный переход (`Stopped/MarketResolved`) никто не выполняет. Нужен suitability gate: для каждого raw row должна существовать ровно одна ledger row с snapshot `ProjectionVersion` (зафиксированной при создании session) и status `Processed`; cardinality равна raw count; strict WS resolution observation указывает на `Processed` raw item. `Pending`/`Processing` — ждать до `AwaitingNormalizationAt + 5m`, то есть пять минут после durable raw drain. `Unsupported`/`Failed`/чужая version — durable invalidation. Полная спецификация: Task 11 roadmap (`docs/superpowers/plans/2026-08-27-first-full-five-minute-market-roadmap.md`, строки 378–405).
 
 **Заготовки из плана #26:**
 
@@ -72,14 +72,14 @@
 - `ResolutionConsensusBackgroundService` создаёт scope и вызывает `IResolutionConsensusCoordinator.TickAsync` раз в `1 секунду`.
 - Сейчас `ResolutionConsensusCoordinator` немедленно завершает tick для session не в `Running`, поэтому `Stopping/AwaitingNormalization` никто повторно не обрабатывает.
 - Минимальный путь — расширить существующий application lifecycle tick маршрутизацией `Stopping/AwaitingNormalization` в новый gate, не меняя порядок hosted services. Не создавать параллельный lifecycle loop без доказанной необходимости.
-- `Pending`/`Processing` — обычное ожидание, а не ошибка: следующий tick повторяет проверку до `EventEndsAt + 5m`.
+- `Pending`/`Processing` — обычное ожидание, а не ошибка: следующий tick повторяет проверку до `AwaitingNormalizationAt + 5m`.
 - После deadline незавершённость становится terminal failure и проходит через `ICollectorSessionInvalidationCoordinator`; успешный gate вызывает доменный `Stop(..., CollectorStopReason.MarketClosed)` и CAS с expected status `Stopping`.
 
 **Рекомендуемый первый вертикальный slice:**
 
 1. Зафиксировать Core-тестами три семантических результата gate: готовность, ожидание и непригодность; точные имена DTO выбрать в соответствии с существующей терминологией проекта.
 2. Для готовности доказать точную cardinality: каждому raw message соответствует ровно одна ledger row snapshot-версии со статусом `Processed`, а strict WebSocket resolution observation указывает на item внутри обработанного parent raw message.
-3. Для `Waiting` оставить session в `Stopping/AwaitingNormalization` до общего deadline `EventEndsAt + 5m`.
+3. Для `Waiting` оставить session в `Stopping/AwaitingNormalization` до общего deadline `AwaitingNormalizationAt + 5m`.
 4. Для `Invalid` выполнить durable invalidation без перехода в `Stopped/MarketResolved`.
 5. Только после стабилизации application seam реализовать один PostgreSQL session-scoped read и его integration tests.
 

@@ -31,7 +31,7 @@ CAS Running/AwaitingResolution -> Stopping/DrainingRaw
 - `CollectorRuntime.StopAsync` уже идемпотентно останавливает producer через shared stop task.
 - `CollectorSessionProgressCompletion.CompleteAsync` уже ждёт `Persisted >= final Enqueued` и сохраняет checkpoint, но не проверяет точное равенство с PostgreSQL raw rows.
 - `CollectorSessionProgressRepository.GetAsync` уже одним LINQ query возвращает durable `MessagesReceived`, `MessagesEnqueued`, `MessagesPersisted` и correlated `RawMessageCount`.
-- `CollectorSession.MarkStopping()` и `MarkAwaitingNormalization()` уже реализуют нужные domain transitions.
+- `CollectorSession.MarkStopping()` и `MarkAwaitingNormalization(awaitingNormalizationAt)` реализуют нужные domain transitions; второй переход сохраняет начало окна нормализации.
 - Manual Stop и host shutdown уже направляются в `Invalidating/Cleaning` и не должны использовать успешный completion flow.
 
 ## Принятые решения

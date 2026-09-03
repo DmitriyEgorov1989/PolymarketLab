@@ -116,12 +116,36 @@ public sealed class CollectorSessionTests
         session.MarkStopping().IsSuccess.Should().BeTrue();
         session.Status.Should().Be(CollectorSessionStatus.Stopping);
         session.Phase.Should().Be(CollectorSessionPhase.DrainingRaw);
-        session.MarkAwaitingNormalization().IsSuccess.Should().BeTrue();
+        var awaitingNormalizationAt = EventEndsAt.AddSeconds(3);
+        session.MarkAwaitingNormalization(awaitingNormalizationAt)
+            .IsSuccess.Should().BeTrue();
         session.Phase.Should().Be(CollectorSessionPhase.AwaitingNormalization);
-        session.Stop(EventEndsAt, CollectorStopReason.MarketClosed)
+        session.AwaitingNormalizationAt.Should().Be(awaitingNormalizationAt);
+        session.Stop(awaitingNormalizationAt, CollectorStopReason.MarketClosed)
             .IsSuccess.Should().BeTrue();
         session.Status.Should().Be(CollectorSessionStatus.Stopped);
         session.Phase.Should().BeNull();
+    }
+
+    [Fact]
+    public void MarkAwaitingNormalization_BeforeResolutionConfirmation_ShouldReturnError()
+    {
+        var session = CreateRunningSession();
+        session.MarkCollectingWindow();
+        session.MarkAwaitingResolution();
+        session.ConfirmResolution(
+            EventEndsAt,
+            EventEndsAt.AddSeconds(2),
+            new ResolutionWinner("1001", "Yes"),
+            1).IsSuccess.Should().BeTrue();
+        session.MarkStopping().IsSuccess.Should().BeTrue();
+
+        var result = session.MarkAwaitingNormalization(EventEndsAt.AddSeconds(1));
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be("collector.session.awaiting_normalization_at.invalid");
+        session.Phase.Should().Be(CollectorSessionPhase.DrainingRaw);
+        session.AwaitingNormalizationAt.Should().BeNull();
     }
 
     [Fact]

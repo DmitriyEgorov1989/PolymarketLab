@@ -76,6 +76,9 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Configur
             builder.Property(x => x.ResolutionConfirmedAt)
                 .HasColumnName("resolution_confirmed_at");
 
+            builder.Property(x => x.AwaitingNormalizationAt)
+                .HasColumnName("awaiting_normalization_at");
+
             builder.Property(x => x.WinningTokenId)
                 .HasColumnName("winning_token_id")
                 .HasMaxLength(500);

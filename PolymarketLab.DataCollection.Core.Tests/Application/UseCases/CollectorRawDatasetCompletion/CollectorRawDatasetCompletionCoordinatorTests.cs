@@ -42,6 +42,7 @@ public sealed class CollectorRawDatasetCompletionCoordinatorTests
             CollectorSessionStatus.Stopping);
         fixture.Session.Status.Should().Be(CollectorSessionStatus.Stopping);
         fixture.Session.Phase.Should().Be(CollectorSessionPhase.AwaitingNormalization);
+        fixture.Session.AwaitingNormalizationAt.Should().Be(CreatedAt.AddMinutes(20));
         fixture.Invalidation.Calls.Should().BeEmpty();
     }
 
@@ -220,7 +221,8 @@ public sealed class CollectorRawDatasetCompletionCoordinatorTests
     {
         var session = CreateConfirmedSession();
         session.MarkStopping().IsSuccess.Should().BeTrue();
-        session.MarkAwaitingNormalization().IsSuccess.Should().BeTrue();
+        session.MarkAwaitingNormalization(session.EventEndsAt!.Value.AddSeconds(1))
+            .IsSuccess.Should().BeTrue();
         var fixture = new Fixture(session: session);
 
         var result = await fixture.Coordinator.CompleteAsync(

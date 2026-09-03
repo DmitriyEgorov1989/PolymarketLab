@@ -497,7 +497,13 @@ durable consensus
 -> durable final checkpoint
 -> one PostgreSQL read: received=enqueued=persisted=raw>0
 -> CAS Stopping/AwaitingNormalization
+-> repeated snapshot-version suitability read
+-> Stopped/MarketClosed on exact Processed cardinality and resolution provenance
+or
+-> Invalidating/Cleaning -> Failed on terminal normalization failure or timeout
 ```
+
+После `Stopping/AwaitingNormalization` тот же tick `ResolutionConsensusBackgroundService` маршрутизирует session в `CollectorNormalizationSuitabilityCoordinator`: один PostgreSQL statement доказывает, что каждому raw-сообщению соответствует ledger row snapshot-версии `CollectorSession.ProjectionVersion` со статусом `Processed`, а strict WS resolution observation указывает на обработанный normalized `market_resolved` item. Момент завершения durable raw drain сохраняется как `AwaitingNormalizationAt`; `Pending`/`Processing`/missing rows ожидаются максимум до `AwaitingNormalizationAt + 5m`. `Invalid`, `Unsupported`, terminal `Failed`, несовпадение runtime-версии, неверный provenance и timeout ведут в durable invalidation. Только успешный gate до deadline CAS-выполняет `Stopped/MarketClosed`; normalizer при этом продолжает работать через собственный hosted service, а producer уже остановлен raw completion.
 
 Ожидание хвоста и final checkpoint выполняет `ICollectorSessionProgressCompletion` поверх in-memory telemetry: после завершения `StopAsync` producer больше не увеличивает `received`/`enqueued`, поэтому снятая в начале граница `enqueued` стабильна. Точное равенство counters и авторитетного `count(raw_market_messages)` проверяет application coordinator одним PostgreSQL read; только после него session переходит к ожиданию нормализации.
 

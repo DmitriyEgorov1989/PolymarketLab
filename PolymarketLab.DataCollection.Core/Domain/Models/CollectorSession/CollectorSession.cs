@@ -100,6 +100,13 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
     /// <summary>Момент согласования всех resolution sources; <see langword="null" />, пока consensus не достигнут.</summary>
     public DateTimeOffset? ResolutionConfirmedAt { get; private set; }
 
+    /// <summary>
+    /// Момент завершения durable raw drain и начала ожидания нормализации;
+    /// <see langword="null" />, пока session не вошла в <c>Stopping/AwaitingNormalization</c>
+    /// либо для legacy session.
+    /// </summary>
+    public DateTimeOffset? AwaitingNormalizationAt { get; private set; }
+
     /// <summary>Выигравший token id; <see langword="null" />, пока consensus не достигнут.</summary>
     public string? WinningTokenId { get; private set; }
 
@@ -315,12 +322,30 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
         return UnitResult.Success<Error>();
     }
 
-    /// <summary>Отмечает ожидание завершения нормализации snapshot-версии.</summary>
-    public UnitResult<Error> MarkAwaitingNormalization() =>
-        ChangePhase(
-            CollectorSessionStatus.Stopping,
-            CollectorSessionPhase.DrainingRaw,
-            CollectorSessionPhase.AwaitingNormalization);
+    /// <summary>Отмечает завершение durable raw drain и ожидание нормализации snapshot-версии.</summary>
+    /// <param name="awaitingNormalizationAt">Момент завершения raw drain.</param>
+    /// <returns>Успех либо ошибка недопустимого перехода или времени.</returns>
+    public UnitResult<Error> MarkAwaitingNormalization(
+        DateTimeOffset awaitingNormalizationAt)
+    {
+        if (Status != CollectorSessionStatus.Stopping
+            || Phase != CollectorSessionPhase.DrainingRaw)
+        {
+            return UnitResult.Failure(
+                CollectorSessionErrors.InvalidPhaseTransition(
+                    Status,
+                    Phase,
+                    CollectorSessionPhase.AwaitingNormalization));
+        }
+
+        var lowerBound = ResolutionConfirmedAt ?? EventEndsAt ?? StartedAt ?? CreatedAt;
+        if (awaitingNormalizationAt < lowerBound)
+            return UnitResult.Failure(CollectorSessionErrors.InvalidAwaitingNormalizationAt);
+
+        Phase = CollectorSessionPhase.AwaitingNormalization;
+        AwaitingNormalizationAt = awaitingNormalizationAt;
+        return UnitResult.Success<Error>();
+    }
 
     /// <summary>
     /// Необратимо начинает invalidation неполной session и сохраняет первую безопасную

@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
+using PolymarketLab.DataCollection.Core.Domain.Models.Resolution;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.CollectorSession;
@@ -105,6 +106,45 @@ public sealed class CollectorSessionRepositoryPostgreSqlTests(PostgreSqlFixture 
         var updated = await new CollectorSessionRepository(verificationContext)
             .GetByIdAsync(session.Id, CancellationToken.None);
         updated!.Status.Should().Be(CollectorSessionStatus.Starting);
+    }
+
+    [Fact]
+    public async Task TryUpdateAsync_WithAwaitingNormalization_ShouldPersistDeadlineAnchor()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var session = CreateSession(MarketId.Create(Guid.NewGuid()).Value);
+        await InsertAsync(database.ConnectionString, session);
+        await using var context = CreateContext(database.ConnectionString);
+        var repository = new CollectorSessionRepository(context);
+        var persisted = await repository.GetByIdAsync(session.Id, CancellationToken.None);
+        persisted!.BeginPreparation(CreatedAt).IsSuccess.Should().BeTrue();
+        persisted.MarkAwaitingInitialBooks().IsSuccess.Should().BeTrue();
+        persisted.MarkAwaitingHeartbeat().IsSuccess.Should().BeTrue();
+        persisted.MarkRunning(CreatedAt.AddMinutes(2)).IsSuccess.Should().BeTrue();
+        persisted.MarkCollectingWindow().IsSuccess.Should().BeTrue();
+        persisted.MarkAwaitingResolution().IsSuccess.Should().BeTrue();
+        persisted.ConfirmResolution(
+            persisted.EventEndsAt!.Value,
+            persisted.EventEndsAt.Value.AddSeconds(1),
+            new ResolutionWinner("1001", "Yes"),
+            1).IsSuccess.Should().BeTrue();
+        persisted.MarkStopping().IsSuccess.Should().BeTrue();
+        var awaitingNormalizationAt = persisted.EventEndsAt.Value.AddSeconds(3);
+        persisted.MarkAwaitingNormalization(awaitingNormalizationAt)
+            .IsSuccess.Should().BeTrue();
+
+        var update = await repository.TryUpdateAsync(
+            persisted,
+            CollectorSessionStatus.Scheduled,
+            CancellationToken.None);
+
+        update.Value.Should().Be(CollectorSessionUpdateStatus.Updated);
+        await using var verificationContext = CreateContext(database.ConnectionString);
+        var reloaded = await new CollectorSessionRepository(verificationContext)
+            .GetByIdAsync(session.Id, CancellationToken.None);
+        reloaded!.Status.Should().Be(CollectorSessionStatus.Stopping);
+        reloaded.Phase.Should().Be(CollectorSessionPhase.AwaitingNormalization);
+        reloaded.AwaitingNormalizationAt.Should().Be(awaitingNormalizationAt);
     }
 
     [Fact]

@@ -63,6 +63,11 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
         services.AddDataCollectionApplication();
         services.AddDataCollectionInfrastructure(configuration);
 
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(INormalizationSuitabilityReader)
+            && descriptor.ImplementationType == typeof(NormalizationSuitabilityReader)
+            && descriptor.Lifetime == ServiceLifetime.Scoped);
+
         using var provider = services.BuildServiceProvider(new ServiceProviderOptions
         {
             ValidateOnBuild = true,
@@ -87,6 +92,7 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
         AssertScoped<INormalizedMessageWriter>(firstScope, secondScope);
         AssertScoped<INormalizationProcessor>(firstScope, secondScope);
         AssertScoped<INormalizationBacklogReader>(firstScope, secondScope);
+        AssertScoped<INormalizationSuitabilityReader>(firstScope, secondScope);
         AssertTransient<IOrderBookSnapshotSource>(firstScope);
         AssertTransient<IGammaTerminalResolutionSource>(firstScope);
         AssertTransient<IClobTerminalResolutionSource>(firstScope);

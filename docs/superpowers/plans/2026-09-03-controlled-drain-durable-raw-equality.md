@@ -224,7 +224,7 @@ private static bool HasExactRawDataset(CollectorSessionProgress progress) =>
 
 - [ ] **Шаг 3: реализовать CAS-переходы с перечитыванием**
 
-`MarkDrainingRawAsync` допускает только durable confirmed session в `Running/AwaitingResolution`, вызывает существующий `session.MarkStopping()` и сохраняет через `TryUpdateAsync(..., CollectorSessionStatus.Running, ...)`. `MarkAwaitingNormalizationAsync` допускает `Stopping/DrainingRaw`, вызывает `session.MarkAwaitingNormalization()` и сохраняет с expected status `Stopping`. При `ConcurrencyConflict` оба метода перечитывают session и повторяют решение максимум три раза; `Stopping/AwaitingNormalization` считается идемпотентным успехом.
+`MarkDrainingRawAsync` допускает только durable confirmed session в `Running/AwaitingResolution`, вызывает существующий `session.MarkStopping()` и сохраняет через `TryUpdateAsync(..., CollectorSessionStatus.Running, ...)`. `MarkAwaitingNormalizationAsync` допускает `Stopping/DrainingRaw`, фиксирует текущее время через `TimeProvider`, вызывает `session.MarkAwaitingNormalization(awaitingNormalizationAt)` и сохраняет с expected status `Stopping`. При `ConcurrencyConflict` оба метода перечитывают session и повторяют решение максимум три раза; `Stopping/AwaitingNormalization` считается идемпотентным успехом.
 
 - [ ] **Шаг 4: реализовать единый failure path**
 

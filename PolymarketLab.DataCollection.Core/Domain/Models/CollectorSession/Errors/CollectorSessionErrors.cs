@@ -71,6 +71,12 @@ internal static class CollectorSessionErrors
         ErrorType.ValueIsInvalid,
         "invalidatingAt");
 
+    public static Error InvalidAwaitingNormalizationAt => new(
+        "collector.session.awaiting_normalization_at.invalid",
+        "Collector normalization wait cannot begin before resolution confirmation.",
+        ErrorType.ValueIsInvalid,
+        "awaitingNormalizationAt");
+
     public static Error InvalidResolutionTimestamps => new(
         "collector.session.resolution_timestamps.invalid",
         "Resolution signal must not precede the event end and confirmation must not precede the signal.",

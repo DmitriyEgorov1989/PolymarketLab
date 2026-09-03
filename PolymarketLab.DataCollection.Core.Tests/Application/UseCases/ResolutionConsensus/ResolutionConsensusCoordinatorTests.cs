@@ -2,6 +2,7 @@ using CSharpFunctionalExtensions;
 using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.Resolution;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRawDatasetCompletion;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorNormalizationSuitability;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Application.UseCases.ResolutionConsensus;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
@@ -331,6 +332,78 @@ public sealed class ResolutionConsensusCoordinatorTests
         fixture.Invalidation.Calls.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task TickAsync_WithAwaitingNormalization_ShouldEvaluateSuitabilityWithoutResolutionPolling()
+    {
+        var fixture = new Fixture();
+        fixture.Session.MarkCollectingWindow();
+        fixture.Session.MarkAwaitingResolution();
+        fixture.Session.ConfirmResolution(
+            fixture.EventEndsAt,
+            fixture.EventEndsAt,
+            new ResolutionWinner("1001", "Yes"),
+            2).IsSuccess.Should().BeTrue();
+        fixture.Session.MarkStopping().IsSuccess.Should().BeTrue();
+        fixture.Session.MarkAwaitingNormalization(fixture.EventEndsAt.AddSeconds(1))
+            .IsSuccess.Should().BeTrue();
+
+        var result = await fixture.Coordinator.TickAsync(CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        fixture.Suitability.Calls.Should().Equal(fixture.Session.Id);
+        fixture.Gamma.CallCount.Should().Be(0);
+        fixture.Clob.CallCount.Should().Be(0);
+        fixture.WebSocket.CallCount.Should().Be(0);
+        fixture.RawCompletion.Calls.Should().BeEmpty();
+        fixture.Invalidation.Calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task TickAsync_WithDrainingRaw_ShouldNotEvaluateSuitabilityOrPollResolution()
+    {
+        var fixture = new Fixture();
+        fixture.Session.MarkStopping().IsSuccess.Should().BeTrue();
+
+        var result = await fixture.Coordinator.TickAsync(CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        fixture.Suitability.Calls.Should().BeEmpty();
+        fixture.Gamma.CallCount.Should().Be(0);
+        fixture.Clob.CallCount.Should().Be(0);
+        fixture.WebSocket.CallCount.Should().Be(0);
+        fixture.RawCompletion.Calls.Should().BeEmpty();
+        fixture.Invalidation.Calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task TickAsync_WhenSuitabilityFails_ShouldReturnItsFailure()
+    {
+        var fixture = new Fixture();
+        fixture.Session.MarkCollectingWindow();
+        fixture.Session.MarkAwaitingResolution();
+        fixture.Session.ConfirmResolution(
+            fixture.EventEndsAt,
+            fixture.EventEndsAt,
+            new ResolutionWinner("1001", "Yes"),
+            2).IsSuccess.Should().BeTrue();
+        fixture.Session.MarkStopping().IsSuccess.Should().BeTrue();
+        fixture.Session.MarkAwaitingNormalization(fixture.EventEndsAt.AddSeconds(1))
+            .IsSuccess.Should().BeTrue();
+        fixture.Suitability.Result = UnitResult.Failure(new Error(
+            "collector.normalization_suitability.timeout",
+            "Normalization timed out.",
+            ErrorType.Failure));
+
+        var result = await fixture.Coordinator.TickAsync(CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be("collector.normalization_suitability.timeout");
+        fixture.Gamma.CallCount.Should().Be(0);
+        fixture.Clob.CallCount.Should().Be(0);
+        fixture.WebSocket.CallCount.Should().Be(0);
+        fixture.RawCompletion.Calls.Should().BeEmpty();
+    }
+
     private sealed class Fixture
     {
         private static readonly DateTimeOffset CreatedAt =
@@ -351,6 +424,7 @@ public sealed class ResolutionConsensusCoordinatorTests
             Invalidation = new InvalidationCoordinator(Session);
             Runtime = new CollectorRuntime();
             RawCompletion = new RawCompletionCoordinator(Calls);
+            Suitability = new SuitabilityCoordinator(Calls);
             Coordinator = new ResolutionConsensusCoordinator(
                 Sessions,
                 Progress,
@@ -361,6 +435,7 @@ public sealed class ResolutionConsensusCoordinatorTests
                 Invalidation,
                 Runtime,
                 RawCompletion,
+                Suitability,
                 new WebSocketResolutionValidator(),
                 Time);
         }
@@ -378,6 +453,7 @@ public sealed class ResolutionConsensusCoordinatorTests
         public InvalidationCoordinator Invalidation { get; }
         public CollectorRuntime Runtime { get; }
         public RawCompletionCoordinator RawCompletion { get; }
+        public SuitabilityCoordinator Suitability { get; }
         public IResolutionConsensusCoordinator Coordinator { get; }
 
         public WebSocketResolutionCandidate CreateWebSocketCandidate(
@@ -580,6 +656,22 @@ public sealed class ResolutionConsensusCoordinatorTests
             Calls.Add(requestedSessionId);
             calls.Add("raw_completion");
             return Task.FromResult(UnitResult.Success<Error>());
+        }
+    }
+
+    private sealed class SuitabilityCoordinator(List<string> calls)
+        : ICollectorNormalizationSuitabilityCoordinator
+    {
+        public List<CollectorSessionId> Calls { get; } = [];
+        public UnitResult<Error> Result { get; set; } = UnitResult.Success<Error>();
+
+        public Task<UnitResult<Error>> EvaluateAsync(
+            CollectorSessionId requestedSessionId,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add(requestedSessionId);
+            calls.Add("suitability");
+            return Task.FromResult(Result);
         }
     }
 
