@@ -5,8 +5,8 @@ namespace PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessio
 
 /// <summary>
 /// Согласует сохранённые сессии сбора данных с состоянием нового процесса приложения.
-/// Активные сессии предыдущего процесса переводятся в <c>Invalidating/Cleaning</c>
-/// с сохранением причины завершения процесса.
+/// Незавершённые сессии предыдущего процесса аннулируются, их dataset очищается,
+/// а collection не возобновляется.
 /// </summary>
 public interface ICollectorSessionStartupReconciler
 {

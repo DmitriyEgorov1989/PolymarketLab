@@ -226,6 +226,30 @@ public sealed class CollectorSessionTests
     }
 
     [Fact]
+    public void CompleteInvalidation_ShouldPreserveFailureAndSetFailed()
+    {
+        var session = CreateRunningSession();
+        var invalidatingAt = CreatedAt.AddMinutes(2).AddSeconds(30);
+        var completedAt = invalidatingAt.AddSeconds(1);
+        session.BeginInvalidation(
+            invalidatingAt,
+            CollectorStopReason.FatalWebSocketError,
+            "collector.runtime.receive.failed",
+            "WebSocket receive failed.");
+
+        var result = session.CompleteInvalidation(completedAt);
+
+        result.IsSuccess.Should().BeTrue();
+        session.Status.Should().Be(CollectorSessionStatus.Failed);
+        session.Phase.Should().BeNull();
+        session.StoppedAt.Should().Be(completedAt);
+        session.InvalidatingAt.Should().Be(invalidatingAt);
+        session.StopReason.Should().Be(CollectorStopReason.FatalWebSocketError);
+        session.FailureCode.Should().Be("collector.runtime.receive.failed");
+        session.FailureMessage.Should().Be("WebSocket receive failed.");
+    }
+
+    [Fact]
     public void MarkAwaitingInitialBooks_WithoutPreparation_ShouldReturnError()
     {
         var session = CreateSession();

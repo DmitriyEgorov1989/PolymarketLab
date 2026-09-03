@@ -359,6 +359,25 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
         return UnitResult.Success<Error>();
     }
 
+    /// <summary>
+    /// Завершает атомарную очистку аннулированной сессии, сохраняя исходную причину
+    /// отказа, диагностическое сообщение и момент установки write fence.
+    /// </summary>
+    /// <param name="completedAt">Момент успешного завершения очистки.</param>
+    /// <returns>Успех либо ошибка недопустимого перехода или времени завершения.</returns>
+    public UnitResult<Error> CompleteInvalidation(DateTimeOffset completedAt)
+    {
+        if (Status != CollectorSessionStatus.Invalidating)
+            return InvalidTransition(CollectorSessionStatus.Failed);
+        if (InvalidatingAt is null || completedAt < InvalidatingAt)
+            return UnitResult.Failure(CollectorSessionErrors.InvalidStoppedAt);
+
+        Status = CollectorSessionStatus.Failed;
+        Phase = null;
+        StoppedAt = completedAt;
+        return UnitResult.Success<Error>();
+    }
+
     /// <summary>Завершает session с успешной terminal reason.</summary>
     public UnitResult<Error> Stop(DateTimeOffset stoppedAt, CollectorStopReason reason) =>
         Complete(stoppedAt, CollectorSessionStatus.Stopped, reason, null, null);

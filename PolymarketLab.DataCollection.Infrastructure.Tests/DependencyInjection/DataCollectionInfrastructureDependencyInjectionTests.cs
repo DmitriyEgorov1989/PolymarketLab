@@ -78,6 +78,7 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
         AssertSingleton<ICollectorWebSocketFactory>(firstScope, secondScope);
         AssertSingleton<IRawMarketMessageSink>(firstScope, secondScope);
         AssertScoped<IRawMarketMessageWriter>(firstScope, secondScope);
+        AssertScoped<ICollectorDatasetCleanup>(firstScope, secondScope);
         AssertScoped<ICollectorSessionProgressRepository>(firstScope, secondScope);
         AssertScoped<IResolutionObservationRepository>(firstScope, secondScope);
         AssertScoped<IWebSocketResolutionCandidateSource>(firstScope, secondScope);
@@ -113,9 +114,9 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
             .Select(service => service.GetType())
             .Should()
             .Equal(
+                typeof(CollectorSessionStartupReconciliationService),
                 typeof(RawMarketMessagePersistenceWorker),
                 typeof(CollectorRuntimeShutdownService),
-                typeof(CollectorSessionStartupReconciliationService),
                 typeof(CollectorSchedulerBackgroundService),
                 typeof(ResolutionConsensusBackgroundService),
                 typeof(NormalizationBackgroundService),

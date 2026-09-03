@@ -20,7 +20,7 @@ public sealed class CollectorSessionStartupReconcilerTests
         new(2026, 7, 29, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task ReconcileAsync_WithIncompleteSessions_ShouldInvalidateWithoutResuming()
+    public async Task ReconcileAsync_WithIncompleteSessions_ShouldCleanWithoutResuming()
     {
         var sessions = new[]
         {
@@ -31,7 +31,8 @@ public sealed class CollectorSessionStartupReconcilerTests
             CreateSession(CollectorSessionStatus.Invalidating)
         };
         var repository = new StubRepository(sessions);
-        var reconciler = CreateReconciler(repository);
+        var cleanup = new StubCollectorDatasetCleanup();
+        var reconciler = CreateReconciler(repository, cleanup);
 
         var result = await reconciler.ReconcileAsync(CancellationToken.None);
 
@@ -45,6 +46,10 @@ public sealed class CollectorSessionStartupReconcilerTests
         repository.UpdateCalls.Should().OnlyContain(call =>
             call.Status == CollectorSessionStatus.Invalidating
             && call.Phase == CollectorSessionPhase.Cleaning);
+        cleanup.Calls.Should().BeEquivalentTo(sessions.Select(session => session.Id));
+        sessions.Should().OnlyContain(session =>
+            session.Status == CollectorSessionStatus.Failed
+            && session.Phase == null);
     }
 
     [Fact]
@@ -104,6 +109,25 @@ public sealed class CollectorSessionStartupReconcilerTests
         repository.UpdateCalls.Should().HaveCount(3);
     }
 
+    [Fact]
+    public async Task ReconcileAsync_WhenCleanupFails_ShouldStopRecovery()
+    {
+        var session = CreateSession(CollectorSessionStatus.Invalidating);
+        var error = new Error(
+            "collector.dataset_cleanup.failed",
+            "Dataset cleanup failed.",
+            ErrorType.Failure);
+        var cleanup = new StubCollectorDatasetCleanup(error);
+        var reconciler = CreateReconciler(new StubRepository([session]), cleanup);
+
+        var result = await reconciler.ReconcileAsync(CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Be(error);
+        cleanup.Calls.Should().Equal(session.Id);
+        session.Status.Should().Be(CollectorSessionStatus.Invalidating);
+    }
+
     private static CollectorSessionAggregate CreateSession(
         CollectorSessionStatus status)
     {
@@ -138,9 +162,13 @@ public sealed class CollectorSessionStartupReconcilerTests
     }
 
     private static CollectorSessionStartupReconciler CreateReconciler(
-        ICollectorSessionRepository repository) => new(
+        ICollectorSessionRepository repository,
+        StubCollectorDatasetCleanup? cleanup = null) => new(
             repository,
-            new CollectorSessionInvalidationCoordinator(repository, new StubRuntime()),
+            new CollectorSessionInvalidationCoordinator(
+                repository,
+                new StubRuntime()),
+            cleanup ?? new StubCollectorDatasetCleanup(),
             new FixedTimeProvider(Now));
 
     private sealed class StubRepository(

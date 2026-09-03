@@ -148,6 +148,7 @@ public static class DataCollectionInfrastructureDependencyInjection
         });
 
         services.AddScoped<ICollectorSessionRepository, CollectorSessionRepository>();
+        services.AddScoped<ICollectorDatasetCleanup, CollectorDatasetCleanup>();
         services.AddScoped<IResolutionObservationRepository, ResolutionObservationRepository>();
         services.AddScoped<
             IWebSocketResolutionCandidateSource,
@@ -233,10 +234,10 @@ public static class DataCollectionInfrastructureDependencyInjection
         services.AddSingleton<RawMarketMessagePersistenceWorker>();
         services.AddSingleton<IRawMessagePersistenceCompletion>(serviceProvider =>
             serviceProvider.GetRequiredService<RawMarketMessagePersistenceWorker>());
+        services.AddHostedService<CollectorSessionStartupReconciliationService>();
         services.AddHostedService(serviceProvider =>
             serviceProvider.GetRequiredService<RawMarketMessagePersistenceWorker>());
         services.AddHostedService<CollectorRuntimeShutdownService>();
-        services.AddHostedService<CollectorSessionStartupReconciliationService>();
         services.AddHostedService<CollectorSchedulerBackgroundService>();
         services.AddHostedService<ResolutionConsensusBackgroundService>();
         services.AddHostedService<NormalizationBackgroundService>();

@@ -13,6 +13,8 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres
             Set<RawMarketMessageRecord>();
         internal DbSet<CollectorSessionProgressRecord> CollectorSessionProgress =>
             Set<CollectorSessionProgressRecord>();
+        internal DbSet<CollectorDatasetCleanupAuditRecord> CollectorDatasetCleanupAudits =>
+            Set<CollectorDatasetCleanupAuditRecord>();
         internal DbSet<RawMessageNormalizationRecord> RawMessageNormalizations =>
             Set<RawMessageNormalizationRecord>();
         internal DbSet<NormalizedEventRecord> NormalizedEvents =>

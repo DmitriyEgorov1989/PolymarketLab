@@ -685,8 +685,8 @@ upsert в одной транзакции с raw batch. Поэтому read API 
 При пользовательском Stop coordinator сначала запрещает новые runtime producers и
 сохраняет `InvalidatingAt`. Raw writer берёт совместную блокировку строки session:
 уже начатая транзакция завершается перед fence, а последующие сообщения и progress
-этой session ожидаемо не сохраняются. Очистка данных и финальный переход выполняются
-отдельным lifecycle-сценарием.
+этой session ожидаемо не сохраняются. При следующем startup recovery атомарно удаляет
+dataset и выполняет `Invalidating -> Failed` до запуска ingestion, normalizer и API.
 
 После аварийного завершения `messages_persisted` сохраняется точно, а
 `messages_received` и `messages_enqueued` являются durable lower bounds: хвост, оставшийся только в
@@ -974,7 +974,7 @@ Options читаются через обычный `IOptions<T>`. Hot reload у�
 |---|---|
 | `RawMarketMessagePersistenceWorker` | Channel consumer и batch persistence |
 | `CollectorRuntimeShutdownService` | Остановка collectors до ingestion shutdown |
-| `CollectorSessionStartupReconciliationService` | Согласование сессий предыдущего процесса до открытия API |
+| `CollectorSessionStartupReconciliationService` | До остальных hosted services очищает dataset незавершённых сессий предыдущего процесса и отклоняет startup при ошибке recovery |
 | `CollectorSchedulerBackgroundService` | Идемпотентная обработка preparation и readiness boundaries |
 
 Singleton runtime/factory не должны напрямую зависеть от scoped repository или DbContext.
@@ -1096,7 +1096,7 @@ Singleton runtime/factory не должны напрямую зависеть о
 stop command
   -> active session -> Invalidating/Cleaning
   -> CollectorRuntime.StopAsync
-  -> следующий cleanup lifecycle удаляет неполный dataset и завершает session
+  -> startup recovery удаляет неполный dataset и завершает session как Failed
 ```
 
 Следующий этап — проектировать reconnect, повторную subscription и heartbeat.

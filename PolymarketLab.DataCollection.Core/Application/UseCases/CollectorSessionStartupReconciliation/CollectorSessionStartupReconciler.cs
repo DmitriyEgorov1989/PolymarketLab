@@ -11,6 +11,7 @@ namespace PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessio
 public sealed class CollectorSessionStartupReconciler(
     ICollectorSessionRepository sessionRepository,
     ICollectorSessionInvalidationCoordinator invalidationCoordinator,
+    ICollectorDatasetCleanup datasetCleanup,
     TimeProvider timeProvider)
     : ICollectorSessionStartupReconciler
 {
@@ -29,6 +30,14 @@ public sealed class CollectorSessionStartupReconciler(
                 cancellationToken);
             if (result.IsFailure)
                 return UnitResult.Failure(result.Error);
+            if (result.Value is null || result.Value.Status != CollectorSessionStatus.Invalidating)
+                continue;
+
+            var cleanup = await datasetCleanup.CleanupAsync(
+                result.Value,
+                cancellationToken);
+            if (cleanup.IsFailure)
+                return UnitResult.Failure(cleanup.Error);
         }
 
         return UnitResult.Success<Error>();
