@@ -485,6 +485,30 @@ Stop отменяет startup token и ждёт `Completion`.
 
 Это аварийный путь. Production adapter должен корректно переносить dispose одновременно с незавершённым transport operation.
 
+### Controlled drain успешной session
+
+После durable resolution consensus polling и WebSocket scanning прекращаются, а application coordinator `CollectorRawDatasetCompletionCoordinator` выполняет session-scoped успешный drain:
+
+```text
+durable consensus
+-> CAS Stopping/DrainingRaw
+-> CollectorRuntime.StopAsync (producer closed)
+-> wait persisted to final enqueued boundary
+-> durable final checkpoint
+-> one PostgreSQL read: received=enqueued=persisted=raw>0
+-> CAS Stopping/AwaitingNormalization
+```
+
+Ожидание хвоста и final checkpoint выполняет `ICollectorSessionProgressCompletion` поверх in-memory telemetry: после завершения `StopAsync` producer больше не увеличивает `received`/`enqueued`, поэтому снятая в начале граница `enqueued` стабильна. Точное равенство counters и авторитетного `count(raw_market_messages)` проверяет application coordinator одним PostgreSQL read; только после него session переходит к ожиданию нормализации.
+
+Любая ошибка producer stop, drain, checkpoint, PostgreSQL equality read или state transition передаётся в существующий invalidation coordinator с `PersistenceFailure`, сохраняет durable diagnostic и возвращается вызывающей стороне как failure. Исходное исключение infrastructure read журналируется без включения его текста в durable diagnostic.
+
+Этот session-scoped drain намеренно отличается от host-wide channel shutdown:
+
+- успешное завершение одной session **не** вызывает `RawMarketMessagePersistenceWorker.CompleteProducers()` и не закрывает singleton `RawMarketMessageChannel`, поэтому следующие collectors продолжают работать;
+- `CompleteProducers()` остаётся механизмом только host shutdown: он завершает канал, вытесняет хвост и останавливает consumer вместе с процессом;
+- manual Stop и host shutdown по-прежнему ведут session в `Invalidating/Cleaning` через общий invalidation path, а не через успешный completion.
+
 ## Completion
 
 `ICollectorWorker.Completion` — стабильный task всего lifecycle worker. Он возвращает `CollectorWorkerCompletion` с функциональным result, origin (`Startup`, `Autonomous`, `RequestedStop`, `ApplicationShutdown`) и временем обнаружения завершения.

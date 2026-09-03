@@ -22,7 +22,7 @@ internal sealed class CollectorSessionProgressCompletion(
         CollectorSessionId sessionId,
         CancellationToken cancellationToken)
     {
-        var snapshot = telemetry.GetSnapshot(sessionId);
+        var finalEnqueued = telemetry.GetSnapshot(sessionId).Enqueued;
         using var timeoutCts = new CancellationTokenSource(_timeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
@@ -32,14 +32,15 @@ internal sealed class CollectorSessionProgressCompletion(
         {
             await telemetry.WaitUntilPersistedAsync(
                 sessionId,
-                snapshot.Enqueued,
+                finalEnqueued,
                 linkedCts.Token);
 
             await using var scope = scopeFactory.CreateAsyncScope();
             var repository = scope.ServiceProvider
                 .GetRequiredService<ICollectorSessionProgressRepository>();
+            var finalCheckpoint = telemetry.GetCheckpoint(sessionId);
             await repository.CheckpointAsync(
-                telemetry.GetCheckpoint(sessionId),
+                finalCheckpoint,
                 linkedCts.Token);
 
             return UnitResult.Success<Error>();

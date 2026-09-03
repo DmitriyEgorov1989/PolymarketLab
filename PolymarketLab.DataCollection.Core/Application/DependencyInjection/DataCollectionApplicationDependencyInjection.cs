@@ -13,6 +13,7 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRawDatasetCompletion;
 using PolymarketLab.DataCollection.Core.Application.UseCases.ResolutionConsensus;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
@@ -62,6 +63,9 @@ public static class DataCollectionApplicationDependencyInjection
         services.AddScoped<
             ICollectorSessionInvalidationCoordinator,
             CollectorSessionInvalidationCoordinator>();
+        services.AddScoped<
+            ICollectorRawDatasetCompletionCoordinator,
+            CollectorRawDatasetCompletionCoordinator>();
         services.AddSingleton<CollectorBoundaryCheckRegistry>();
         services.AddScoped<
             ICollectorSessionStartupReconciler,

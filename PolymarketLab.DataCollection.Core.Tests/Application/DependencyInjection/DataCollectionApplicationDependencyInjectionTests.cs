@@ -12,6 +12,7 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartColle
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.ReplayNormalization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRawDatasetCompletion;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
@@ -95,6 +96,10 @@ public sealed class DataCollectionApplicationDependencyInjectionTests
         services.Should().ContainSingle(descriptor =>
             descriptor.ServiceType == typeof(IResolutionConsensusCoordinator)
             && descriptor.ImplementationType == typeof(ResolutionConsensusCoordinator)
+            && descriptor.Lifetime == ServiceLifetime.Scoped);
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(ICollectorRawDatasetCompletionCoordinator)
+            && descriptor.ImplementationType == typeof(CollectorRawDatasetCompletionCoordinator)
             && descriptor.Lifetime == ServiceLifetime.Scoped);
         services.Should().ContainSingle(descriptor =>
             descriptor.ServiceType == typeof(WebSocketResolutionValidator)

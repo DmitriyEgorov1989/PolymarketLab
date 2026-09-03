@@ -271,6 +271,106 @@ public sealed class RawMarketMessageWriterPostgreSqlTests(PostgreSqlFixture fixt
     }
 
     [Fact]
+    public async Task GetAsync_WithRestartContext_ShouldReadExactCountersInSingleCommand()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var session = await InsertSessionAsync(database.ConnectionString);
+        await WriteAsync(
+            database.ConnectionString,
+            CreateMessages(session.Id, 1, 3, "restart"),
+            new CollectorSessionProgressCheckpoint(
+                session.Id,
+                1,
+                3,
+                3,
+                3,
+                CreatedAt,
+                0));
+
+        var readerCounter = new ReaderCountInterceptor();
+        await using var restartContext = CreateContext(
+            database.ConnectionString,
+            readerCounter);
+        var progress = await new CollectorSessionProgressRepository(restartContext)
+            .GetAsync(session.Id, CancellationToken.None);
+
+        progress.MessagesReceived.Should().Be(3);
+        progress.MessagesEnqueued.Should().Be(3);
+        progress.MessagesPersisted.Should().Be(3);
+        progress.RawMessageCount.Should().Be(3);
+        readerCounter.ExecutedReaderCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task CheckpointAsync_WhenRepeatedWithIdenticalFinalCheckpoint_ShouldNotDoubleCounters()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var session = await InsertSessionAsync(database.ConnectionString);
+        var finalCheckpoint = new CollectorSessionProgressCheckpoint(
+            session.Id,
+            2,
+            3,
+            3,
+            3,
+            CreatedAt,
+            0);
+
+        await CheckpointAsync(database.ConnectionString, finalCheckpoint);
+        await CheckpointAsync(database.ConnectionString, finalCheckpoint);
+
+        await using var context = CreateContext(database.ConnectionString);
+        var progress = await new CollectorSessionProgressRepository(context)
+            .GetAsync(session.Id, CancellationToken.None);
+        progress.MessagesReceived.Should().Be(3);
+        progress.MessagesEnqueued.Should().Be(3);
+        progress.MessagesPersisted.Should().Be(3);
+        progress.CurrentConnectionEpoch.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task GetAsync_WhenRawCountDiffersFromCheckpoint_ShouldReturnDistinctValues()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var session = await InsertSessionAsync(database.ConnectionString);
+        await using (var setup = CreateContext(database.ConnectionString))
+        {
+            await setup.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                INSERT INTO data_collection.raw_market_messages (
+                    session_id,
+                    connection_epoch,
+                    received_at,
+                    payload)
+                SELECT
+                    {session.Id.Value},
+                    1,
+                    {CreatedAt},
+                    'mismatch'::bytea
+                FROM generate_series(1, 1249);
+                """);
+        }
+        await CheckpointAsync(
+            database.ConnectionString,
+            new CollectorSessionProgressCheckpoint(
+                session.Id,
+                1,
+                1250,
+                1250,
+                1250,
+                CreatedAt,
+                0));
+
+        await using var context = CreateContext(database.ConnectionString);
+        var progress = await new CollectorSessionProgressRepository(context)
+            .GetAsync(session.Id, CancellationToken.None);
+
+        progress.MessagesReceived.Should().Be(1250);
+        progress.MessagesEnqueued.Should().Be(1250);
+        progress.MessagesPersisted.Should().Be(1250);
+        progress.RawMessageCount.Should().Be(1249);
+    }
+
+    [Fact]
     public async Task WriteBatchAsync_WhenCancelled_ShouldNotPersistRawOrProgress()
     {
         await using var database = await CreateMigratedDatabaseAsync();
@@ -504,6 +604,23 @@ public sealed class RawMarketMessageWriterPostgreSqlTests(PostgreSqlFixture fixt
             if (command.CommandText.Contains(commandFragment, StringComparison.Ordinal))
                 _started.TrySetResult();
 
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private sealed class ReaderCountInterceptor : DbCommandInterceptor
+    {
+        private int _executedReaderCount;
+
+        public int ExecutedReaderCount => Volatile.Read(ref _executedReaderCount);
+
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(
+            DbCommand command,
+            CommandExecutedEventData eventData,
+            DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _executedReaderCount);
             return ValueTask.FromResult(result);
         }
     }

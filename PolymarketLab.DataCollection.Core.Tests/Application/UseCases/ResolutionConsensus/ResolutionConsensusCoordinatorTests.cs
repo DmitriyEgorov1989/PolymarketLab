@@ -1,6 +1,7 @@
 using CSharpFunctionalExtensions;
 using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.Resolution;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRawDatasetCompletion;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Application.UseCases.ResolutionConsensus;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
@@ -105,6 +106,7 @@ public sealed class ResolutionConsensusCoordinatorTests
         fixture.Invalidation.Calls[0].Reason.Should().Be(CollectorStopReason.ResolutionFailure);
         fixture.Invalidation.Calls[0].Failure.Code.Should().Be(ResolutionErrors.Conflict.Code);
         fixture.Runtime.StopCalls.Should().Equal(fixture.Session.Id);
+        fixture.RawCompletion.Calls.Should().BeEmpty();
     }
 
     [Fact]
@@ -160,16 +162,42 @@ public sealed class ResolutionConsensusCoordinatorTests
         fixture.Observations.Confirmation!.PrimaryObservationId.Should().Be(gamma.Id);
         fixture.Observations.Confirmation.ConfirmingObservationId.Should().Be(clob.Id);
         fixture.Invalidation.Calls.Should().BeEmpty();
+        fixture.RawCompletion.Calls.Should().Equal(fixture.Session.Id);
+        fixture.Calls.Should().Equal("confirmation_reference", "raw_completion");
 
         fixture.Time.SetUtcNow(fixture.EventEndsAt.AddSeconds(2));
         await fixture.Coordinator.TickAsync(CancellationToken.None);
-        fixture.WebSocket.CallCount.Should().Be(2);
+        fixture.WebSocket.CallCount.Should().Be(1);
         fixture.Gamma.CallCount.Should().Be(1);
         fixture.Clob.CallCount.Should().Be(1);
+        fixture.RawCompletion.Calls.Should().Equal(fixture.Session.Id, fixture.Session.Id);
+        fixture.Calls.Should().Equal(
+            "confirmation_reference",
+            "raw_completion",
+            "raw_completion");
     }
 
     [Fact]
-    public async Task TickAsync_AfterConsensusWithDifferentWebSocketWinner_ShouldInvalidate()
+    public async Task TickAsync_WithPersistedConfirmation_ShouldCompleteWithoutPollingAgain()
+    {
+        var fixture = new Fixture();
+        fixture.Observations.Confirmation = new ResolutionConfirmationReference(
+            1,
+            2,
+            fixture.EventEndsAt);
+
+        var result = await fixture.Coordinator.TickAsync(CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        fixture.WebSocket.CallCount.Should().Be(0);
+        fixture.Gamma.CallCount.Should().Be(0);
+        fixture.Clob.CallCount.Should().Be(0);
+        fixture.RawCompletion.Calls.Should().Equal(fixture.Session.Id);
+        fixture.Invalidation.Calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task TickAsync_AfterConsensusWithDifferentWebSocketCandidate_ShouldCompleteWithoutScanningAgain()
     {
         var fixture = new Fixture();
         fixture.WebSocket.Scans.Enqueue(new WebSocketResolutionScanResult(
@@ -193,9 +221,10 @@ public sealed class ResolutionConsensusCoordinatorTests
         var result = await fixture.Coordinator.TickAsync(CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
-        fixture.Invalidation.Calls.Should().ContainSingle(call =>
-            call.Failure.Code == ResolutionErrors.Conflict.Code);
-        fixture.Runtime.StopCalls.Should().Equal(fixture.Session.Id);
+        fixture.WebSocket.CallCount.Should().Be(1);
+        fixture.RawCompletion.Calls.Should().Equal(fixture.Session.Id, fixture.Session.Id);
+        fixture.Invalidation.Calls.Should().BeEmpty();
+        fixture.Runtime.StopCalls.Should().BeEmpty();
     }
 
     [Fact]
@@ -312,14 +341,16 @@ public sealed class ResolutionConsensusCoordinatorTests
             Session = CollectorSessionTestFactory.CreateRunning(createdAt: CreatedAt);
             EventEndsAt = Session.EventEndsAt!.Value;
             Time = new MutableTimeProvider(EventEndsAt + (afterEventEnd ?? TimeSpan.Zero));
+            Calls = [];
             Sessions = new SessionRepository(Session);
             Progress = new ProgressRepository(Session.Id, currentConnectionEpoch: 2);
             WebSocket = new WebSocketSource();
-            Observations = new ObservationRepository(Session.Id);
+            Observations = new ObservationRepository(Session.Id, Calls);
             Gamma = new GammaSource(() => CreateGamma(GammaTerminalResolutionStatus.NonTerminal));
             Clob = new ClobSource(() => CreateClob(ClobTerminalResolutionStatus.NonTerminal));
             Invalidation = new InvalidationCoordinator(Session);
             Runtime = new CollectorRuntime();
+            RawCompletion = new RawCompletionCoordinator(Calls);
             Coordinator = new ResolutionConsensusCoordinator(
                 Sessions,
                 Progress,
@@ -329,6 +360,7 @@ public sealed class ResolutionConsensusCoordinatorTests
                 Clob,
                 Invalidation,
                 Runtime,
+                RawCompletion,
                 new WebSocketResolutionValidator(),
                 Time);
         }
@@ -336,6 +368,7 @@ public sealed class ResolutionConsensusCoordinatorTests
         public CollectorSessionAggregate Session { get; }
         public DateTimeOffset EventEndsAt { get; }
         public MutableTimeProvider Time { get; }
+        public List<string> Calls { get; }
         public SessionRepository Sessions { get; }
         public ProgressRepository Progress { get; }
         public WebSocketSource WebSocket { get; }
@@ -344,6 +377,7 @@ public sealed class ResolutionConsensusCoordinatorTests
         public ClobSource Clob { get; }
         public InvalidationCoordinator Invalidation { get; }
         public CollectorRuntime Runtime { get; }
+        public RawCompletionCoordinator RawCompletion { get; }
         public IResolutionConsensusCoordinator Coordinator { get; }
 
         public WebSocketResolutionCandidate CreateWebSocketCandidate(
@@ -534,6 +568,21 @@ public sealed class ResolutionConsensusCoordinatorTests
         }
     }
 
+    private sealed class RawCompletionCoordinator(List<string> calls)
+        : ICollectorRawDatasetCompletionCoordinator
+    {
+        public List<CollectorSessionId> Calls { get; } = [];
+
+        public Task<UnitResult<Error>> CompleteAsync(
+            CollectorSessionId requestedSessionId,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add(requestedSessionId);
+            calls.Add("raw_completion");
+            return Task.FromResult(UnitResult.Success<Error>());
+        }
+    }
+
     private sealed class InvalidationCoordinator(CollectorSessionAggregate session)
         : ICollectorSessionInvalidationCoordinator
     {
@@ -577,7 +626,9 @@ public sealed class ResolutionConsensusCoordinatorTests
         }
     }
 
-    private sealed class ObservationRepository(CollectorSessionId sessionId)
+    private sealed class ObservationRepository(
+        CollectorSessionId sessionId,
+        List<string> calls)
         : IResolutionObservationRepository
     {
         private readonly HashSet<(long RawMessageId, int RawItemIndex)> _webSocketKeys = [];
@@ -585,7 +636,7 @@ public sealed class ResolutionConsensusCoordinatorTests
 
         public long LastScannedRawMessageId { get; private set; }
         public DateTimeOffset? LastPollingCycleAt { get; private set; }
-        public ResolutionConfirmationReference? Confirmation { get; private set; }
+        public ResolutionConfirmationReference? Confirmation { get; set; }
         public List<DurableResolutionObservation> Observations { get; } = [];
 
         public Task<DurableResolutionState> GetStateAsync(
@@ -746,6 +797,7 @@ public sealed class ResolutionConsensusCoordinatorTests
             CancellationToken cancellationToken)
         {
             Confirmation = confirmation;
+            calls.Add("confirmation_reference");
             return Task.CompletedTask;
         }
     }

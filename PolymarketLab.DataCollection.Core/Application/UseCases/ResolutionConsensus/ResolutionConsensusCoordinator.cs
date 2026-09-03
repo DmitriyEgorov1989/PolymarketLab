@@ -1,5 +1,6 @@
 using CSharpFunctionalExtensions;
 using PolymarketLab.DataCollection.Core.Application.Resolution;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRawDatasetCompletion;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Domain.Models.Resolution;
@@ -21,6 +22,7 @@ public sealed class ResolutionConsensusCoordinator(
     IClobTerminalResolutionSource clobSource,
     ICollectorSessionInvalidationCoordinator invalidationCoordinator,
     ICollectorRuntime runtime,
+    ICollectorRawDatasetCompletionCoordinator rawDatasetCompletion,
     WebSocketResolutionValidator webSocketValidator,
     TimeProvider timeProvider) : IResolutionConsensusCoordinator
 {
@@ -70,6 +72,13 @@ public sealed class ResolutionConsensusCoordinator(
 
         var deadline = session.EventEndsAt.Value + ConfirmationTimeout;
         var state = await observationRepository.GetStateAsync(session.Id, cancellationToken);
+        if (state.Confirmation is not null)
+        {
+            return await rawDatasetCompletion.CompleteAsync(
+                session.Id,
+                cancellationToken);
+        }
+
         now = timeProvider.GetUtcNow();
         if (state.Confirmation is null && now < deadline && ShouldPoll(state, now))
         {
@@ -118,10 +127,18 @@ public sealed class ResolutionConsensusCoordinator(
             now,
             deadline,
             cancellationToken);
-        if (consensusResult.IsFailure || consensusResult.Value)
-            return consensusResult.IsFailure
-                ? UnitResult.Failure(consensusResult.Error)
-                : UnitResult.Success<Error>();
+        if (consensusResult.IsFailure)
+            return UnitResult.Failure(consensusResult.Error);
+
+        if (consensusResult.Value == ConsensusEvaluation.Confirmed)
+        {
+            return await rawDatasetCompletion.CompleteAsync(
+                session.Id,
+                cancellationToken);
+        }
+
+        if (consensusResult.Value == ConsensusEvaluation.Invalidated)
+            return UnitResult.Success<Error>();
 
         return now >= deadline
             ? await InvalidateAsync(
@@ -331,7 +348,7 @@ public sealed class ResolutionConsensusCoordinator(
             cancellationToken);
     }
 
-    private async Task<Result<bool, Error>> EvaluateConsensusAsync(
+    private async Task<Result<ConsensusEvaluation, Error>> EvaluateConsensusAsync(
         CollectorSessionAggregate session,
         DurableResolutionState state,
         DateTimeOffset now,
@@ -350,7 +367,9 @@ public sealed class ResolutionConsensusCoordinator(
                 now,
                 ResolutionErrors.Conflict,
                 cancellationToken);
-            return invalidation.IsFailure ? invalidation.Error : true;
+            return invalidation.IsFailure
+                ? invalidation.Error
+                : ConsensusEvaluation.Invalidated;
         }
 
         var winners = terminal
@@ -364,11 +383,13 @@ public sealed class ResolutionConsensusCoordinator(
                 now,
                 ResolutionErrors.Conflict,
                 cancellationToken);
-            return invalidation.IsFailure ? invalidation.Error : true;
+            return invalidation.IsFailure
+                ? invalidation.Error
+                : ConsensusEvaluation.Invalidated;
         }
 
         if (state.Confirmation is not null)
-            return true;
+            return ConsensusEvaluation.Confirmed;
 
         var webSocket = terminal.FirstOrDefault(observation =>
             observation.Source == ResolutionObservationSource.WebSocket);
@@ -377,7 +398,7 @@ public sealed class ResolutionConsensusCoordinator(
         var clob = terminal.LastOrDefault(observation =>
             observation.Source == ResolutionObservationSource.Clob);
         if (webSocket is null || gamma is null || clob is null || winners.Length != 1)
-            return false;
+            return ConsensusEvaluation.Pending;
 
         var confirmedAt = new[]
         {
@@ -394,13 +415,13 @@ public sealed class ResolutionConsensusCoordinator(
         if (confirmationResult.IsFailure)
             return confirmationResult.Error;
         if (!confirmationResult.Value)
-            return false;
+            return ConsensusEvaluation.Pending;
 
         await observationRepository.SetConfirmationReferenceAsync(
             session.Id,
             new ResolutionConfirmationReference(gamma.Id, clob.Id, confirmedAt),
             cancellationToken);
-        return true;
+        return ConsensusEvaluation.Confirmed;
     }
 
     private async Task<Result<bool, Error>> ConfirmAsync(
@@ -526,4 +547,11 @@ public sealed class ResolutionConsensusCoordinator(
         "collector.resolution.state_transition_conflict",
         $"Collector session '{sessionId}' changed concurrently during resolution consensus.",
         ErrorType.Conflict);
+
+    private enum ConsensusEvaluation
+    {
+        Pending,
+        Confirmed,
+        Invalidated
+    }
 }
