@@ -15,6 +15,7 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShu
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRawDatasetCompletion;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorNormalizationSuitability;
+using PolymarketLab.DataCollection.Core.Application.UseCases.Common;
 using PolymarketLab.DataCollection.Core.Application.UseCases.ResolutionConsensus;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
@@ -56,6 +57,9 @@ public static class DataCollectionApplicationDependencyInjection
         services.AddScoped<
             ICollectorRuntimeReadinessHandler,
             CollectorRuntimeReadinessHandler>();
+        services.AddScoped<
+            ICollectorSessionResponseFactory,
+            CollectorSessionResponseFactory>();
         services.AddScoped<ICollectorScheduler, CollectorScheduler>();
         services.AddScoped<
             IResolutionConsensusCoordinator,

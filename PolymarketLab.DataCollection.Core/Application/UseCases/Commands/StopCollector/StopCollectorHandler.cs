@@ -7,14 +7,13 @@ using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
-using static PolymarketLab.SharedKernel.Errors.Error;
-using CollectorSessionAggregate = PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.CollectorSession;
+using ErrorList = PolymarketLab.SharedKernel.Errors.Error.ErrorList;
 
 namespace PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
 
 public sealed class StopCollectorHandler(
     ICollectorSessionInvalidationCoordinator invalidationCoordinator,
-    ICollectorSessionProgressRepository progressRepository,
+    ICollectorSessionResponseFactory responseFactory,
     ICollectorRuntime runtime,
     TimeProvider timeProvider)
     : IRequestHandler<StopCollectorCommand, Result<StopCollectorResponse, ErrorList>>
@@ -47,22 +46,14 @@ public sealed class StopCollectorHandler(
                 return Failure(runtimeResult.Error);
         }
 
-        return await ResponseAsync(session, cancellationToken);
+        var response = await responseFactory.CreateAsync(session, cancellationToken);
+        return new StopCollectorResponse(response);
     }
 
     private static bool IsTerminal(CollectorSessionStatus status) => status is
         CollectorSessionStatus.Stopped
         or CollectorSessionStatus.Failed
         or CollectorSessionStatus.Interrupted;
-
-    private async Task<StopCollectorResponse> ResponseAsync(
-        CollectorSessionAggregate session,
-        CancellationToken cancellationToken)
-    {
-        var progress = await progressRepository.GetAsync(session.Id, cancellationToken);
-        return new StopCollectorResponse(
-            CollectorSessionResponse.FromSession(session, progress));
-    }
 
     private static Result<StopCollectorResponse, ErrorList> Failure(params Error[] errors) =>
         Result.Failure<StopCollectorResponse, ErrorList>(errors.ToList());

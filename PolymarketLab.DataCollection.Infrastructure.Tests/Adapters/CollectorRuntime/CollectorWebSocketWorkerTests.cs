@@ -300,6 +300,62 @@ public sealed class CollectorWebSocketWorkerTests
     }
 
     [Fact]
+    public async Task ReceiveAsync_WithInitialBook_ShouldRecordTokenReadinessForCurrentEpoch()
+    {
+        var connection = new StubWebSocketConnection();
+        connection.AddFrame(BookMessage("yes-token"));
+        var sink = new StubRawMarketMessageSink();
+        var dispatcher = new StubReadinessDispatcher();
+        var request = CreateRequest();
+        var enqueuedAt = DateTimeOffset.Parse("2026-08-28T11:59:44Z");
+        var worker = CreateWorker(
+            request,
+            connection,
+            messageSink: sink,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(enqueuedAt));
+
+        await worker.StartAsync(CancellationToken.None);
+        await sink.WaitForMessageAsync();
+        await WaitUntilAsync(() => dispatcher.TokenReadinessRecords.Count == 1);
+        await worker.StopAsync(CancellationToken.None);
+
+        dispatcher.TokenReadinessRecords.Should().ContainSingle().Which.Should()
+            .Be((request.SessionId, "yes-token", 1L, enqueuedAt));
+    }
+
+    [Fact]
+    public async Task ReceiveAsync_WhenReadinessRecordFails_ShouldInvalidateWithSameError()
+    {
+        var connection = new StubWebSocketConnection();
+        connection.AddFrame(BookMessage("yes-token"));
+        var sink = new StubRawMarketMessageSink();
+        var persistenceError = new Error(
+            "collector.runtime.readiness.persistence_failed",
+            "Readiness persistence failed.",
+            ErrorType.Failure);
+        var dispatcher = new StubReadinessDispatcher
+        {
+            RecordInitialBookResult = UnitResult.Failure(persistenceError)
+        };
+        var worker = CreateWorker(
+            CreateRequest(),
+            connection,
+            messageSink: sink,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:50Z")));
+
+        await worker.StartAsync(CancellationToken.None);
+        var completion = await worker.Completion;
+
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Should().BeSameAs(persistenceError);
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
+        dispatcher.InvalidationCount.Should().Be(1);
+    }
+
+    [Fact]
     public async Task StopAsync_WhenEnqueueIsCancelledAfterCompleteMessage_ShouldFail()
     {
         var enqueueEntered = new TaskCompletionSource(
@@ -891,8 +947,25 @@ public sealed class CollectorWebSocketWorkerTests
         public int AwaitingHeartbeatCount { get; private set; }
         public int RunningCount { get; private set; }
         public int InvalidationCount { get; private set; }
+        public UnitResult<Error>? RecordInitialBookResult { get; init; }
+        public List<(CollectorSessionId SessionId, string TokenId, long Epoch, DateTimeOffset EnqueuedAt)>
+            TokenReadinessRecords { get; } = [];
         private readonly TaskCompletionSource _running = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<UnitResult<Error>> RecordInitialBookEnqueuedAsync(
+            CollectorSessionId sessionId,
+            TokenId tokenId,
+            long connectionEpoch,
+            DateTimeOffset enqueuedAt,
+            CancellationToken cancellationToken)
+        {
+            if (RecordInitialBookResult is { IsFailure: true })
+                return Task.FromResult(RecordInitialBookResult.Value);
+
+            TokenReadinessRecords.Add((sessionId, tokenId.Value, connectionEpoch, enqueuedAt));
+            return Task.FromResult(UnitResult.Success<Error>());
+        }
 
         public Task<UnitResult<Error>> MarkAwaitingInitialBooksAsync(
             CollectorSessionId sessionId,

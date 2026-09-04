@@ -38,4 +38,20 @@ public interface ICollectorRuntimeReadinessHandler
         CollectorSessionId sessionId,
         Error failure,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Сохраняет durable-наблюдение успешной постановки initial book одного токена
+    /// текущей connection epoch.
+    /// </summary>
+    /// <param name="sessionId">Идентификатор сессии.</param>
+    /// <param name="tokenId">Внешний идентификатор токена из immutable snapshot.</param>
+    /// <param name="connectionEpoch">Положительная connection epoch наблюдения.</param>
+    /// <param name="enqueuedAt">UTC-момент успешной постановки в bounded ingestion.</param>
+    /// <param name="cancellationToken">Токен отмены операции.</param>
+    Task<UnitResult<Error>> RecordInitialBookEnqueuedAsync(
+        CollectorSessionId sessionId,
+        TokenId tokenId,
+        long connectionEpoch,
+        DateTimeOffset enqueuedAt,
+        CancellationToken cancellationToken);
 }

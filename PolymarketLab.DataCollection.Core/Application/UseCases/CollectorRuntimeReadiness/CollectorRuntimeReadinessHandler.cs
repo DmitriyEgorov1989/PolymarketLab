@@ -3,6 +3,7 @@ using PolymarketLab.DataCollection.Core.Application.Errors;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
@@ -12,6 +13,7 @@ namespace PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntim
 /// <inheritdoc />
 public sealed class CollectorRuntimeReadinessHandler(
     ICollectorSessionRepository sessionRepository,
+    ICollectorTokenReadinessRepository tokenReadinessRepository,
     ICollectorSessionInvalidationCoordinator invalidationCoordinator,
     TimeProvider timeProvider)
     : ICollectorRuntimeReadinessHandler
@@ -42,6 +44,33 @@ public sealed class CollectorRuntimeReadinessHandler(
             sessionId,
             session => session.MarkRunning(subscriptionReadyAt),
             cancellationToken);
+
+    public async Task<UnitResult<Error>> RecordInitialBookEnqueuedAsync(
+        CollectorSessionId sessionId,
+        TokenId tokenId,
+        long connectionEpoch,
+        DateTimeOffset enqueuedAt,
+        CancellationToken cancellationToken)
+    {
+        if (connectionEpoch <= 0 || enqueuedAt == default)
+            return UnitResult.Failure(CollectorRuntimeReadinessErrors.InvalidObservation(sessionId));
+
+        var session = await sessionRepository.GetByIdAsync(sessionId, cancellationToken);
+        if (session is null
+            || session.Status != CollectorSessionStatus.Starting
+            || session.Phase != CollectorSessionPhase.AwaitingInitialBooks)
+        {
+            return UnitResult.Success<Error>();
+        }
+
+        if (!session.Tokens.Any(token => token.TokenId == tokenId))
+            return UnitResult.Failure(CollectorRuntimeReadinessErrors.UnknownSnapshotToken(sessionId, tokenId));
+
+        await tokenReadinessRepository.RecordInitialBookEnqueuedAsync(
+            new CollectorTokenReadiness(sessionId, connectionEpoch, tokenId, enqueuedAt),
+            cancellationToken);
+        return UnitResult.Success<Error>();
+    }
 
     public async Task<UnitResult<Error>> BeginInvalidationAsync(
         CollectorSessionId sessionId,

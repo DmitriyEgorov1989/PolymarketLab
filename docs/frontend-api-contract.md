@@ -68,6 +68,33 @@ Scheduled
 Invalidating
 ```
 
+Поле `phase` уточняет нетерминальную session и является строкой с одним из точных
+значений:
+
+```text
+WaitingForPreparation
+Connecting
+AwaitingInitialBooks
+AwaitingHeartbeat
+ReadyBeforeWindow
+CollectingWindow
+AwaitingResolution
+DrainingRaw
+AwaitingNormalization
+Cleaning
+```
+
+Для terminal statuses (`Stopped`, `Failed`, `Interrupted`) и legacy session `phase`
+равен `null`.
+
+Поля `source` и `status` resolution observations являются строками с точными
+значениями:
+
+```text
+source:  WebSocket, Gamma, Clob
+status:  Rejected, NonTerminal, Terminal, Failed, Conflict
+```
+
 Числовые значения enum в HTTP-контракте не используются.
 
 ## Market DTO
@@ -210,57 +237,186 @@ Identity включает event ID/slug, market ID/slug, condition и упоря
 
 ## CollectorSession DTO
 
+GET и Stop возвращают одинаковый полный снимок session:
+
 ```json
 {
   "sessionId": "22222222-2222-2222-2222-222222222222",
   "marketId": "11111111-1111-1111-1111-111111111111",
-  "status": "Running",
-  "createdAt": "2026-08-06T12:00:00Z",
-  "startedAt": "2026-08-06T12:00:01Z",
+  "snapshot": {
+    "externalEventId": "event-123",
+    "eventSlug": "btc-updown-5m-1200",
+    "externalMarketId": "market-123",
+    "marketSlug": "btc-updown-5m-1200",
+    "conditionId": "0xabc",
+    "eventStartsAt": "2026-09-04T12:00:00Z",
+    "eventEndsAt": "2026-09-04T12:05:00Z",
+    "projectionVersion": 3,
+    "tokens": [
+      { "tokenId": "1001", "outcome": "Yes", "outcomeIndex": 0 },
+      { "tokenId": "1002", "outcome": "No", "outcomeIndex": 1 }
+    ]
+  },
+  "status": "Stopping",
+  "phase": "AwaitingNormalization",
+  "effectiveDeadline": "2026-09-04T12:10:04Z",
+  "createdAt": "2026-09-04T11:57:00Z",
+  "startedAt": "2026-09-04T11:59:00Z",
+  "subscriptionReadyAt": "2026-09-04T11:59:48Z",
   "stoppedAt": null,
+  "invalidatingAt": null,
+  "stopReason": null,
   "failureCode": null,
   "failureMessage": null,
-  "messagesReceived": 120,
-  "messagesPersisted": 118,
-  "lastMessageAt": "2026-08-06T12:29:59Z",
-  "reconnectCount": 0
+  "readiness": {
+    "connectionEpoch": 2,
+    "tokens": [
+      { "tokenId": "1001", "initialBookEnqueuedAt": "2026-09-04T11:59:44Z" },
+      { "tokenId": "1002", "initialBookEnqueuedAt": "2026-09-04T11:59:45Z" }
+    ]
+  },
+  "messagesReceived": 1250,
+  "messagesEnqueued": 1250,
+  "messagesPersisted": 1250,
+  "remainingRawMessageCount": 1250,
+  "lastMessageAt": "2026-09-04T12:05:03Z",
+  "reconnectCount": 1,
+  "normalization": {
+    "rawCount": 1250,
+    "ledgerCount": 1250,
+    "processedCount": 1240,
+    "pendingCount": 10,
+    "processingCount": 0,
+    "unsupportedCount": 0,
+    "invalidCount": 0,
+    "failedCount": 0,
+    "missingCount": 0,
+    "resolutionRawItemProcessed": false
+  },
+  "resolution": {
+    "signaledAt": "2026-09-04T12:05:01Z",
+    "confirmedAt": "2026-09-04T12:05:03Z",
+    "winningTokenId": "1001",
+    "winningOutcome": "Yes",
+    "connectionEpoch": 2,
+    "lastPollingCycleAt": "2026-09-04T12:05:02Z",
+    "sourceStates": [
+      {
+        "source": "WebSocket",
+        "status": "Terminal",
+        "observedAt": "2026-09-04T12:05:01Z",
+        "winningTokenId": "1001",
+        "winningOutcome": "Yes",
+        "errorCode": null,
+        "errorMessage": null
+      },
+      {
+        "source": "Gamma",
+        "status": "Terminal",
+        "observedAt": "2026-09-04T12:05:02Z",
+        "winningTokenId": "1001",
+        "winningOutcome": "Yes",
+        "errorCode": null,
+        "errorMessage": null
+      },
+      {
+        "source": "Clob",
+        "status": "Terminal",
+        "observedAt": "2026-09-04T12:05:03Z",
+        "winningTokenId": "1001",
+        "winningOutcome": "Yes",
+        "errorCode": null,
+        "errorMessage": null
+      }
+    ],
+    "confirmationSources": [
+      {
+        "source": "WebSocket",
+        "status": "Terminal",
+        "observedAt": "2026-09-04T12:05:01Z",
+        "winningTokenId": "1001",
+        "winningOutcome": "Yes",
+        "errorCode": null,
+        "errorMessage": null
+      },
+      {
+        "source": "Gamma",
+        "status": "Terminal",
+        "observedAt": "2026-09-04T12:05:02Z",
+        "winningTokenId": "1001",
+        "winningOutcome": "Yes",
+        "errorCode": null,
+        "errorMessage": null
+      },
+      {
+        "source": "Clob",
+        "status": "Terminal",
+        "observedAt": "2026-09-04T12:05:03Z",
+        "winningTokenId": "1001",
+        "winningOutcome": "Yes",
+        "errorCode": null,
+        "errorMessage": null
+      }
+    ]
+  },
+  "cleanup": null
 }
 ```
 
-`startedAt`, `stoppedAt`, `failureCode`, `failureMessage` и `lastMessageAt` могут быть `null`.
-Для `Failed` backend возвращает сохранённые `failureCode` и `failureMessage`.
-`messagesReceived` считает полностью собранные text messages, а не сделки. В него
-входят `price_change`, `book`, `best_bid_ask`, `last_trade_price` и другие типы
-Polymarket WebSocket events. При `custom_feature_enabled: true` принимаются также
-глобальные события, например `new_market`. `messagesPersisted` считает сообщения,
-подтверждённые PostgreSQL. Counters накопительные в пределах session.
-`reconnectCount` считает успешные повторные WebSocket подключения до readiness
-deadline; initial connect не входит в это значение.
+Правила nullable:
+
+- `snapshot` всегда присутствует; `externalEventId`, `eventSlug`,
+  `externalMarketId`, `marketSlug`, `conditionId`, `eventStartsAt`,
+  `eventEndsAt` и `projectionVersion` равны `null` только у legacy session.
+  `tokens` всегда массив в порядке `outcomeIndex`.
+- `phase` равен `null` для `Stopped`, `Failed`, `Interrupted` и legacy session.
+- `startedAt`, `subscriptionReadyAt`, `stoppedAt`, `invalidatingAt`,
+  `stopReason`, `failureCode`, `failureMessage` и `lastMessageAt` могут быть `null`.
+- `readiness.tokens[].initialBookEnqueuedAt` равен `null`, если для токена нет
+  durable observation текущей connection epoch; timestamp не переносится между
+  epoch.
+- `normalization` равен `null`, если session legacy без `projectionVersion` либо
+  committed cleanup уже удалил dataset; иначе содержит текущие remaining counts
+  snapshot-версии.
+- `resolution` всегда присутствует; `signaledAt`, `confirmedAt`, `winningTokenId`,
+  `winningOutcome`, `connectionEpoch` и `lastPollingCycleAt` равны `null`, а
+  `sourceStates` и `confirmationSources` пусты, пока durable observation нет.
+- `cleanup` равен `null` до committed cleanup. После cleanup содержит
+  `invalidatingAt`, `cleanedAt`, сохранённые `projectionVersion`,
+  `failureCode`/`failureMessage` и deleted counts.
+
+`effectiveDeadline` вычисляется только для фаз с фиксированной границей:
+
+| Фаза | Граница |
+|---|---|
+| `WaitingForPreparation` | `eventStartsAt - 60s` |
+| `Connecting`, `AwaitingInitialBooks`, `AwaitingHeartbeat` | `eventStartsAt - 10s`; при позднем `startedAt` (в диапазоне `T-10s..T`) — `eventStartsAt` |
+| `ReadyBeforeWindow` | `eventStartsAt` |
+| `CollectingWindow` | `eventEndsAt` |
+| `AwaitingResolution` | `eventEndsAt + 5m` |
+| `AwaitingNormalization` | `awaitingNormalizationAt + 5m` |
+| `DrainingRaw`, `Cleaning`, terminal statuses | `null` |
+
+`sourceStates` содержит последнее observation каждого источника по
+`(observedAt, id)` в порядке `WebSocket`, `Gamma`, `Clob`. `confirmationSources`
+содержит exact terminal evidence состоявшегося consensus: WebSocket observation,
+сопоставленный с сохранёнными `resolutionSignaledAt`/winner/epoch, и Gamma/Clob
+observations по идентификаторам из confirmation reference. Поэтому более позднее
+non-terminal observation не скрывает evidence уже состоявшегося подтверждения.
+
+Historical counters `messagesReceived`, `messagesEnqueued` и `messagesPersisted`
+накопительные в пределах session и не обнуляются после cleanup.
+`remainingRawMessageCount` — авторитетное текущее количество raw-сообщений в
+PostgreSQL; после cleanup равен `0`, а `normalization` становится `null`, потому
+что raw/ledger/projections намеренно удалены; cleanup audit объясняет отсутствие
+данных.
+
+Ответ не содержит raw payload, credentials, exception text, stack trace, raw
+provenance (`rawMessageId`, `rawItemIndex`) и outcome arrays наблюдений.
 
 ## GET /api/Collector/{sessionId}
 
-Возвращает session по GUID.
-
-Успешный `result`:
-
-```json
-{
-  "session": {
-    "sessionId": "22222222-2222-2222-2222-222222222222",
-    "marketId": "11111111-1111-1111-1111-111111111111",
-    "status": "Running",
-    "createdAt": "2026-08-06T12:00:00Z",
-    "startedAt": "2026-08-06T12:00:01Z",
-    "stoppedAt": null,
-    "failureCode": null,
-    "failureMessage": null,
-    "messagesReceived": 120,
-    "messagesPersisted": 118,
-    "lastMessageAt": "2026-08-06T12:29:59Z",
-    "reconnectCount": 0
-  }
-}
-```
+Возвращает session по GUID. `result.session` имеет форму `CollectorSession DTO`.
 
 Неизвестный `sessionId` возвращает `404`.
 
@@ -338,26 +494,9 @@ session; mismatch инициирует `Invalidating/Cleaning`.
 
 Останавливает session. Request body отсутствует.
 
-Успешный `result`:
-
-```json
-{
-  "session": {
-    "sessionId": "22222222-2222-2222-2222-222222222222",
-    "marketId": "11111111-1111-1111-1111-111111111111",
-    "status": "Invalidating",
-    "createdAt": "2026-08-06T12:00:00Z",
-    "startedAt": "2026-08-06T12:00:01Z",
-    "stoppedAt": null,
-    "failureCode": "collector.stop.requested_before_success",
-    "failureMessage": "Collector session was stopped before successful completion.",
-    "messagesReceived": 120,
-    "messagesPersisted": 120,
-    "lastMessageAt": "2026-08-06T12:29:59Z",
-    "reconnectCount": 0
-  }
-}
-```
+`result.session` имеет форму `CollectorSession DTO`, как и GET endpoints, включая
+full evidence slices. Для активной session после установки write fence статус
+равен `Invalidating` с `failureCode: collector.stop.requested_before_success`.
 
 Первый Stop до успешного завершения атомарно устанавливает durable write fence и
 возвращает `Invalidating` с первой сохранённой причиной. Повторный Stop является

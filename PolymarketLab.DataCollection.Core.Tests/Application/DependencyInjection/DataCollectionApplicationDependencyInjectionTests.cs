@@ -17,6 +17,7 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorNormalizat
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
+using PolymarketLab.DataCollection.Core.Application.UseCases.Common;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionById;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionByMarket;
 using PolymarketLab.DataCollection.Core.Application.UseCases.ResolutionConsensus;
@@ -78,6 +79,10 @@ public sealed class DataCollectionApplicationDependencyInjectionTests
         services.Should().Contain(descriptor =>
             descriptor.ServiceType == typeof(ICollectorRuntimeFailureHandler)
             && descriptor.ImplementationType == typeof(CollectorRuntimeFailureHandler)
+            && descriptor.Lifetime == ServiceLifetime.Scoped);
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(ICollectorSessionResponseFactory)
+            && descriptor.ImplementationType == typeof(CollectorSessionResponseFactory)
             && descriptor.Lifetime == ServiceLifetime.Scoped);
         services.Should().Contain(descriptor =>
             descriptor.ServiceType == typeof(ICollectorSessionStartupReconciler)

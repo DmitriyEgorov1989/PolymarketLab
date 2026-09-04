@@ -5,6 +5,7 @@ using PolymarketLab.Core.Options;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime.WebSockets;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
+using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using System.Buffers;
 using System.Net.WebSockets;
@@ -686,6 +687,15 @@ internal sealed class CollectorWebSocketWorker(
 
                 if (observation.TokenId is not null)
                 {
+                    var readinessResult = await readinessDispatcher.RecordInitialBookEnqueuedAsync(
+                        request.SessionId,
+                        TokenId.Create(observation.TokenId).Value,
+                        state.Epoch,
+                        timeProvider.GetUtcNow(),
+                        receiveToken);
+                    if (readinessResult.IsFailure)
+                        return UnitResult.Failure(readinessResult.Error);
+
                     state.ObserveInitialBook(observation.TokenId);
                     await TryCompleteReadinessAsync(state, receiveToken);
                 }

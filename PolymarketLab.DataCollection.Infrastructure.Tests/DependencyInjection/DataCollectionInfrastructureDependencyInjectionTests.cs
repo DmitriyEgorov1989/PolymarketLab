@@ -84,7 +84,9 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
         AssertSingleton<IRawMarketMessageSink>(firstScope, secondScope);
         AssertScoped<IRawMarketMessageWriter>(firstScope, secondScope);
         AssertScoped<ICollectorDatasetCleanup>(firstScope, secondScope);
+        AssertScoped<ICollectorDatasetCleanupAuditReader>(firstScope, secondScope);
         AssertScoped<ICollectorSessionProgressRepository>(firstScope, secondScope);
+        AssertScoped<ICollectorTokenReadinessRepository>(firstScope, secondScope);
         AssertScoped<IResolutionObservationRepository>(firstScope, secondScope);
         AssertScoped<IWebSocketResolutionCandidateSource>(firstScope, secondScope);
         AssertScoped<IRawMessageNormalizationClaimRepository>(firstScope, secondScope);

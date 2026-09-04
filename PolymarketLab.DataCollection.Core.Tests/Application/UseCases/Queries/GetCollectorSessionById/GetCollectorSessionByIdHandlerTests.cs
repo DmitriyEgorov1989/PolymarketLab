@@ -1,5 +1,6 @@
 using CSharpFunctionalExtensions;
 using FluentAssertions;
+using PolymarketLab.DataCollection.Core.Application.UseCases.Common;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionById;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
@@ -82,9 +83,13 @@ public sealed class GetCollectorSessionByIdHandlerTests
         ICollectorSessionRepository repository,
         ICollectorSessionProgressRepository? progressRepository = null)
     {
-        return new GetCollectorSessionByIdHandler(
-            repository,
-            progressRepository ?? new StubProgressRepository());
+        var responseFactory = new CollectorSessionResponseFactory(
+            progressRepository ?? new StubProgressRepository(),
+            new StubCollectorTokenReadinessRepository(),
+            new StubResolutionObservationRepository(),
+            new StubCollectorDatasetCleanupAuditReader(),
+            new StubNormalizationSuitabilityReader());
+        return new GetCollectorSessionByIdHandler(repository, responseFactory);
     }
 
     private static CollectorSessionAggregate CreateSession()

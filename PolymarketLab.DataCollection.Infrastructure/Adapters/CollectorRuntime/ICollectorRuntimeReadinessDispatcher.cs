@@ -23,4 +23,11 @@ internal interface ICollectorRuntimeReadinessDispatcher
         CollectorSessionId sessionId,
         Error failure,
         CancellationToken cancellationToken);
+
+    Task<UnitResult<Error>> RecordInitialBookEnqueuedAsync(
+        CollectorSessionId sessionId,
+        TokenId tokenId,
+        long connectionEpoch,
+        DateTimeOffset enqueuedAt,
+        CancellationToken cancellationToken);
 }

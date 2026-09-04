@@ -50,6 +50,21 @@ internal sealed class CollectorRuntimeReadinessDispatcher(
                 failure,
                 cancellationToken));
 
+    public Task<UnitResult<Error>> RecordInitialBookEnqueuedAsync(
+        CollectorSessionId sessionId,
+        TokenId tokenId,
+        long connectionEpoch,
+        DateTimeOffset enqueuedAt,
+        CancellationToken cancellationToken) =>
+        DispatchAsync(
+            sessionId,
+            handler => handler.RecordInitialBookEnqueuedAsync(
+                sessionId,
+                tokenId,
+                connectionEpoch,
+                enqueuedAt,
+                cancellationToken));
+
     private async Task<UnitResult<Error>> DispatchAsync(
         CollectorSessionId sessionId,
         Func<ICollectorRuntimeReadinessHandler, Task<UnitResult<Error>>> action)

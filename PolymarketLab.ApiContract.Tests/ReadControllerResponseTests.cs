@@ -243,16 +243,52 @@ public sealed class ReadControllerResponseTests
         return new CollectorSessionResponse(
             sessionId,
             marketId ?? Guid.NewGuid(),
+            new CollectorSessionSnapshotResponse(
+                "event-123",
+                "event-slug",
+                "market-123",
+                "market-slug",
+                "0xabc",
+                CreatedAt,
+                CreatedAt.AddMinutes(5),
+                3,
+                [
+                    new CollectorSessionTokenResponse("token-yes", "Yes", 0),
+                    new CollectorSessionTokenResponse("token-no", "No", 1)
+                ]),
             status,
+            status == "Running" ? "CollectingWindow" : null,
+            status == "Running" ? CreatedAt.AddMinutes(5) : null,
             CreatedAt,
             CreatedAt.AddSeconds(1),
+            status == "Running" ? CreatedAt.AddSeconds(2) : null,
             status == "Running" ? null : CreatedAt.AddMinutes(30),
+            null,
+            status == "Running" ? null : "MarketClosed",
             status == "Failed" ? "collector.runtime.receive.failed" : null,
             status == "Failed" ? "Receive failed." : null,
+            new CollectorReadinessResponse(
+                1,
+                [
+                    new CollectorTokenReadinessResponse(
+                        "token-yes",
+                        CreatedAt.AddSeconds(1)),
+                    new CollectorTokenReadinessResponse(
+                        "token-no",
+                        CreatedAt.AddSeconds(1))
+                ]),
+            120,
             120,
             118,
+            118,
             CreatedAt.AddMinutes(29),
-            2);
+            2,
+            status == "Running"
+                ? new CollectorNormalizationResponse(
+                    118, 118, 100, 18, 0, 0, 0, 0, 0, false)
+                : null,
+            new CollectorResolutionResponse(null, null, null, null, null, null, [], []),
+            null);
     }
 
     private static Envelope AssertOkEnvelope<T>(ActionResult<T> action)

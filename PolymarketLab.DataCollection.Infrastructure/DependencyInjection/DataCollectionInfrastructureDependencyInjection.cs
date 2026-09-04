@@ -149,6 +149,9 @@ public static class DataCollectionInfrastructureDependencyInjection
 
         services.AddScoped<ICollectorSessionRepository, CollectorSessionRepository>();
         services.AddScoped<ICollectorDatasetCleanup, CollectorDatasetCleanup>();
+        services.AddScoped<
+            ICollectorDatasetCleanupAuditReader,
+            CollectorDatasetCleanupAuditReader>();
         services.AddScoped<IResolutionObservationRepository, ResolutionObservationRepository>();
         services.AddScoped<
             IWebSocketResolutionCandidateSource,
@@ -157,6 +160,9 @@ public static class DataCollectionInfrastructureDependencyInjection
         services.AddScoped<
             ICollectorSessionProgressRepository,
             CollectorSessionProgressRepository>();
+        services.AddScoped<
+            ICollectorTokenReadinessRepository,
+            CollectorTokenReadinessRepository>();
         services.AddScoped<IMarketCollectionSource, MarketCollectionSource>();
         services.AddHttpClient<IOrderBookSnapshotSource, PolymarketOrderBookClient>();
         services.AddHttpClient<IGammaTerminalResolutionSource, GammaTerminalResolutionClient>();

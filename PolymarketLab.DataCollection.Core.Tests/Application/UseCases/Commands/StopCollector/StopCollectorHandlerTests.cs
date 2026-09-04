@@ -3,6 +3,7 @@ using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.Errors;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
+using PolymarketLab.DataCollection.Core.Application.UseCases.Common;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
@@ -286,9 +287,15 @@ public sealed class StopCollectorHandlerTests
         public Task<Result<StopCollectorResponse, Error.ErrorList>> HandleAsync(
             Guid? sessionId = null)
         {
+            var responseFactory = new CollectorSessionResponseFactory(
+                ProgressRepository,
+                new StubCollectorTokenReadinessRepository(),
+                new StubResolutionObservationRepository(),
+                new StubCollectorDatasetCleanupAuditReader(),
+                new StubNormalizationSuitabilityReader());
             var handler = new StopCollectorHandler(
                 new CollectorSessionInvalidationCoordinator(Repository, Runtime),
-                ProgressRepository,
+                responseFactory,
                 Runtime,
                 new FixedTimeProvider(Now));
 
