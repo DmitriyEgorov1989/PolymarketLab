@@ -60,18 +60,16 @@ docker compose up -d --build api
 
 ## Доступные рынки
 
-Frontend запрашивает `GET /api/Market?tradingNow=true` и обновляет список каждые
-30 секунд. Backend оставляет только рынки, для которых свежий ответ Gamma содержит
-`active: true`, `closed: false`, `acceptingOrders: true` и включённый order book.
+Frontend запрашивает `GET /api/Market` и обновляет список всех зарегистрированных
+рынков каждые 30 секунд. Поэтому будущий рынок можно выбрать и запустить заранее.
 Frontend показывает `marketSlug` в списке, а в деталях различает identity
 родительского event и дочернего market и отображает все schedule timestamps.
 Nullable timestamps показываются как `-`. Schedule не определяет доступность:
 Gamma может продолжать принимать orders после формального `eventEndsAt`.
 
-Перед запуском collector backend повторно проверяет Gamma. Сбор разрешён только
-при `active: true`, `closed: false`, `acceptingOrders: true`, включённом order book
-по данным Gamma. При ошибке обновления frontend скрывает ранее загруженный список,
-поскольку его актуальность больше не подтверждена.
+Перед запуском collector backend повторно проверяет identity, schedule и terminal
+state через Gamma. Readiness flags проверяются backend на lifecycle boundaries;
+frontend не повторяет эту orchestration.
 
 Если выбранный рынок исчезает после обновления списка, frontend сбрасывает выбор
 и не переключает управление автоматически на другой рынок.
@@ -87,6 +85,18 @@ WebSocket, а не количество сделок. В счётчик вход
 Разница между счётчиками показывает текущий backlog сохранения. При включённом
 `CollectorWebSocket:CustomFeatureEnabled` поток также содержит глобальные события
 вроде `new_market`.
+
+## Lifecycle Сборщика
+
+Dashboard показывает точные status/phase, effective deadline и countdown,
+readiness каждого snapshot token, connection epoch, historical counters,
+remaining raw rows, resolution WebSocket/Gamma/Clob, normalization и cleanup audit.
+Polling выполняется для `Scheduled`, `Starting`, `Running`, `Stopping` и
+`Invalidating`, а для terminal и неизвестного status останавливается.
+
+Известная exclusive session любого зарегистрированного рынка блокирует Start до
+POST. Backend HTTP `409` остаётся авторитетной защитой гонки. Досрочный Stop требует
+подтверждения и отображается как фактический переход `Invalidating -> Failed`.
 
 ## Проверки
 

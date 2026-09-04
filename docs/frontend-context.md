@@ -101,7 +101,7 @@ Collector panel
 `docs/frontend-api-contract.md`. Фактические endpoints:
 
 ```http
-GET  /api/Market?tradingNow=true
+GET  /api/Market
 GET  /api/Market/{marketId}
 POST /api/Market
 GET  /api/Collector/{sessionId}
@@ -110,17 +110,16 @@ POST /api/Collector
 POST /api/Collector/{sessionId}/stop
 ```
 
-Все ответы используют `Envelope`. Collector session read API возвращает durable
-received/persisted counters, время последнего сообщения и reconnect count.
+Все ответы используют `Envelope`. Collector session read API возвращает immutable
+snapshot, status/phase/deadline, readiness, durable counters, resolution,
+normalization и cleanup audit.
 `messagesReceived` означает число полных WebSocket text messages, а не число сделок;
 активные краткосрочные рынки могут генерировать сотни таких сообщений в секунду.
 
-`GET /api/Market` без query parameters возвращает все зарегистрированные рынки.
-Frontend использует `GET /api/Market?tradingNow=true`: backend проверяет каждый
-рынок через Gamma и возвращает только рынки с активными торгами. При ошибке live-
-проверки frontend скрывает устаревший список. Список обновляется каждые 30 секунд.
-Schedule timestamps остаются отображаемыми метаданными: Gamma status flags имеют
-приоритет, поскольку orders могут приниматься после формального `eventEndsAt`.
+Frontend использует `GET /api/Market` без query parameters и обновляет список всех
+зарегистрированных рынков каждые 30 секунд. Поэтому future market остаётся видимым
+и selectable до открытия торгов. Live Gamma checks выполняются backend на Start и
+lifecycle boundaries, а не при отображении списка.
 
 Перед созданием collector session backend выполняет live-проверку Gamma. Сбор
 доступен только при `active`, отсутствии `closed`, включённых `acceptingOrders` и
@@ -163,22 +162,13 @@ export interface MarketDto {
   scheduleRefreshedAt: string;
   tokens: MarketTokenDto[];
 }
-
-export interface CollectorSessionDto {
-  sessionId: string;
-  marketId: string;
-  status: 'Starting' | 'Running' | 'Stopping' | 'Stopped' | 'Failed' | 'Interrupted';
-  createdAt: string;
-  startedAt: string | null;
-  stoppedAt: string | null;
-  failureCode: string | null;
-  failureMessage: string | null;
-  messagesReceived: number;
-  messagesPersisted: number;
-  lastMessageAt: string | null;
-  reconnectCount: number;
-}
 ```
+
+`CollectorSessionDto` не дублируется здесь: его точная полная форма и nullable
+семантика зафиксированы в `docs/frontend-api-contract.md`. Frontend сохраняет все
+восемь status values, nullable phase, snapshot/readiness, historical
+received/enqueued/persisted counters, remaining raw count, resolution,
+normalization и cleanup без локальной подмены server state.
 
 ## Первый рекомендуемый milestone
 
@@ -201,7 +191,7 @@ export interface CollectorSessionDto {
 - Приложение запускается локально.
 - TypeScript strict mode включён.
 - Список рынков загружается.
-- Список зарегистрированных рынков с активными торгами периодически обновляется.
+- Список всех зарегистрированных рынков периодически обновляется.
 - Loading/empty/error states реализованы.
 - Рынок регистрируется по URL.
 - Backend errors отображаются корректно.
@@ -212,13 +202,14 @@ export interface CollectorSessionDto {
 - Перед запуском CollectorSession backend проверяет актуальную доступность рынка.
 - Вторая активная сессия не запускается из UI.
 - Статусы отображаются без искажения смысла.
-- Polling работает для активной session.
+- Polling работает для `Scheduled`, `Starting`, `Running`, `Stopping`, `Invalidating`.
+- Polling останавливается для terminal и неизвестных statuses.
 - Messages received отображается.
 - Messages persisted отображается.
 - Unpersisted отображается.
 - Reconnect count отображается.
 - Last error отображается.
-- Session можно остановить.
+- Destructive Stop требует подтверждения.
 - Frontend ждёт фактический terminal status от backend.
 - Responsive layout работает.
 - Основные элементы доступны с клавиатуры.

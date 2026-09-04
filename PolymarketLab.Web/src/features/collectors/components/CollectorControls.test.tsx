@@ -3,6 +3,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { CollectorSession } from '../model/collectorSession';
+import { createCollectorSession } from '../testing/createCollectorSession';
 import { CollectorControls } from './CollectorControls';
 
 describe('CollectorControls', () => {
@@ -23,11 +24,11 @@ describe('CollectorControls', () => {
     expect(onStart).toHaveBeenCalledOnce();
   });
 
-  it.each(['Starting', 'Running', 'Stopping'] as const)(
+  it.each(['Scheduled', 'Starting', 'Running', 'Stopping'] as const)(
     'allows Stop and blocks Start for %s',
     (status) => {
       const onStop = vi.fn();
-      renderControls({ session: createSession(status), onStop });
+      renderControls({ session: createCollectorSession({ status }), onStop });
 
       expect(startButton().disabled).toBe(true);
       expect(stopButton().disabled).toBe(false);
@@ -36,10 +37,25 @@ describe('CollectorControls', () => {
     },
   );
 
+  it('blocks Stop and Start while Invalidating', () => {
+    renderControls({ session: createCollectorSession({ status: 'Invalidating' }) });
+
+    expect(startButton().disabled).toBe(true);
+    expect(stopButton().disabled).toBe(true);
+  });
+
+  it('blocks Stop for an unknown status', () => {
+    renderControls({
+      session: createCollectorSession({ status: 'FutureStatus' as CollectorSession['status'] }),
+    });
+
+    expect(stopButton().disabled).toBe(true);
+  });
+
   it.each(['Stopped', 'Failed', 'Interrupted'] as const)(
     'allows a new Start and blocks Stop for %s',
     (status) => {
-      renderControls({ session: createSession(status) });
+      renderControls({ session: createCollectorSession({ status }) });
 
       expect(startButton().disabled).toBe(false);
       expect(stopButton().disabled).toBe(true);
@@ -47,7 +63,10 @@ describe('CollectorControls', () => {
   );
 
   it('blocks both controls while a mutation is pending', () => {
-    renderControls({ session: createSession('Running'), isStopPending: true });
+    renderControls({
+      session: createCollectorSession({ status: 'Running' }),
+      isStopPending: true,
+    });
 
     expect(startButton().disabled).toBe(true);
     expect(stopButton().disabled).toBe(true);
@@ -76,6 +95,8 @@ function renderControls(options: RenderControlsOptions = {}) {
       isStopPending={options.isStopPending ?? false}
       isMutationPending={options.isMutationPending
         ?? ((options.isStartPending ?? false) || (options.isStopPending ?? false))}
+      isGlobalSlotResolved={true}
+      isBlockedByOtherMarket={false}
       onStart={options.onStart ?? vi.fn()}
       onStop={options.onStop ?? vi.fn()}
     />,
@@ -88,21 +109,4 @@ function startButton(): HTMLButtonElement {
 
 function stopButton(): HTMLButtonElement {
   return screen.getByRole('button', { name: /Stop collector|Останавливаем/ }) as HTMLButtonElement;
-}
-
-function createSession(status: CollectorSession['status']): CollectorSession {
-  return {
-    sessionId: 'session-id',
-    marketId: 'market-id',
-    status,
-    createdAt: '2026-08-06T12:00:00Z',
-    startedAt: '2026-08-06T12:00:01Z',
-    stoppedAt: null,
-    failureCode: null,
-    failureMessage: null,
-    messagesReceived: 0,
-    messagesPersisted: 0,
-    lastMessageAt: null,
-    reconnectCount: 0,
-  };
 }

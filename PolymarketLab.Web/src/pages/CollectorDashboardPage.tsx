@@ -92,7 +92,10 @@ export function CollectorDashboardPage() {
 
         <article className="card collector-card" aria-labelledby="collector-panel-title">
           <h2 id="collector-panel-title">Управление коллектором</h2>
-          <CollectorPanel marketId={selectedMarketId} />
+          <CollectorPanel
+            marketId={selectedMarketId}
+            registeredMarketIds={marketsQuery.data?.map((market) => market.marketId) ?? []}
+          />
         </article>
       </section>
     </main>

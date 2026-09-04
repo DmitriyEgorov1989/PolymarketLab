@@ -20,7 +20,7 @@ describe('marketsApi', () => {
     await getMarkets();
     await getMarketById('market/id');
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/Market?tradingNow=true');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/Market');
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/Market/market%2Fid');
   });
 

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '../../../api/apiError';
 import {
   getCollectorById,
   getCollectorByMarketId,
@@ -13,8 +14,10 @@ import {
 } from '../../../api/collectorsApi';
 import { collectorKeys } from '../model/collectorKeys';
 import { ACTIVE_COLLECTOR_POLL_INTERVAL_MS } from '../model/collectorStatus';
+import { createCollectorSession } from '../testing/createCollectorSession';
 import { useCollectorByIdQuery } from './useCollectorByIdQuery';
 import { useCollectorByMarketQuery } from './useCollectorByMarketQuery';
+import { useCollectorSlotsQuery } from './useCollectorSlotsQuery';
 import { useStartCollector } from './useStartCollector';
 import { useStopCollector } from './useStopCollector';
 
@@ -52,7 +55,7 @@ describe('collector hooks', () => {
   });
 
   it('loads and unwraps a collector by market', async () => {
-    const session = createSession();
+    const session = createCollectorSession();
     getCollectorByMarketIdMock.mockImplementation((marketId, signal) => {
       expect(marketId).toBe(session.marketId);
       expect(signal).toBeInstanceOf(AbortSignal);
@@ -81,13 +84,77 @@ describe('collector hooks', () => {
     expect(result.current.data).toBeNull();
   });
 
-  it('polls a session by id and stops polling after a terminal status', async () => {
+  it('does not report the exclusive slot as free until every market read succeeds', async () => {
+    const exclusive = createCollectorSession({ marketId: 'market-b', status: 'Scheduled' });
+    getCollectorByMarketIdMock.mockImplementation(async (marketId) => {
+      if (marketId === 'market-a') {
+        throw new ApiError('Temporary discovery failure.', 500);
+      }
+
+      return { session: exclusive };
+    });
+    const queryClient = createQueryClient();
+    const { result } = renderHook(
+      () => useCollectorSlotsQuery(['market-a', 'market-b']),
+      { wrapper: createWrapper(queryClient) },
+    );
+
+    await waitFor(() => expect(result.current.errors).toHaveLength(1));
+    expect(result.current.isResolved).toBe(false);
+    expect(result.current.exclusiveSession).toEqual(exclusive);
+
+    getCollectorByMarketIdMock.mockImplementation(async (marketId) => ({
+      session: marketId === 'market-b' ? exclusive : null,
+    }));
+    await act(() => result.current.retry());
+
+    await waitFor(() => expect(result.current.isResolved).toBe(true));
+    expect(result.current.errors).toHaveLength(0);
+  });
+
+  it('reports a known free slot without confusing it with an unresolved session', async () => {
+    getCollectorByMarketIdMock.mockResolvedValue({ session: null });
+    const queryClient = createQueryClient();
+    const { result } = renderHook(
+      () => useCollectorSlotsQuery(['market-a', 'market-b']),
+      { wrapper: createWrapper(queryClient) },
+    );
+
+    await waitFor(() => expect(result.current.isResolved).toBe(true));
+    expect(result.current.exclusiveSession).toBeNull();
+  });
+
+  it('polls an active global slot every two seconds', async () => {
     vi.useFakeTimers();
-    const running = createSession();
-    const stopped = { ...running, status: 'Stopped' as const };
+    const scheduled = createCollectorSession({ status: 'Scheduled' });
+    const starting = createCollectorSession({ status: 'Starting', phase: 'Connecting' });
+    getCollectorByMarketIdMock
+      .mockResolvedValueOnce({ session: scheduled })
+      .mockResolvedValue({ session: starting });
+    const queryClient = createQueryClient();
+    const { result } = renderHook(
+      () => useCollectorSlotsQuery([scheduled.marketId]),
+      { wrapper: createWrapper(queryClient) },
+    );
+
+    await vi.waitFor(() => expect(result.current.exclusiveSession?.status).toBe('Scheduled'));
+    await act(() => vi.advanceTimersByTimeAsync(ACTIVE_COLLECTOR_POLL_INTERVAL_MS));
+    await vi.waitFor(() => expect(result.current.exclusiveSession?.status).toBe('Starting'));
+    expect(getCollectorByMarketIdMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['Stopped', 'Failed', 'Interrupted', 'FutureStatus'] as const)(
+    'stops polling after status %s',
+    async (terminalStatus) => {
+    vi.useFakeTimers();
+    const running = createCollectorSession();
+    const terminal = {
+      ...running,
+      status: terminalStatus as CollectorSessionResponse['status'],
+    };
     getCollectorByIdMock
       .mockResolvedValueOnce({ session: running })
-      .mockResolvedValue({ session: stopped });
+      .mockResolvedValue({ session: terminal });
     const queryClient = createQueryClient();
 
     const { result } = renderHook(
@@ -97,18 +164,19 @@ describe('collector hooks', () => {
 
     await vi.waitFor(() => expect(result.current.data?.status).toBe('Running'));
     await act(() => vi.advanceTimersByTimeAsync(ACTIVE_COLLECTOR_POLL_INTERVAL_MS));
-    await vi.waitFor(() => expect(result.current.data?.status).toBe('Stopped'));
+    await vi.waitFor(() => expect(result.current.data?.status).toBe(terminalStatus));
     expect(queryClient.getQueryData(collectorKeys.byMarket(running.marketId)))
-      .toEqual({ session: stopped });
+      .toEqual({ session: terminal });
     const callsAfterStop = getCollectorByIdMock.mock.calls.length;
 
     await act(() => vi.advanceTimersByTimeAsync(ACTIVE_COLLECTOR_POLL_INTERVAL_MS * 2));
     expect(getCollectorByIdMock).toHaveBeenCalledTimes(callsAfterStop);
-  });
+    },
+  );
 
   it('continues detail polling when the first backend read fails', async () => {
     vi.useFakeTimers();
-    const session = createSession();
+    const session = createCollectorSession();
     getCollectorByIdMock
       .mockRejectedValueOnce(new Error('Temporary read failure.'))
       .mockResolvedValue({ session });
@@ -127,12 +195,12 @@ describe('collector hooks', () => {
 
   it('does not replace a different active by-market session with a late detail response', async () => {
     const oldSession = {
-      ...createSession(),
+      ...createCollectorSession(),
       sessionId: 'old-session-id',
       status: 'Stopped' as const,
     };
     const activeSession = {
-      ...createSession(),
+      ...createCollectorSession(),
       sessionId: 'active-session-id',
       createdAt: '2026-08-06T13:00:00Z',
     };
@@ -170,7 +238,7 @@ describe('collector hooks', () => {
   });
 
   it('loads a collector by session id', async () => {
-    const session = createSession();
+    const session = createCollectorSession();
     getCollectorByIdMock.mockResolvedValue({ session });
     const queryClient = createQueryClient();
 
@@ -208,11 +276,15 @@ describe('collector hooks', () => {
     });
   });
 
-  it('invalidates collector queries after stop using the backend session', async () => {
-    const session = createSession();
-    stopCollectorMock.mockResolvedValue({ session: { ...session, status: 'Stopped' } });
+  it('writes the backend stop response to detail and by-market caches immediately', async () => {
+    const session = createCollectorSession();
+    const invalidating = {
+      ...session,
+      status: 'Invalidating' as const,
+      phase: 'Cleaning',
+    };
+    stopCollectorMock.mockResolvedValue({ session: invalidating });
     const queryClient = createQueryClient();
-    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
     const { result } = renderHook(() => useStopCollector(), {
       wrapper: createWrapper(queryClient),
@@ -220,29 +292,12 @@ describe('collector hooks', () => {
     act(() => result.current.mutate(session.sessionId));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: collectorKeys.detail(session.sessionId),
-    });
-    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    expect(queryClient.getQueryData(collectorKeys.detail(session.sessionId)))
+      .toEqual({ session: invalidating });
+    expect(queryClient.getQueryData(collectorKeys.byMarket(session.marketId)))
+      .toEqual({ session: invalidating });
   });
 });
-
-function createSession(): CollectorSessionResponse {
-  return {
-    sessionId: 'session-id',
-    marketId: 'market-id',
-    status: 'Running',
-    createdAt: '2026-08-06T12:00:00Z',
-    startedAt: '2026-08-06T12:00:01Z',
-    stoppedAt: null,
-    failureCode: null,
-    failureMessage: null,
-    messagesReceived: 10,
-    messagesPersisted: 8,
-    lastMessageAt: '2026-08-06T12:00:05Z',
-    reconnectCount: 0,
-  };
-}
 
 function createQueryClient(): QueryClient {
   return new QueryClient({

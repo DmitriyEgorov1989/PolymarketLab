@@ -4,6 +4,7 @@ Search this registry on demand; do not load every skill into every session. Proj
 
 | Skill | Canonical path | When to use |
 |---|---|---|
+| `analyzing-tasks` | `.harness/skills/analyzing-tasks` | Study, explain, assess, take, or plan a repository issue before implementation. |
 | `brainstorming` | `.harness/skills/brainstorming` | Clarify ambiguous product behavior or compare approaches before implementation; do not create a spec artifact unless requested. |
 | `code-review` | `.harness/skills/code-review` | Review a fixed diff against repository standards and the user's request or available specification. |
 | `codebase-design` | `.harness/skills/codebase-design` | Evaluate an interface or test seam while preserving the repository's established module boundaries and terminology. |

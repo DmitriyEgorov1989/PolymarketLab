@@ -496,7 +496,7 @@ session; mismatch инициирует `Invalidating/Cleaning`.
 
 `result.session` имеет форму `CollectorSession DTO`, как и GET endpoints, включая
 full evidence slices. Для активной session после установки write fence статус
-равен `Invalidating` с `failureCode: collector.stop.requested_before_success`.
+равен `Invalidating` с `failureCode: collector.stop.requested`.
 
 Первый Stop до успешного завершения атомарно устанавливает durable write fence и
 возвращает `Invalidating` с первой сохранённой причиной. Повторный Stop является

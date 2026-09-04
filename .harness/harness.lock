@@ -38,6 +38,12 @@
   ],
   "skills": [
     {
+      "name": "analyzing-tasks",
+      "source_id": "project-local",
+      "source_path": ".harness/skills/analyzing-tasks",
+      "content_mode": "project-authored"
+    },
+    {
       "name": "brainstorming",
       "source_id": "superpowers-direct",
       "source_path": "skills/brainstorming",
@@ -111,6 +117,7 @@
     }
   ],
   "files": {
+    ".harness/skills/analyzing-tasks/SKILL.md": "9818ca630ca4d3619bd640fff123a21f1a84c51f8e53e6796eed67c99f03bcf1",
     ".harness/skills/brainstorming/scripts/frame-template.html": "6a8a4e58bd6a44b904e2e3c57de774481d909204597e1498de53f1b2fecc4c4e",
     ".harness/skills/brainstorming/scripts/helper.js": "43c6d69954a46ec34a2a262bcc62a9a7e83e839c739f199cb72646d397c686e3",
     ".harness/skills/brainstorming/scripts/server.cjs": "2d2961ea8d11f56c5f4c3a1a68d22709efa5d7601a2246d8c880774e7e9e8412",
@@ -132,7 +139,7 @@
     ".harness/skills/orchestrate-project/SKILL.md": "ef1238d3f60c22c70eda05fec8f764c028df2587eec7c584a7e2bfcc1775a822",
     ".harness/skills/polymarket-integration/SKILL.md": "a0991f2da5abebc02e899162e1b718050bc8d6e32c6513a2e8c6c19ff012c6f0",
     ".harness/skills/polymarketlab-feature/SKILL.md": "895d0c12301d2e5259ae5c9957e7d02a42c91ffc7106e9d427fe4bdc3a4b7d0d",
-    ".harness/skills/REGISTRY.md": "90244d6b6047592871d0c9f501685ead5e83013638339213ebd8e8b9c7e82cbf",
+    ".harness/skills/REGISTRY.md": "7e6e7c049a3f93a4ea671f221f378f7d6a9f694ff87e0128c76a7e2452cd325c",
     ".harness/skills/research/agents/openai.yaml": "9b4c470d63221c1f68f22df70b83e2f12401b317babe0d1b7b5f24a974474d0d",
     ".harness/skills/research/SKILL.md": "af378829f015775a3bcd65ff466826722e99359017ae6bae227ca4c9bd14049c",
     ".harness/skills/systematic-debugging/condition-based-waiting.md": "e89fec8400d6cd50f43407cec9fab50976ba4d55d0ec2eb51c0bd68036b54c26",

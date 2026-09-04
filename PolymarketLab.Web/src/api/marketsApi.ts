@@ -45,7 +45,7 @@ export interface GetMarketByIdResponse {
 export function getMarkets(signal?: AbortSignal): Promise<GetMarketsResponse> {
   return request<GetMarketsResponse>({
     method: 'GET',
-    path: '/api/Market?tradingNow=true',
+    path: '/api/Market',
     signal,
   });
 }

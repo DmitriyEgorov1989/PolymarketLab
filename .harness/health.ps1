@@ -88,6 +88,7 @@ foreach ($source in $lock.sources) {
 }
 
 $expectedSkills = @(
+    "analyzing-tasks",
     "brainstorming",
     "code-review",
     "codebase-design",
@@ -105,7 +106,7 @@ $expectedSkills = @(
 $actualSkillNames = @($lock.skills | ForEach-Object { $_.name })
 if ($actualSkillNames.Count -ne $expectedSkills.Count -or
     (Compare-Object -ReferenceObject $expectedSkills -DifferenceObject $actualSkillNames)) {
-    throw "Harness lock skill inventory does not match the canonical twelve-skill set."
+    throw "Harness lock skill inventory does not match the canonical skill set."
 }
 
 foreach ($skill in $lock.skills) {

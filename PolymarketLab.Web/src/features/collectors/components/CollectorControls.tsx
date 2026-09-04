@@ -1,5 +1,8 @@
 import type { CollectorSession } from '../model/collectorSession';
-import { isActiveCollectorStatus } from '../model/collectorStatus';
+import {
+  isExclusiveCollectorStatus,
+  isStoppableCollectorStatus,
+} from '../model/collectorStatus';
 
 interface CollectorControlsProps {
   marketId: string | null;
@@ -8,6 +11,8 @@ interface CollectorControlsProps {
   isStartPending: boolean;
   isStopPending: boolean;
   isMutationPending: boolean;
+  isGlobalSlotResolved: boolean;
+  isBlockedByOtherMarket: boolean;
   onStart: () => void;
   onStop: () => void;
 }
@@ -19,12 +24,20 @@ export function CollectorControls({
   isStartPending,
   isStopPending,
   isMutationPending,
+  isGlobalSlotResolved,
+  isBlockedByOtherMarket,
   onStart,
   onStop,
 }: CollectorControlsProps) {
-  const isActive = isActiveCollectorStatus(session?.status);
-  const canStart = marketId !== null && isSessionResolved && !isActive && !isMutationPending;
-  const canStop = session !== null && session !== undefined && isActive && !isMutationPending;
+  const isExclusive = isExclusiveCollectorStatus(session?.status);
+  const isStoppable = isStoppableCollectorStatus(session?.status);
+  const canStart = marketId !== null
+    && isSessionResolved
+    && isGlobalSlotResolved
+    && !isBlockedByOtherMarket
+    && !isExclusive
+    && !isMutationPending;
+  const canStop = session !== null && session !== undefined && isStoppable && !isMutationPending;
 
   return (
     <div className="collector-controls" aria-busy={isMutationPending}>

@@ -1,24 +1,39 @@
 import { formatLocalDate } from '../../../shared/formatters/formatLocalDate';
+import { ApiError } from '../../../api/apiError';
 import { useCollectorByIdQuery } from '../hooks/useCollectorByIdQuery';
 import { useCollectorByMarketQuery } from '../hooks/useCollectorByMarketQuery';
+import { useCollectorSlotsQuery } from '../hooks/useCollectorSlotsQuery';
 import { useStartCollector } from '../hooks/useStartCollector';
 import { useStopCollector } from '../hooks/useStopCollector';
-import { isActiveCollectorStatus } from '../model/collectorStatus';
+import {
+  isExclusiveCollectorStatus,
+  isStoppableCollectorStatus,
+} from '../model/collectorStatus';
 import { CollectorControls } from './CollectorControls';
 import { CollectorFailure } from './CollectorFailure';
 import { CollectorMetrics } from './CollectorMetrics';
+import { CollectorLifecycleDetails } from './CollectorLifecycleDetails';
 import { CollectorStatusBadge } from './CollectorStatusBadge';
 import './CollectorPanel.css';
 
 interface CollectorPanelProps {
   marketId: string | null;
+  registeredMarketIds?: string[];
 }
 
-export function CollectorPanel({ marketId }: CollectorPanelProps) {
+export function CollectorPanel({
+  marketId,
+  registeredMarketIds = marketId === null ? [] : [marketId],
+}: CollectorPanelProps) {
+  const slotsQuery = useCollectorSlotsQuery(registeredMarketIds);
   const collectorByMarketQuery = useCollectorByMarketQuery(marketId);
   const startMutation = useStartCollector();
   const stopMutation = useStopCollector();
-  const marketSession = collectorByMarketQuery.data;
+  const slotSession = slotsQuery.exclusiveSession;
+  const marketSession = slotSession !== null && slotSession.marketId === marketId
+    ? slotSession
+    : collectorByMarketQuery.data;
+  const isBlockedByOtherMarket = slotSession !== null && slotSession.marketId !== marketId;
   const startedSessionId = startMutation.data?.marketId === marketId
     ? startMutation.data.sessionId
     : null;
@@ -29,7 +44,7 @@ export function CollectorPanel({ marketId }: CollectorPanelProps) {
       || marketSession.sessionId === startedSessionId
       || collectorByMarketQuery.dataUpdatedAt <= startMutation.submittedAt
     );
-  const trackedSessionId = isActiveCollectorStatus(marketSession?.status)
+  const trackedSessionId = isExclusiveCollectorStatus(marketSession?.status)
     ? marketSession?.sessionId ?? null
     : shouldTrackStartedSession ? startedSessionId : null;
   const collectorByIdQuery = useCollectorByIdQuery(trackedSessionId);
@@ -63,13 +78,18 @@ export function CollectorPanel({ marketId }: CollectorPanelProps) {
   const isMutationPending = startMutation.isPending || stopMutation.isPending;
 
   function startCollector() {
-    if (marketId !== null) {
+    if (marketId !== null && slotsQuery.isResolved && !isBlockedByOtherMarket) {
       startMutation.mutate({ marketId });
     }
   }
 
   function stopCollector() {
-    if (session !== null && session !== undefined && isActiveCollectorStatus(session.status)) {
+    if (session !== null
+      && session !== undefined
+      && isStoppableCollectorStatus(session.status)
+      && window.confirm(
+        'Досрочный Stop аннулирует dataset, запустит cleanup и завершит session со статусом Failed. Продолжить?',
+      )) {
       stopMutation.mutate(session.sessionId);
     }
   }
@@ -91,12 +111,42 @@ export function CollectorPanel({ marketId }: CollectorPanelProps) {
         isStartPending={isStartPending}
         isStopPending={isStopPending}
         isMutationPending={isMutationPending}
+        isGlobalSlotResolved={slotsQuery.isResolved}
+        isBlockedByOtherMarket={isBlockedByOtherMarket}
         onStart={startCollector}
         onStop={stopCollector}
       />
 
-      {startError !== null ? <p className="collector-operation-error" role="alert">{startError.message}</p> : null}
-      {stopError !== null ? <p className="collector-operation-error" role="alert">{stopError.message}</p> : null}
+      {!slotsQuery.isResolved && slotsQuery.errors.length === 0 ? (
+        <p className="collector-slot-status" role="status">Проверяем global collector slot...</p>
+      ) : null}
+      {slotsQuery.errors.length > 0 ? (
+        <div className="collector-query-error" role="alert">
+          <p>Global collector slot не подтверждён.</p>
+          {slotsQuery.errors.map((error, index) => (
+            <CollectorOperationError
+              key={`${error.name}-${error.message}-${index}`}
+              error={error}
+              nested
+            />
+          ))}
+          <button
+            className="collector-retry-button"
+            type="button"
+            onClick={() => void slotsQuery.retry()}
+            disabled={slotsQuery.isFetching}
+          >
+            Повторить проверку slot
+          </button>
+        </div>
+      ) : isBlockedByOtherMarket ? (
+        <p className="collector-slot-warning" role="status">
+          Global collector slot занят рынком {slotSession.marketId}.
+        </p>
+      ) : null}
+
+      {startError !== null ? <CollectorOperationError error={startError} /> : null}
+      {stopError !== null ? <CollectorOperationError error={stopError} /> : null}
 
       {marketId === null ? (
         <p>Выберите рынок, чтобы управлять коллектором.</p>
@@ -155,6 +205,7 @@ export function CollectorPanel({ marketId }: CollectorPanelProps) {
                 </div>
               </dl>
               <CollectorMetrics session={session} />
+              <CollectorLifecycleDetails session={session} />
               {session.status === 'Failed'
                 || session.failureCode !== null
                 || session.failureMessage !== null ? (
@@ -167,6 +218,31 @@ export function CollectorPanel({ marketId }: CollectorPanelProps) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function CollectorOperationError({
+  error,
+  nested = false,
+}: {
+  error: Error;
+  nested?: boolean;
+}) {
+  const apiError = error instanceof ApiError ? error : null;
+  const codes = (apiError?.errors ?? [])
+    .map((item) => item.errorCode?.trim())
+    .filter((code): code is string => Boolean(code));
+
+  return (
+    <div className="collector-operation-error" role={nested ? undefined : 'alert'}>
+      <strong>
+        {apiError?.status === null || apiError === null
+          ? 'HTTP status unavailable'
+          : `HTTP ${apiError.status}`}
+      </strong>
+      {codes.length > 0 ? <code>{codes.join(', ')}</code> : null}
+      <span>{error.message}</span>
     </div>
   );
 }

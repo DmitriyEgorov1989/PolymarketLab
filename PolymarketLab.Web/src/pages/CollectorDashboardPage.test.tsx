@@ -6,6 +6,7 @@ import type { PropsWithChildren } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../api/apiError';
 import {
+  getCollectorById,
   getCollectorByMarketId,
   startCollector,
   stopCollector,
@@ -16,6 +17,7 @@ import {
   registerMarket,
   type MarketResponse,
 } from '../api/marketsApi';
+import { createCollectorSession } from '../features/collectors/testing/createCollectorSession';
 import { marketKeys } from '../features/markets/model/marketKeys';
 import { CollectorDashboardPage } from './CollectorDashboardPage';
 
@@ -35,6 +37,7 @@ vi.mock('../api/collectorsApi', async (importOriginal) => {
 
   return {
     ...actual,
+    getCollectorById: vi.fn(),
     getCollectorByMarketId: vi.fn(),
     startCollector: vi.fn(),
     stopCollector: vi.fn(),
@@ -42,6 +45,7 @@ vi.mock('../api/collectorsApi', async (importOriginal) => {
 });
 
 const getCollectorByMarketIdMock = vi.mocked(getCollectorByMarketId);
+const getCollectorByIdMock = vi.mocked(getCollectorById);
 const startCollectorMock = vi.mocked(startCollector);
 const stopCollectorMock = vi.mocked(stopCollector);
 const getMarketByIdMock = vi.mocked(getMarketById);
@@ -58,20 +62,13 @@ describe('CollectorDashboardPage market selection', () => {
       status: 'Running',
     });
     stopCollectorMock.mockResolvedValue({
-      session: {
-        sessionId: 'session-id',
-        marketId: 'market-id',
+      session: createCollectorSession({
         status: 'Stopped',
-        createdAt: '2026-08-06T12:00:00Z',
-        startedAt: '2026-08-06T12:00:01Z',
         stoppedAt: '2026-08-06T12:10:00Z',
-        failureCode: null,
-        failureMessage: null,
         messagesReceived: 10,
+        messagesEnqueued: 10,
         messagesPersisted: 10,
-        lastMessageAt: '2026-08-06T12:09:59Z',
-        reconnectCount: 0,
-      },
+      }),
     });
     getMarketByIdMock.mockImplementation(async (marketId) => ({ market: createMarket(marketId) }));
   });
@@ -195,6 +192,50 @@ describe('CollectorDashboardPage market selection', () => {
     expect(screen.getByText('123456789012345678901234567890')).toBeTruthy();
     expect(screen.getByText('No')).toBeTruthy();
     expect(screen.getByText('token-no')).toBeTruthy();
+  });
+
+  it('blocks Start before POST when another registered market owns the global slot', async () => {
+    const selected = createMarket('market-a');
+    const otherMarket = createMarket('market-b');
+    const otherSession = createCollectorSession({
+      marketId: otherMarket.marketId,
+      status: 'Running',
+    });
+    getMarketsMock.mockResolvedValue({ markets: [selected, otherMarket] });
+    getCollectorByMarketIdMock.mockImplementation(async (marketId) => ({
+      session: marketId === otherMarket.marketId ? otherSession : null,
+    }));
+
+    renderPage();
+
+    await screen.findByText(/занят рынком market-b/);
+    const start = screen.getByRole('button', { name: 'Start collector' }) as HTMLButtonElement;
+    expect(start.disabled).toBe(true);
+    fireEvent.click(start);
+    expect(startCollectorMock).not.toHaveBeenCalled();
+  });
+
+  it('allows Start after every registered market confirms a free slot', async () => {
+    const selected = createMarket('market-a');
+    const otherMarket = createMarket('market-b');
+    getMarketsMock.mockResolvedValue({ markets: [selected, otherMarket] });
+    getCollectorByMarketIdMock.mockResolvedValue({ session: null });
+    getCollectorByIdMock.mockResolvedValue({
+      session: createCollectorSession({ marketId: selected.marketId, status: 'Scheduled' }),
+    });
+    startCollectorMock.mockResolvedValue({
+      sessionId: 'session-id', marketId: selected.marketId, status: 'Scheduled',
+    });
+
+    renderPage();
+
+    const start = await screen.findByRole('button', { name: 'Start collector' }) as HTMLButtonElement;
+    await waitFor(() => expect(start.disabled).toBe(false));
+    fireEvent.click(start);
+
+    await waitFor(() => {
+      expect(startCollectorMock).toHaveBeenCalledWith({ marketId: selected.marketId });
+    });
   });
 });
 

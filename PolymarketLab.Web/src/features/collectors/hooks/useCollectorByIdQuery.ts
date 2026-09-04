@@ -10,7 +10,8 @@ import { collectorKeys } from '../model/collectorKeys';
 import type { CollectorSession } from '../model/collectorSession';
 import {
   ACTIVE_COLLECTOR_POLL_INTERVAL_MS,
-  isActiveCollectorStatus,
+  isExclusiveCollectorStatus,
+  isPollableCollectorStatus,
 } from '../model/collectorStatus';
 
 export function useCollectorByIdQuery(sessionId: string | null) {
@@ -31,7 +32,7 @@ export function useCollectorByIdQuery(sessionId: string | null) {
     refetchInterval: (collectorQuery) => {
       const status = collectorQuery.state.data?.session.status;
 
-      return status === undefined || isActiveCollectorStatus(status)
+      return status === undefined || isPollableCollectorStatus(status)
         ? ACTIVE_COLLECTOR_POLL_INTERVAL_MS
         : false;
     },
@@ -50,7 +51,7 @@ export function useCollectorByIdQuery(sessionId: string | null) {
         if (currentSession !== null
           && currentSession !== undefined
           && currentSession.sessionId !== query.data.sessionId) {
-          if (isActiveCollectorStatus(currentSession.status)) {
+          if (isExclusiveCollectorStatus(currentSession.status)) {
             return current;
           }
 

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { formatCounter } from '../../../shared/formatters/formatCounter';
 import { formatLocalDate } from '../../../shared/formatters/formatLocalDate';
 import type { CollectorSession } from '../model/collectorSession';
+import { createCollectorSession } from '../testing/createCollectorSession';
 import { CollectorMetrics } from './CollectorMetrics';
 
 describe('CollectorMetrics', () => {
@@ -70,19 +71,8 @@ function metricValue(label: string): string | null | undefined {
 }
 
 function createSession(overrides: Partial<CollectorSession> = {}): CollectorSession {
-  return {
-    sessionId: 'session-id',
-    marketId: 'market-id',
-    status: 'Running',
-    createdAt: '2026-08-06T12:00:00Z',
-    startedAt: '2026-08-06T12:00:01Z',
-    stoppedAt: null,
-    failureCode: null,
-    failureMessage: null,
-    messagesReceived: 120,
+  return createCollectorSession({
     messagesPersisted: 120,
-    lastMessageAt: '2026-08-06T12:09:59Z',
-    reconnectCount: 0,
     ...overrides,
-  };
+  });
 }
