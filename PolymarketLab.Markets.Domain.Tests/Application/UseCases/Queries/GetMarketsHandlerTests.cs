@@ -13,6 +13,9 @@ namespace PolymarketLab.Markets.Domain.Tests.Application.UseCases.Queries;
 
 public sealed class GetMarketsHandlerTests
 {
+    private static readonly DateTimeOffset Now =
+        DateTimeOffset.Parse("2026-08-01T11:00:00Z");
+
     [Fact]
     public async Task Handle_WithStoredMarkets_ShouldReturnMappedMarkets()
     {
@@ -74,22 +77,24 @@ public sealed class GetMarketsHandlerTests
     }
 
     [Fact]
-    public async Task Handle_ShouldReturnMarketsRegardlessOfExternalDates()
+    public async Task Handle_ShouldExcludeMarketsEndingAtOrBeforeCurrentTime()
     {
-        var now = DateTimeOffset.Parse("2026-08-01T11:00:00Z");
         var future = CreateMarket("future", "market-future", "0xfuture", "Future?",
-            startsAt: now.AddMinutes(1), endsAt: now.AddHours(1));
+            startsAt: Now.AddMinutes(1), endsAt: Now.AddHours(1));
+        var endingNow = CreateMarket("ending-now", "market-ending-now", "0xending", "Ending now?",
+            startsAt: Now.AddHours(-1), endsAt: Now);
         var ended = CreateMarket("ended", "market-ended", "0xended", "Ended?",
-            startsAt: now.AddHours(-1), endsAt: now);
+            startsAt: Now.AddHours(-2), endsAt: Now.AddMinutes(-1));
         var handler = CreateHandler(new InMemoryMarketRepository(
             future,
+            endingNow,
             ended));
 
         var result = await handler.Handle(new GetMarketsQuery(), CancellationToken.None);
 
         result.Value.Markets.Select(market => market.MarketSlug)
             .Should()
-            .Equal("future", "ended");
+            .Equal("future");
     }
 
     [Fact]
@@ -102,6 +107,13 @@ public sealed class GetMarketsHandlerTests
             "market-not-accepting",
             "0xnot-accepting",
             "Not accepting?");
+        var expired = CreateMarket(
+            "expired",
+            "market-expired",
+            "0xexpired",
+            "Expired?",
+            startsAt: Now.AddHours(-2),
+            endsAt: Now);
         var gateway = new StubExternalMarketGateway(new Dictionary<string, ExternalMarket>
         {
             ["available"] = CreateExternalMarket("available"),
@@ -109,11 +121,13 @@ public sealed class GetMarketsHandlerTests
             ["not-accepting"] = CreateExternalMarket("not-accepting") with
             {
                 AcceptingOrders = false
-            }
+            },
+            ["expired"] = CreateExternalMarket("expired")
         });
         var handler = new GetMarketsHandler(
-            new InMemoryMarketRepository(available, closed, notAcceptingOrders),
-            gateway);
+            new InMemoryMarketRepository(available, closed, notAcceptingOrders, expired),
+            gateway,
+            new FixedTimeProvider(Now));
 
         var result = await handler.Handle(new GetMarketsQuery(true), CancellationToken.None);
 
@@ -132,7 +146,8 @@ public sealed class GetMarketsHandlerTests
             ErrorType.Failure);
         var handler = new GetMarketsHandler(
             new InMemoryMarketRepository(market),
-            new StubExternalMarketGateway(error));
+            new StubExternalMarketGateway(error),
+            new FixedTimeProvider(Now));
 
         var result = await handler.Handle(new GetMarketsQuery(true), CancellationToken.None);
 
@@ -144,7 +159,8 @@ public sealed class GetMarketsHandlerTests
     {
         return new GetMarketsHandler(
             repository,
-            new StubExternalMarketGateway(new Dictionary<string, ExternalMarket>()));
+            new StubExternalMarketGateway(new Dictionary<string, ExternalMarket>()),
+            new FixedTimeProvider(Now));
     }
 
     private static ExternalMarket CreateExternalMarket(string slug)
@@ -299,5 +315,10 @@ public sealed class GetMarketsHandlerTests
                 : _markets![slug.Value];
             return Task.FromResult(result);
         }
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 }

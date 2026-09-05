@@ -10,14 +10,17 @@ namespace PolymarketLab.Markets.Core.Application.UseCases.Queries.GetMarkets;
 
 public sealed class GetMarketsHandler(
     IMarketRepository marketRepository,
-    IExternalMarketGateway externalMarketGateway)
+    IExternalMarketGateway externalMarketGateway,
+    TimeProvider timeProvider)
     : IRequestHandler<GetMarketsQuery, Result<GetMarketsResponse, ErrorList>>
 {
     public async Task<Result<GetMarketsResponse, ErrorList>> Handle(
         GetMarketsQuery request,
         CancellationToken cancellationToken)
     {
-        var markets = await marketRepository.GetAllAsync(cancellationToken);
+        var markets = (await marketRepository.GetAllAsync(cancellationToken))
+            .Where(market => market.EventEndsAt > timeProvider.GetUtcNow())
+            .ToArray();
 
         if (request.TradingNow)
         {
@@ -38,7 +41,7 @@ public sealed class GetMarketsHandler(
                     tradingMarkets.Add(market);
             }
 
-            markets = tradingMarkets;
+            markets = tradingMarkets.ToArray();
         }
 
         return new GetMarketsResponse(

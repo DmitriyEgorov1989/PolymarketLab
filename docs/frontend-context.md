@@ -116,10 +116,10 @@ normalization и cleanup audit.
 `messagesReceived` означает число полных WebSocket text messages, а не число сделок;
 активные краткосрочные рынки могут генерировать сотни таких сообщений в секунду.
 
-Frontend использует `GET /api/Market` без query parameters и обновляет список всех
-зарегистрированных рынков каждые 30 секунд. Поэтому future market остаётся видимым
-и selectable до открытия торгов. Live Gamma checks выполняются backend на Start и
-lifecycle boundaries, а не при отображении списка.
+Frontend использует `GET /api/Market` без query parameters и обновляет список каждые
+30 секунд. Backend исключает рынки с `EventEndsAt <= now`; future market остаётся
+видимым и selectable до открытия торгов. Live Gamma checks выполняются backend на
+Start и lifecycle boundaries, а не при отображении списка.
 
 Перед созданием collector session backend выполняет live-проверку Gamma. Сбор
 доступен только при `active`, отсутствии `closed`, включённых `acceptingOrders` и

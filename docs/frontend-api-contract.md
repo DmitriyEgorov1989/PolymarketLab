@@ -133,9 +133,9 @@ status:  Rejected, NonTerminal, Terminal, Failed, Conflict
 
 ## GET /api/Market
 
-Возвращает все зарегистрированные рынки, отсортированные backend по `marketSlug`.
-Schedule timestamps являются внешними метаданными и не используются для фильтрации:
-Gamma может продолжать принимать orders после формального `eventEndsAt`.
+Возвращает зарегистрированные рынки с `eventEndsAt` позже текущего серверного
+UTC-времени, отсортированные backend по `marketSlug`. Рынок исключается из списка
+точно в момент `eventEndsAt`, независимо от запаздывающих флагов Gamma.
 
 Опциональный query parameter `tradingNow=true` оставляет только рынки, для которых
 свежий ответ Gamma одновременно содержит `active: true`, `closed: false`,
@@ -144,10 +144,10 @@ Gamma может продолжать принимать orders после фо�
 удалось, endpoint возвращает integration error и не выдаёт частичный или устаревший
 список за актуальный.
 
-Frontend использует:
+Frontend использует endpoint без query parameters и обновляет список каждые 30 секунд:
 
 ```http
-GET /api/Market?tradingNow=true
+GET /api/Market
 ```
 
 Успешный `result`:
