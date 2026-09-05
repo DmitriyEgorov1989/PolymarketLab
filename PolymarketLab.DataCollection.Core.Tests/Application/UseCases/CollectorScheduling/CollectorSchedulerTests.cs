@@ -20,6 +20,75 @@ public sealed class CollectorSchedulerTests
         DateTimeOffset.Parse("2026-08-30T11:57:00Z");
 
     [Fact]
+    public async Task TickAsync_WhenInvalidating_ShouldWaitForStopThenCleanWithoutRestart()
+    {
+        var fixture = new Fixture(CreatedAt.AddMinutes(2));
+        fixture.Session.BeginInvalidation(
+            CreatedAt.AddMinutes(1), CollectorStopReason.Requested,
+            "collector.stop.requested", "Stop requested.");
+        var stopped = new TaskCompletionSource<UnitResult<Error>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Runtime.StopResult = stopped.Task;
+
+        var tick = fixture.Scheduler.TickAsync(CancellationToken.None);
+
+        fixture.Runtime.FencedSessions.Should().Equal(fixture.Session.Id);
+        fixture.Runtime.StoppedSessions.Should().Equal(fixture.Session.Id);
+        fixture.Cleanup.Calls.Should().BeEmpty();
+        tick.IsCompleted.Should().BeFalse();
+        stopped.SetResult(UnitResult.Success<Error>());
+
+        (await tick).IsSuccess.Should().BeTrue();
+        fixture.Session.Status.Should().Be(CollectorSessionStatus.Failed);
+        fixture.Session.InvalidatingAt.Should().Be(CreatedAt.AddMinutes(1));
+        fixture.Session.FailureCode.Should().Be("collector.stop.requested");
+        fixture.Cleanup.Calls.Should().Equal(fixture.Session.Id);
+        fixture.Source.FreshReadCallCount.Should().Be(0);
+        fixture.Runtime.StartRequests.Should().BeEmpty();
+        (await fixture.Scheduler.TickAsync(CancellationToken.None)).IsSuccess.Should().BeTrue();
+        fixture.Cleanup.Calls.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task TickAsync_WhenInvalidatingStopFails_ShouldNotCleanAndShouldRetry()
+    {
+        var fixture = new Fixture(CreatedAt.AddMinutes(2));
+        fixture.Session.BeginInvalidation(
+            CreatedAt.AddMinutes(1), CollectorStopReason.Requested,
+            "collector.stop.requested", "Stop requested.");
+        var error = new Error("collector.runtime.stop.timeout", "Stop timed out.", ErrorType.Failure);
+        fixture.Runtime.StopResult = Task.FromResult(UnitResult.Failure(error));
+
+        var result = await fixture.Scheduler.TickAsync(CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Be(error);
+        fixture.Cleanup.Calls.Should().BeEmpty();
+        fixture.Session.Status.Should().Be(CollectorSessionStatus.Invalidating);
+
+        fixture.Runtime.StopResult = Task.FromResult(UnitResult.Success<Error>());
+        (await fixture.Scheduler.TickAsync(CancellationToken.None)).IsSuccess.Should().BeTrue();
+        fixture.Session.Status.Should().Be(CollectorSessionStatus.Failed);
+    }
+
+    [Fact]
+    public async Task TickAsync_WhenCleanupFails_ShouldPreserveInvalidatingAndReturnError()
+    {
+        var error = new Error("collector.dataset_cleanup.failed", "Cleanup failed.", ErrorType.Failure);
+        var fixture = new Fixture(CreatedAt.AddMinutes(2), cleanupError: error);
+        fixture.Session.BeginInvalidation(
+            CreatedAt.AddMinutes(1), CollectorStopReason.Requested,
+            "collector.stop.requested", "Stop requested.");
+
+        var result = await fixture.Scheduler.TickAsync(CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Should().Be(error);
+        fixture.Cleanup.Calls.Should().Equal(fixture.Session.Id);
+        fixture.Session.Status.Should().Be(CollectorSessionStatus.Invalidating);
+    }
+
+    [Fact]
     public async Task TickAsync_BeforePreparationBoundary_ShouldRemainScheduledWithoutGamma()
     {
         var fixture = new Fixture(CreatedAt.AddMinutes(1));
@@ -178,13 +247,15 @@ public sealed class CollectorSchedulerTests
         fixture.Session.BeginPreparation(CreatedAt.AddMinutes(2));
 
         var result = await fixture.Scheduler.TickAsync(CancellationToken.None);
+        fixture.Session.Status.Should().Be(CollectorSessionStatus.Invalidating);
         var repeated = await fixture.Scheduler.TickAsync(CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
         repeated.IsSuccess.Should().BeTrue();
         fixture.Source.FreshReadCallCount.Should().Be(1);
-        fixture.Session.Status.Should().Be(CollectorSessionStatus.Invalidating);
-        fixture.Runtime.StoppedSessions.Should().Equal(fixture.Session.Id);
+        fixture.Session.Status.Should().Be(CollectorSessionStatus.Failed);
+        fixture.Runtime.StoppedSessions.Should().Equal(fixture.Session.Id, fixture.Session.Id);
+        fixture.Cleanup.Calls.Should().Equal(fixture.Session.Id);
     }
 
     [Fact]
@@ -335,18 +406,21 @@ public sealed class CollectorSchedulerTests
             DateTimeOffset now,
             Error? sourceError = null,
             Error? runtimeError = null,
-            bool runtimeThrowsCancellation = false)
+            bool runtimeThrowsCancellation = false,
+            Error? cleanupError = null)
         {
             Session = CollectorSessionTestFactory.CreateScheduled(createdAt: CreatedAt);
             Market = CreateMarket(Session);
             Source = new StubMarketSource(Market, sourceError);
             Repository = new StubRepository(Session);
             Runtime = new StubRuntime(runtimeError, runtimeThrowsCancellation);
+            Cleanup = new StubCollectorDatasetCleanup(cleanupError);
             Scheduler = new CollectorScheduler(
                 Source,
                 Repository,
                 Runtime,
                 new CollectorSessionInvalidationCoordinator(Repository, Runtime),
+                Cleanup,
                 BoundaryChecks,
                 new FixedTimeProvider(now));
         }
@@ -356,6 +430,7 @@ public sealed class CollectorSchedulerTests
         public StubMarketSource Source { get; }
         public StubRepository Repository { get; }
         public StubRuntime Runtime { get; }
+        public StubCollectorDatasetCleanup Cleanup { get; }
         public CollectorBoundaryCheckRegistry BoundaryChecks { get; } = new();
         public CollectorScheduler Scheduler { get; }
     }
@@ -458,9 +533,13 @@ public sealed class CollectorSchedulerTests
     {
         public List<CollectorRuntimeStartRequest> StartRequests { get; } = [];
         public List<CollectorSessionId> StoppedSessions { get; } = [];
+        public List<CollectorSessionId> FencedSessions { get; } = [];
+        public Task<UnitResult<Error>> StopResult { get; set; } =
+            Task.FromResult(UnitResult.Success<Error>());
 
         public void FenceSession(CollectorSessionId sessionId)
         {
+            FencedSessions.Add(sessionId);
         }
 
         public Task<UnitResult<Error>> StartAsync(
@@ -481,7 +560,7 @@ public sealed class CollectorSchedulerTests
             CancellationToken cancellationToken)
         {
             StoppedSessions.Add(sessionId);
-            return Task.FromResult(UnitResult.Success<Error>());
+            return StopResult.WaitAsync(cancellationToken);
         }
     }
 

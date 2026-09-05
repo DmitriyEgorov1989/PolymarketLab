@@ -9,6 +9,7 @@ using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
+using PolymarketLab.DataCollection.Core.Tests.TestSupport;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using Xunit;
@@ -266,6 +267,7 @@ public sealed class StartCollectorHandlerTests
                 Repository,
                 Runtime,
                 new CollectorSessionInvalidationCoordinator(Repository, Runtime),
+                new StubCollectorDatasetCleanup(),
                 new CollectorBoundaryCheckRegistry(),
                 actualTimeProvider);
             Handler = new StartCollectorHandler(

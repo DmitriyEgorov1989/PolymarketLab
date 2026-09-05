@@ -36,7 +36,48 @@ public sealed class CollectorSchedulerBackgroundServiceTests
         calls.Select(call => call.SchedulerId).Distinct().Should().HaveCount(2);
     }
 
-    private sealed class StubScheduler(List<TickCall> calls) : ICollectorScheduler
+    [Fact]
+    public async Task TickOnceAsync_WhenOperationThrows_ShouldAllowRetryInNewScope()
+    {
+        var calls = new List<TickCall>();
+        var services = new ServiceCollection();
+        services.AddScoped<ICollectorScheduler>(_ => new StubScheduler(
+            calls, calls.Count == 0 ? new InvalidOperationException("Cleanup failed.") : null));
+        await using var provider = services.BuildServiceProvider(
+            new ServiceProviderOptions { ValidateScopes = true });
+        using var service = new CollectorSchedulerBackgroundService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            TimeProvider.System,
+            NullLogger<CollectorSchedulerBackgroundService>.Instance);
+
+        await service.TickOnceAsync(CancellationToken.None);
+        await service.TickOnceAsync(CancellationToken.None);
+
+        calls.Should().HaveCount(2);
+        calls.Select(call => call.SchedulerId).Distinct().Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task TickOnceAsync_WhenShutdownCancelsOperation_ShouldPropagateCancellation()
+    {
+        var calls = new List<TickCall>();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var services = new ServiceCollection();
+        services.AddScoped<ICollectorScheduler>(_ => new StubScheduler(
+            calls, new OperationCanceledException(cancellation.Token)));
+        await using var provider = services.BuildServiceProvider();
+        using var service = new CollectorSchedulerBackgroundService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            TimeProvider.System,
+            NullLogger<CollectorSchedulerBackgroundService>.Instance);
+
+        var action = () => service.TickOnceAsync(cancellation.Token);
+
+        await action.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    private sealed class StubScheduler(List<TickCall> calls, Exception? exception = null) : ICollectorScheduler
     {
         private readonly Guid _id = Guid.NewGuid();
 
@@ -48,6 +89,8 @@ public sealed class CollectorSchedulerBackgroundServiceTests
         public Task<UnitResult<Error>> TickAsync(CancellationToken cancellationToken)
         {
             calls.Add(new TickCall(_id, cancellationToken));
+            if (exception is not null)
+                throw exception;
             return Task.FromResult(UnitResult.Success<Error>());
         }
     }

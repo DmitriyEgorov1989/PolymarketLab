@@ -15,6 +15,7 @@ public sealed class CollectorScheduler(
     ICollectorSessionRepository sessionRepository,
     ICollectorRuntime runtime,
     ICollectorSessionInvalidationCoordinator invalidationCoordinator,
+    ICollectorDatasetCleanup datasetCleanup,
     CollectorBoundaryCheckRegistry boundaryChecks,
     TimeProvider timeProvider) : ICollectorScheduler
 {
@@ -92,10 +93,21 @@ public sealed class CollectorScheduler(
     public async Task<UnitResult<Error>> TickAsync(CancellationToken cancellationToken)
     {
         var session = await sessionRepository.GetExclusiveAsync(cancellationToken);
-        if (session is null
-            || session.Status is CollectorSessionStatus.Invalidating
-                or CollectorSessionStatus.Stopping)
+        if (session is null || session.Status == CollectorSessionStatus.Stopping)
             return UnitResult.Success<Error>();
+
+        if (session.Status == CollectorSessionStatus.Invalidating)
+        {
+            runtime.FenceSession(session.Id);
+            var stop = await runtime.StopAsync(session.Id, cancellationToken);
+            if (stop.IsFailure)
+                return stop;
+
+            var cleanup = await datasetCleanup.CleanupAsync(session, cancellationToken);
+            return cleanup.IsFailure
+                ? UnitResult.Failure(cleanup.Error)
+                : UnitResult.Success<Error>();
+        }
 
         if (session.Status is CollectorSessionStatus.Starting
             or CollectorSessionStatus.Running)

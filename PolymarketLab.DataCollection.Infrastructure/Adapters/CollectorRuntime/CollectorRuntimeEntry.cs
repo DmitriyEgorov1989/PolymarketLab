@@ -10,6 +10,8 @@ internal sealed class CollectorRuntimeEntry(ICollectorWorker worker)
     private Task<UnitResult<Error>>? _stopTask;
     private bool _completionObserved;
 
+    public bool IsCompleted => worker.Completion.IsCompleted;
+
     public Task<CollectorWorkerCompletion>? ObserveCompletion()
     {
         lock (_sync)

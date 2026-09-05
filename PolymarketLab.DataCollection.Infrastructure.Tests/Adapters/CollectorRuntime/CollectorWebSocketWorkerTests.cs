@@ -63,6 +63,207 @@ public sealed class CollectorWebSocketWorkerTests
             .BeFalse();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InitialPing_WhenSendFails_ShouldCleanUpAndInvalidate(bool synchronousFailure)
+    {
+        var closeEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseClose = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var connection = new StubWebSocketConnection
+        {
+            SendHandler = (message, _) =>
+            {
+                if (!message.Span.SequenceEqual("PING"u8))
+                    return Task.CompletedTask;
+
+                if (synchronousFailure)
+                    throw new InvalidOperationException("Initial ping failure.");
+
+                return Task.FromException(new WebSocketException("Initial ping failure."));
+            },
+            CloseHandler = async cancellationToken =>
+            {
+                closeEntered.SetResult();
+                await releaseClose.Task.WaitAsync(cancellationToken);
+            }
+        };
+        var dispatcher = new StubReadinessDispatcher();
+        var request = CreateRequest();
+        var worker = CreateWorker(
+            request,
+            connection,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(request.ReadinessDeadline));
+
+        var startResult = await worker.StartAsync(CancellationToken.None);
+        await closeEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        try
+        {
+            worker.Completion.IsCompleted.Should().BeFalse();
+            connection.IsDisposed.Should().BeFalse();
+            dispatcher.InvalidationCount.Should().Be(0);
+        }
+        finally
+        {
+            releaseClose.TrySetResult();
+        }
+
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        startResult.IsSuccess.Should().BeTrue();
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Code.Should().Be("collector.runtime.receive.failed");
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
+        dispatcher.InvalidationCount.Should().Be(1);
+        dispatcher.RunningCount.Should().Be(0);
+        connection.SendCallCount.Should().Be(2);
+        connection.ReceiveCallCount.Should().Be(0);
+        connection.CloseCallCount.Should().Be(1);
+        connection.IsDisposed.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InitialPing_WhenStopCancelsSend_ShouldCompleteSuccessfully(bool applicationShutdown)
+    {
+        var pingEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var connection = new StubWebSocketConnection
+        {
+            SendHandler = async (message, cancellationToken) =>
+            {
+                if (!message.Span.SequenceEqual("PING"u8))
+                    return;
+
+                pingEntered.SetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+        };
+        var dispatcher = new StubReadinessDispatcher();
+        var lifetime = new StubHostApplicationLifetime();
+        var request = CreateRequest();
+        var worker = CreateWorker(
+            request,
+            connection,
+            lifetime: lifetime,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(request.ReadinessDeadline));
+
+        var startResult = await worker.StartAsync(CancellationToken.None);
+        await pingEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        if (applicationShutdown)
+            lifetime.StopApplication();
+
+        var stopResult = await worker.StopAsync(CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        startResult.IsSuccess.Should().BeTrue();
+        stopResult.IsSuccess.Should().BeTrue();
+        completion.Result.IsSuccess.Should().BeTrue();
+        completion.Origin.Should().Be(applicationShutdown
+            ? CollectorWorkerCompletionOrigin.ApplicationShutdown
+            : CollectorWorkerCompletionOrigin.RequestedStop);
+        dispatcher.InvalidationCount.Should().Be(0);
+        dispatcher.RunningCount.Should().Be(0);
+        connection.SendCallCount.Should().Be(2);
+        connection.ReceiveCallCount.Should().Be(0);
+        connection.CloseCallCount.Should().Be(1);
+        connection.IsDisposed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task InitialReadiness_WhenStopCancelsPersistence_ShouldCleanUpAndCompleteSuccessfully()
+    {
+        var readinessEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var dispatcher = new StubReadinessDispatcher
+        {
+            AwaitingInitialBooksHandler = async cancellationToken =>
+            {
+                readinessEntered.SetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return UnitResult.Success<Error>();
+            }
+        };
+        var connection = new StubWebSocketConnection();
+        var worker = CreateWorker(
+            CreateRequest(),
+            connection,
+            readinessDispatcher: dispatcher);
+
+        var startResult = await worker.StartAsync(CancellationToken.None);
+        await readinessEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var stopResult = await worker.StopAsync(CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        startResult.IsSuccess.Should().BeTrue();
+        stopResult.IsSuccess.Should().BeTrue();
+        completion.Result.IsSuccess.Should().BeTrue();
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.RequestedStop);
+        dispatcher.AwaitingInitialBooksCount.Should().Be(1);
+        dispatcher.InvalidationCount.Should().Be(0);
+        dispatcher.RunningCount.Should().Be(0);
+        connection.SendCallCount.Should().Be(1);
+        connection.ReceiveCallCount.Should().Be(0);
+        connection.CloseCallCount.Should().Be(1);
+        connection.IsDisposed.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InitialReadiness_WhenPersistenceFails_ShouldCleanUpAndPreserveError(bool stopApplication)
+    {
+        var lifetime = new StubHostApplicationLifetime();
+        var persistenceError = new Error(
+            "collector.runtime.readiness.persistence_failed",
+            "Readiness persistence failed.",
+            ErrorType.Failure);
+        var dispatcher = new StubReadinessDispatcher
+        {
+            AwaitingInitialBooksHandler = _ =>
+            {
+                if (stopApplication)
+                    lifetime.StopApplication();
+
+                return Task.FromResult(UnitResult.Failure(persistenceError));
+            }
+        };
+        var connection = new StubWebSocketConnection();
+        var request = CreateRequest();
+        var worker = CreateWorker(
+            request,
+            connection,
+            lifetime: lifetime,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(stopApplication
+                ? request.ReadinessDeadline - TimeSpan.FromSeconds(10)
+                : request.ReadinessDeadline));
+
+        var startResult = await worker.StartAsync(CancellationToken.None);
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        startResult.IsSuccess.Should().BeTrue();
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Should().BeSameAs(persistenceError);
+        completion.Origin.Should().Be(stopApplication
+            ? CollectorWorkerCompletionOrigin.Autonomous
+            : CollectorWorkerCompletionOrigin.Invalidated);
+        dispatcher.AwaitingInitialBooksCount.Should().Be(1);
+        dispatcher.InvalidationCount.Should().Be(stopApplication ? 0 : 1);
+        dispatcher.RunningCount.Should().Be(0);
+        connection.SendCallCount.Should().Be(1);
+        connection.ReceiveCallCount.Should().Be(0);
+        connection.CloseCallCount.Should().Be(1);
+        connection.IsDisposed.Should().BeTrue();
+    }
+
     [Fact]
     public async Task ReceiveAsync_WithTextMessage_ShouldEnqueueRawPayload()
     {
@@ -803,6 +1004,7 @@ public sealed class CollectorWebSocketWorkerTests
         private readonly List<byte[]> _sentMessages = [];
 
         public Func<CancellationToken, Task>? ConnectHandler { get; init; }
+        public Func<ReadOnlyMemory<byte>, CancellationToken, Task>? SendHandler { get; init; }
         public Func<CancellationToken, Task>? CloseHandler { get; init; }
         public Func<Memory<byte>, CancellationToken,
             ValueTask<CollectorWebSocketReceiveResult>>? ReceiveHandler { get; init; }
@@ -832,7 +1034,7 @@ public sealed class CollectorWebSocketWorkerTests
             _sentMessages.Add(payload);
             if (SentMessage is null || !payload.SequenceEqual("PING"u8.ToArray()))
                 SentMessage = payload;
-            return Task.CompletedTask;
+            return SendHandler?.Invoke(message, cancellationToken) ?? Task.CompletedTask;
         }
 
         public ValueTask<CollectorWebSocketReceiveResult> ReceiveAsync(
@@ -947,6 +1149,7 @@ public sealed class CollectorWebSocketWorkerTests
         public int AwaitingHeartbeatCount { get; private set; }
         public int RunningCount { get; private set; }
         public int InvalidationCount { get; private set; }
+        public Func<CancellationToken, Task<UnitResult<Error>>>? AwaitingInitialBooksHandler { get; init; }
         public UnitResult<Error>? RecordInitialBookResult { get; init; }
         public List<(CollectorSessionId SessionId, string TokenId, long Epoch, DateTimeOffset EnqueuedAt)>
             TokenReadinessRecords { get; } = [];
@@ -972,7 +1175,8 @@ public sealed class CollectorWebSocketWorkerTests
             CancellationToken cancellationToken)
         {
             AwaitingInitialBooksCount++;
-            return Task.FromResult(UnitResult.Success<Error>());
+            return AwaitingInitialBooksHandler?.Invoke(cancellationToken)
+                ?? Task.FromResult(UnitResult.Success<Error>());
         }
 
         public Task<UnitResult<Error>> MarkAwaitingHeartbeatAsync(

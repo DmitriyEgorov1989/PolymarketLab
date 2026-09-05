@@ -272,10 +272,6 @@ internal sealed class CollectorWebSocketWorker(
                 .ToArray());
         telemetry.RecordConnectionEpoch(request.SessionId, state.Epoch);
 
-        await readinessDispatcher.MarkAwaitingInitialBooksAsync(
-            request.SessionId,
-            _receiveCts.Token);
-
         await RunConnectionAttemptsAsync(connection, state);
     }
 
@@ -409,7 +405,7 @@ internal sealed class CollectorWebSocketWorker(
                 break;
             }
 
-            if (IsStopping())
+            if (IsStopping() || applicationLifetime.ApplicationStopping.IsCancellationRequested)
             {
                 completionOrigin = CollectorWorkerCompletionOrigin.Autonomous;
                 break;
@@ -492,9 +488,31 @@ internal sealed class CollectorWebSocketWorker(
         using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(
             _receiveCts.Token,
             applicationLifetime.ApplicationStopping);
-        var initialPingAt = timeProvider.GetTimestamp();
-        await connection.SendTextAsync("PING"u8.ToArray(), heartbeatCts.Token);
-        state.ObservePingSent(initialPingAt);
+        try
+        {
+            var readinessResult = await readinessDispatcher.MarkAwaitingInitialBooksAsync(
+                request.SessionId,
+                heartbeatCts.Token);
+            if (readinessResult.IsFailure)
+                return readinessResult;
+
+            var initialPingAt = timeProvider.GetTimestamp();
+            await connection.SendTextAsync("PING"u8.ToArray(), heartbeatCts.Token);
+            state.ObservePingSent(initialPingAt);
+        }
+        catch (OperationCanceledException) when (heartbeatCts.IsCancellationRequested)
+        {
+            return UnitResult.Success<Error>();
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                exception,
+                "Collector WebSocket {SessionId} failed while initializing readiness or sending initial heartbeat.",
+                request.SessionId.Value);
+            return UnitResult.Failure(
+                CollectorRuntimeErrors.ReceiveFailed(request.SessionId));
+        }
 
         var heartbeat = HeartbeatLoopAsync(connection, state, heartbeatCts);
         var receive = ReceiveLoopAsync(connection, state, heartbeatCts.Token);
@@ -750,10 +768,6 @@ internal sealed class CollectorWebSocketWorker(
                 _startupConnection = null;
                 _activeConnection = connection;
             }
-
-            await readinessDispatcher.MarkAwaitingInitialBooksAsync(
-                request.SessionId,
-                startupCts.Token);
 
             logger.LogInformation(
                 "Collector WebSocket {SessionId} connected for market {MarketId} at epoch {ConnectionEpoch}.",

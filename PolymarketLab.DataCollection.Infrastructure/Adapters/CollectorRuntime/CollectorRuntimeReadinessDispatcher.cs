@@ -19,14 +19,16 @@ internal sealed class CollectorRuntimeReadinessDispatcher(
         CancellationToken cancellationToken) =>
         DispatchAsync(
             sessionId,
-            handler => handler.MarkAwaitingInitialBooksAsync(sessionId, cancellationToken));
+            handler => handler.MarkAwaitingInitialBooksAsync(sessionId, cancellationToken),
+            cancellationToken);
 
     public Task<UnitResult<Error>> MarkAwaitingHeartbeatAsync(
         CollectorSessionId sessionId,
         CancellationToken cancellationToken) =>
         DispatchAsync(
             sessionId,
-            handler => handler.MarkAwaitingHeartbeatAsync(sessionId, cancellationToken));
+            handler => handler.MarkAwaitingHeartbeatAsync(sessionId, cancellationToken),
+            cancellationToken);
 
     public Task<UnitResult<Error>> MarkRunningAsync(
         CollectorSessionId sessionId,
@@ -37,7 +39,8 @@ internal sealed class CollectorRuntimeReadinessDispatcher(
             handler => handler.MarkRunningAsync(
                 sessionId,
                 subscriptionReadyAt,
-                cancellationToken));
+                cancellationToken),
+            cancellationToken);
 
     public Task<UnitResult<Error>> BeginInvalidationAsync(
         CollectorSessionId sessionId,
@@ -48,7 +51,8 @@ internal sealed class CollectorRuntimeReadinessDispatcher(
             handler => handler.BeginInvalidationAsync(
                 sessionId,
                 failure,
-                cancellationToken));
+                cancellationToken),
+            cancellationToken);
 
     public Task<UnitResult<Error>> RecordInitialBookEnqueuedAsync(
         CollectorSessionId sessionId,
@@ -63,11 +67,13 @@ internal sealed class CollectorRuntimeReadinessDispatcher(
                 tokenId,
                 connectionEpoch,
                 enqueuedAt,
-                cancellationToken));
+                cancellationToken),
+            cancellationToken);
 
     private async Task<UnitResult<Error>> DispatchAsync(
         CollectorSessionId sessionId,
-        Func<ICollectorRuntimeReadinessHandler, Task<UnitResult<Error>>> action)
+        Func<ICollectorRuntimeReadinessHandler, Task<UnitResult<Error>>> action,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -85,6 +91,10 @@ internal sealed class CollectorRuntimeReadinessDispatcher(
                 result.Error.Code);
             applicationLifetime.StopApplication();
             return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception exception)
         {

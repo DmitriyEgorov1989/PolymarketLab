@@ -23,15 +23,26 @@ internal sealed class CollectorSchedulerBackgroundService(
 
     internal async Task TickOnceAsync(CancellationToken cancellationToken)
     {
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var scheduler = scope.ServiceProvider.GetRequiredService<ICollectorScheduler>();
-        var result = await scheduler.TickAsync(cancellationToken);
-        if (result.IsFailure)
+        try
         {
-            logger.LogWarning(
-                "Collector scheduler tick failed with {ErrorCode}: {ErrorMessage}",
-                result.Error.Code,
-                result.Error.Message);
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var scheduler = scope.ServiceProvider.GetRequiredService<ICollectorScheduler>();
+            var result = await scheduler.TickAsync(cancellationToken);
+            if (result.IsFailure)
+            {
+                logger.LogWarning(
+                    "Collector scheduler tick failed with {ErrorCode}: {ErrorMessage}",
+                    result.Error.Code,
+                    result.Error.Message);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Collector scheduler tick failed unexpectedly; retrying on the next tick.");
         }
     }
 }

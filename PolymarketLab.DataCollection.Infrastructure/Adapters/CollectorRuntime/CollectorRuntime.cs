@@ -59,6 +59,8 @@ internal sealed class CollectorRuntime(
                 throw;
             }
 
+            ObserveEntryCompletion(request.SessionId, entryHolder, entry);
+
             if (Volatile.Read(ref _shuttingDown) != 0)
             {
                 await StopAsync(request.SessionId, CancellationToken.None);
@@ -70,15 +72,6 @@ internal sealed class CollectorRuntime(
                 await StopAsync(request.SessionId, CancellationToken.None);
                 return UnitResult.Failure(
                     CollectorRuntimeErrors.SessionInvalidating(request.SessionId));
-            }
-
-            var completion = entry.ObserveCompletion();
-            if (completion is not null)
-            {
-                TrackCompletionObserver(ObserveEntryCompletionAsync(
-                    completion,
-                    request.SessionId,
-                    entryHolder));
             }
 
             var attempt = entry.Start(cancellationToken);
@@ -222,6 +215,11 @@ internal sealed class CollectorRuntime(
             throw;
         }
 
+        ObserveEntryCompletion(sessionId, entryHolder, entry);
+
+        if (_fencedSessions.ContainsKey(sessionId) && entry.IsCompleted)
+            return UnitResult.Success<Error>();
+
         var attempt = entry.Stop();
         if (attempt.IsOwner)
             _ = RemoveEntryWhenOperationCompletedAsync(
@@ -229,16 +227,41 @@ internal sealed class CollectorRuntime(
                 sessionId,
                 entryHolder);
 
-        return await attempt.Task.WaitAsync(cancellationToken);
+        var result = await attempt.Task.WaitAsync(cancellationToken);
+        if (result.IsSuccess && _fencedSessions.ContainsKey(sessionId) && !entry.IsCompleted)
+            return UnitResult.Failure(CollectorRuntimeErrors.StopFailed(sessionId));
+
+        return result;
     }
 
     private void RemoveEntry(
         CollectorSessionId sessionId,
         Lazy<CollectorRuntimeEntry> entryHolder)
     {
+        // A fenced producer must finish before an absent entry can authorize dataset cleanup.
+        if (_fencedSessions.ContainsKey(sessionId)
+            && entryHolder.IsValueCreated
+            && !entryHolder.Value.IsCompleted)
+            return;
+
         _entries.TryRemove(new KeyValuePair<
             CollectorSessionId,
             Lazy<CollectorRuntimeEntry>>(sessionId, entryHolder));
+    }
+
+    private void ObserveEntryCompletion(
+        CollectorSessionId sessionId,
+        Lazy<CollectorRuntimeEntry> entryHolder,
+        CollectorRuntimeEntry entry)
+    {
+        var completion = entry.ObserveCompletion();
+        if (completion is not null)
+        {
+            TrackCompletionObserver(ObserveEntryCompletionAsync(
+                completion,
+                sessionId,
+                entryHolder));
+        }
     }
 
     private async Task ObserveEntryCompletionAsync(
