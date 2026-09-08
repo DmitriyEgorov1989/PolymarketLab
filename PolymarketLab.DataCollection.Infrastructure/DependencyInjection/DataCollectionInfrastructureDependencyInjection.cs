@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using PolymarketLab.Markets.Contracts;
 using PolymarketLab.Core.Options;
 using PolymarketLab.DataCollection.Core.Application.Normalization;
 using PolymarketLab.DataCollection.Core.Ports;
@@ -164,6 +165,9 @@ public static class DataCollectionInfrastructureDependencyInjection
             ICollectorTokenReadinessRepository,
             CollectorTokenReadinessRepository>();
         services.AddScoped<IMarketCollectionSource, MarketCollectionSource>();
+        services.AddScoped<
+            IRegisteredMarketCollectorScheduler,
+            RegisteredMarketCollectorScheduler>();
         services.AddHttpClient<IOrderBookSnapshotSource, PolymarketOrderBookClient>();
         services.AddHttpClient<IGammaTerminalResolutionSource, GammaTerminalResolutionClient>();
         services.AddHttpClient<IClobTerminalResolutionSource, ClobTerminalResolutionClient>();

@@ -1,5 +1,6 @@
 using CSharpFunctionalExtensions;
 using FluentAssertions;
+using PolymarketLab.Markets.Contracts;
 using PolymarketLab.Markets.Core.Application.UseCases.Commands;
 using PolymarketLab.Markets.Core.Domain.Models.Market.ValueObjects;
 using PolymarketLab.Markets.Core.Ports;
@@ -360,9 +361,56 @@ public sealed class RegisterMarketHandlerTests
 
     private static RegisterMarketHandler CreateHandler(
         IExternalMarketGateway gateway,
-        IMarketRepository repository)
+        IMarketRepository repository,
+        IRegisteredMarketCollectorScheduler? collectorScheduler = null)
     {
-        return new RegisterMarketHandler(gateway, repository, new FixedTimeProvider(Now));
+        return new RegisterMarketHandler(
+            gateway,
+            repository,
+            new FixedTimeProvider(Now),
+            collectorScheduler);
+    }
+
+    [Fact]
+    public async Task Handle_WhenMarketIsInserted_ShouldEnsureCollectorJob()
+    {
+        var scheduler = new StubRegisteredMarketCollectorScheduler();
+        var repository = new InMemoryMarketRepository();
+        var handler = CreateHandler(
+            new StubExternalMarketGateway(CreateExternalMarket()),
+            repository,
+            scheduler);
+
+        var result = await handler.Handle(
+            new RegisterMarketCommand(MarketUrl),
+            CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        scheduler.MarketIds.Should().ContainSingle().Which.Value.Should().Be(result.Value.MarketId);
+    }
+
+    [Fact]
+    public async Task Handle_WhenCollectorJobFails_ShouldReturnTheSchedulingError()
+    {
+        var scheduler = new StubRegisteredMarketCollectorScheduler
+        {
+            Result = UnitResult.Failure<Error.ErrorList>(
+                new Error(
+                    "collector.start.failed",
+                    "The collector job could not be created.",
+                    ErrorType.Failure))
+        };
+        var handler = CreateHandler(
+            new StubExternalMarketGateway(CreateExternalMarket()),
+            new InMemoryMarketRepository(),
+            scheduler);
+
+        var result = await handler.Handle(
+            new RegisterMarketCommand(MarketUrl),
+            CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Code.Should().Be("collector.start.failed");
     }
 
     private static ExternalMarket CreateExternalMarket()
@@ -573,5 +621,22 @@ public sealed class RegisterMarketHandlerTests
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private sealed class StubRegisteredMarketCollectorScheduler
+        : IRegisteredMarketCollectorScheduler
+    {
+        public List<MarketId> MarketIds { get; } = [];
+
+        public UnitResult<Error.ErrorList> Result { get; set; } =
+            UnitResult.Success<Error.ErrorList>();
+
+        public Task<UnitResult<Error.ErrorList>> EnsureScheduledAsync(
+            MarketId marketId,
+            CancellationToken cancellationToken)
+        {
+            MarketIds.Add(marketId);
+            return Task.FromResult(Result);
+        }
     }
 }

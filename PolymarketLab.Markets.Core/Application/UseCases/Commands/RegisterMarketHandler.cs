@@ -1,5 +1,6 @@
 using CSharpFunctionalExtensions;
 using MediatR;
+using PolymarketLab.Markets.Contracts;
 using PolymarketLab.Markets.Core.Application.Errors;
 using PolymarketLab.Markets.Core.Application.Extensions;
 using PolymarketLab.Markets.Core.Application.Integration;
@@ -16,7 +17,8 @@ namespace PolymarketLab.Markets.Core.Application.UseCases.Commands;
 public sealed class RegisterMarketHandler(
     IExternalMarketGateway externalMarketGateway,
     IMarketRepository marketRepository,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IRegisteredMarketCollectorScheduler? collectorScheduler = null)
     : IRequestHandler<RegisterMarketCommand, Result<RegisterMarketResponse, ErrorList>>
 {
     public async Task<Result<RegisterMarketResponse, ErrorList>> Handle(
@@ -61,7 +63,7 @@ public sealed class RegisterMarketHandler(
             return Failure(MarketRegistrationErrors.IdentityConflict);
 
         if (identity.Market is not null)
-            return await RefreshExistingAsync(identity.Market, candidate, cancellationToken);
+            return await RefreshAndEnsureScheduledAsync(identity.Market, candidate, cancellationToken);
 
         if (!externalEvent.Market.OrderBookEnabled)
             return Failure(MarketRegistrationErrors.OrderBookDisabled);
@@ -74,7 +76,7 @@ public sealed class RegisterMarketHandler(
             return Failure(insertResult.Error);
 
         if (insertResult.Value == MarketInsertStatus.Inserted)
-            return new RegisterMarketResponse(candidate.Id.Value, true);
+            return await EnsureScheduledAsync(candidate, true, cancellationToken);
 
         if (insertResult.Value != MarketInsertStatus.UniqueConflict)
             return Failure(MarketRegistrationErrors.RaceUnresolved);
@@ -84,7 +86,7 @@ public sealed class RegisterMarketHandler(
             return Failure(MarketRegistrationErrors.IdentityConflict);
 
         return identity.Market is not null
-            ? await RefreshExistingAsync(identity.Market, candidate, cancellationToken)
+            ? await RefreshAndEnsureScheduledAsync(identity.Market, candidate, cancellationToken)
             : Failure(MarketRegistrationErrors.RaceUnresolved);
     }
 
@@ -208,6 +210,35 @@ public sealed class RegisterMarketHandler(
         return updateResult.IsSuccess
             ? Existing(existing)
             : Failure(updateResult.Error);
+    }
+
+    private async Task<Result<RegisterMarketResponse, ErrorList>> RefreshAndEnsureScheduledAsync(
+        MarketAggregate existing,
+        MarketAggregate candidate,
+        CancellationToken cancellationToken)
+    {
+        var refreshResult = await RefreshExistingAsync(existing, candidate, cancellationToken);
+        if (refreshResult.IsFailure)
+            return refreshResult;
+
+        return await EnsureScheduledAsync(existing, false, cancellationToken);
+    }
+
+    private async Task<Result<RegisterMarketResponse, ErrorList>> EnsureScheduledAsync(
+        MarketAggregate market,
+        bool created,
+        CancellationToken cancellationToken)
+    {
+        if (collectorScheduler is null)
+            return new RegisterMarketResponse(market.Id.Value, created);
+
+        var schedulingResult = await collectorScheduler.EnsureScheduledAsync(
+            market.Id,
+            cancellationToken);
+        if (schedulingResult.IsFailure)
+            return Result.Failure<RegisterMarketResponse, ErrorList>(schedulingResult.Error);
+
+        return new RegisterMarketResponse(market.Id.Value, created);
     }
 
     private static Result<RegisterMarketResponse, ErrorList> Existing(MarketAggregate market)

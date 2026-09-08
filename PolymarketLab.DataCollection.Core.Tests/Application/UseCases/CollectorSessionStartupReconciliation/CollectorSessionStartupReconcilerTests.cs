@@ -20,7 +20,7 @@ public sealed class CollectorSessionStartupReconcilerTests
         new(2026, 7, 29, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task ReconcileAsync_WithIncompleteSessions_ShouldCleanWithoutResuming()
+    public async Task ReconcileAsync_ShouldPreserveFutureScheduledAndCleanIncompleteSessions()
     {
         var sessions = new[]
         {
@@ -37,17 +37,17 @@ public sealed class CollectorSessionStartupReconcilerTests
         var result = await reconciler.ReconcileAsync(CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
-        repository.UpdateCalls.Should().HaveCount(4);
+        repository.UpdateCalls.Should().HaveCount(3);
         repository.UpdateCalls.Select(call => call.ExpectedStatus).Should().Equal(
-            CollectorSessionStatus.Scheduled,
             CollectorSessionStatus.Starting,
             CollectorSessionStatus.Running,
             CollectorSessionStatus.Stopping);
         repository.UpdateCalls.Should().OnlyContain(call =>
             call.Status == CollectorSessionStatus.Invalidating
             && call.Phase == CollectorSessionPhase.Cleaning);
-        cleanup.Calls.Should().BeEquivalentTo(sessions.Select(session => session.Id));
-        sessions.Should().OnlyContain(session =>
+        cleanup.Calls.Should().BeEquivalentTo(sessions.Skip(1).Select(session => session.Id));
+        sessions[0].Status.Should().Be(CollectorSessionStatus.Scheduled);
+        sessions.Skip(1).Should().OnlyContain(session =>
             session.Status == CollectorSessionStatus.Failed
             && session.Phase == null);
     }
@@ -134,18 +134,20 @@ public sealed class CollectorSessionStartupReconcilerTests
         return CreateSession(
             CollectorSessionId.Create(Guid.NewGuid()).Value,
             MarketId.Create(Guid.NewGuid()).Value,
-            status);
+            status,
+            status == CollectorSessionStatus.Scheduled ? Now : Now.AddMinutes(-1));
     }
 
     private static CollectorSessionAggregate CreateSession(
         CollectorSessionId sessionId,
         MarketId marketId,
-        CollectorSessionStatus status)
+        CollectorSessionStatus status,
+        DateTimeOffset? createdAt = null)
     {
         var session = CollectorSessionTestFactory.CreateScheduled(
             sessionId,
             marketId,
-            Now.AddMinutes(-1));
+            createdAt ?? Now.AddMinutes(-1));
         if (status == CollectorSessionStatus.Starting)
             session.BeginPreparation(Now.AddSeconds(-30));
         if (status is CollectorSessionStatus.Running or CollectorSessionStatus.Stopping)
@@ -176,7 +178,7 @@ public sealed class CollectorSessionStartupReconcilerTests
         params CollectorSessionAggregate[] reloadSessions)
         : ICollectorSessionRepository
     {
-        private readonly Queue<CollectorSessionAggregate> _reloadSessions =
+        private readonly List<CollectorSessionAggregate> _reloadSessions =
             new(activeSessions.Concat(reloadSessions));
 
         public Queue<Result<CollectorSessionUpdateStatus, Error>> UpdateResults { get; } = [];
@@ -189,8 +191,13 @@ public sealed class CollectorSessionStartupReconcilerTests
             CollectorSessionId sessionId,
             CancellationToken cancellationToken)
         {
-            return Task.FromResult<CollectorSessionAggregate?>(
-                _reloadSessions.TryDequeue(out var session) ? session : null);
+            var index = _reloadSessions.FindIndex(session => session.Id == sessionId);
+            if (index < 0)
+                return Task.FromResult<CollectorSessionAggregate?>(null);
+
+            var session = _reloadSessions[index];
+            _reloadSessions.RemoveAt(index);
+            return Task.FromResult<CollectorSessionAggregate?>(session);
         }
 
         public Task<CollectorSessionAggregate?> GetExclusiveAsync(

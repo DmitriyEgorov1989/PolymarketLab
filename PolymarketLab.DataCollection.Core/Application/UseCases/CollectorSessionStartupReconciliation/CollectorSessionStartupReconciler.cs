@@ -19,12 +19,16 @@ public sealed class CollectorSessionStartupReconciler(
         CancellationToken cancellationToken)
     {
         var activeSessions = await sessionRepository.GetActiveAsync(cancellationToken);
+        var now = timeProvider.GetUtcNow();
 
         foreach (var session in activeSessions)
         {
+            if (IsFutureScheduled(session, now))
+                continue;
+
             var result = await invalidationCoordinator.InvalidateAsync(
                 session.Id,
-                timeProvider.GetUtcNow(),
+                now,
                 CollectorStopReason.ProcessTerminated,
                 CollectorSessionStartupReconciliationErrors.ProcessTerminated,
                 cancellationToken);
@@ -42,4 +46,11 @@ public sealed class CollectorSessionStartupReconciler(
 
         return UnitResult.Success<Error>();
     }
+
+    private static bool IsFutureScheduled(
+        CollectorSessionAggregate session,
+        DateTimeOffset now) =>
+        session.Status == CollectorSessionStatus.Scheduled
+        && session.EventStartsAt is not null
+        && now < session.EventStartsAt.Value;
 }

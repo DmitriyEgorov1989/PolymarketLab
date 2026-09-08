@@ -34,6 +34,15 @@ public interface ICollectorSessionRepository
         MarketId marketId,
         CancellationToken cancellationToken);
 
+    /// <summary>Получает успешно завершённую попытку рынка.</summary>
+    /// <param name="marketId">Идентификатор рынка.</param>
+    /// <param name="cancellationToken">Токен отмены операции.</param>
+    /// <returns>Успешная сессия либо <see langword="null" />, если результата нет.</returns>
+    Task<CollectorSession?> GetSuccessfulByMarketIdAsync(
+        MarketId marketId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<CollectorSession?>(null);
+
     /// <summary>Получает все активные сессии.</summary>
     /// <param name="cancellationToken">Токен отмены операции.</param>
     /// <returns>Снимок активных сессий.</returns>

@@ -17,7 +17,7 @@ PolymarketLab - приложение для регистрации рынков 
 ```text
 Пользователь вставляет ссылку на рынок Polymarket
         -> backend получает метаданные рынка и token ids
-        -> пользователь запускает CollectorSession
+        -> backend создаёт долговечную CollectorSession
         -> backend подключается к Polymarket WebSocket
         -> backend сохраняет raw JSON в PostgreSQL
         -> frontend показывает состояние, counters и ошибки
@@ -199,6 +199,7 @@ normalization и cleanup без локальной подмены server state.
 - Рынок можно выбрать.
 - Детали и token ids отображаются.
 - CollectorSession запускается.
+- После явного добавления рынка CollectorSession создаётся без обязательного отдельного Start.
 - Перед запуском CollectorSession backend проверяет актуальную доступность рынка.
 - Вторая активная сессия не запускается из UI.
 - Статусы отображаются без искажения смысла.
