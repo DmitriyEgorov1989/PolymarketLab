@@ -226,7 +226,7 @@ Application flow разделён между [`StartCollectorHandler`](../../../
 Упрощённая последовательность:
 
 1. Валидировать command.
-2. Сначала проверить global exclusive slot.
+2. Проверить активную session конкретного рынка.
 3. Прочитать сохранённый `EventStartsAt` без Gamma и отклонить уже открытый рынок.
 4. Получить свежий Gamma snapshot и создать persisted `Scheduled/WaitingForPreparation`.
 5. До `T-60s` оставить session запланированной.

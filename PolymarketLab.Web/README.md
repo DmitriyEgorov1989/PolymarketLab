@@ -94,9 +94,10 @@ remaining raw rows, resolution WebSocket/Gamma/Clob, normalization и cleanup au
 Polling выполняется для `Scheduled`, `Starting`, `Running`, `Stopping` и
 `Invalidating`, а для terminal и неизвестного status останавливается.
 
-Известная exclusive session любого зарегистрированного рынка блокирует Start до
-POST. Backend HTTP `409` остаётся авторитетной защитой гонки. Досрочный Stop требует
-подтверждения и отображается как фактический переход `Invalidating -> Failed`.
+Известная активная session выбранного рынка блокирует Start до POST. Активные
+sessions других зарегистрированных рынков не блокируют запуск. Backend HTTP `409`
+остаётся авторитетной защитой гонки. Досрочный Stop требует подтверждения и
+отображается как фактический переход `Invalidating -> Failed`.
 
 ## Проверки
 

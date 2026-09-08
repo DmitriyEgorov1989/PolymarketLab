@@ -1,6 +1,6 @@
 import type { CollectorSession } from '../model/collectorSession';
 import {
-  isExclusiveCollectorStatus,
+  isPollableCollectorStatus,
   isStoppableCollectorStatus,
 } from '../model/collectorStatus';
 
@@ -11,8 +11,9 @@ interface CollectorControlsProps {
   isStartPending: boolean;
   isStopPending: boolean;
   isMutationPending: boolean;
-  isGlobalSlotResolved: boolean;
-  isBlockedByOtherMarket: boolean;
+  /** Оставлено необязательным для совместимости существующих callers; slot глобальным не является. */
+  isGlobalSlotResolved?: boolean;
+  isBlockedByOtherMarket?: boolean;
   onStart: () => void;
   onStop: () => void;
 }
@@ -24,18 +25,14 @@ export function CollectorControls({
   isStartPending,
   isStopPending,
   isMutationPending,
-  isGlobalSlotResolved,
-  isBlockedByOtherMarket,
   onStart,
   onStop,
 }: CollectorControlsProps) {
-  const isExclusive = isExclusiveCollectorStatus(session?.status);
+  const isActive = isPollableCollectorStatus(session?.status);
   const isStoppable = isStoppableCollectorStatus(session?.status);
   const canStart = marketId !== null
     && isSessionResolved
-    && isGlobalSlotResolved
-    && !isBlockedByOtherMarket
-    && !isExclusive
+    && !isActive
     && !isMutationPending;
   const canStop = session !== null && session !== undefined && isStoppable && !isMutationPending;
 

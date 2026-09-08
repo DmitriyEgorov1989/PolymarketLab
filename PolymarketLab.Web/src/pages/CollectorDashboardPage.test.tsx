@@ -194,7 +194,7 @@ describe('CollectorDashboardPage market selection', () => {
     expect(screen.getByText('token-no')).toBeTruthy();
   });
 
-  it('blocks Start before POST when another registered market owns the global slot', async () => {
+  it('allows Start when another registered market has an active session', async () => {
     const selected = createMarket('market-a');
     const otherMarket = createMarket('market-b');
     const otherSession = createCollectorSession({
@@ -208,11 +208,11 @@ describe('CollectorDashboardPage market selection', () => {
 
     renderPage();
 
-    await screen.findByText(/занят рынком market-b/);
+    await screen.findByText(/ещё нет collector sessions/);
     const start = screen.getByRole('button', { name: 'Start collector' }) as HTMLButtonElement;
-    expect(start.disabled).toBe(true);
+    expect(start.disabled).toBe(false);
     fireEvent.click(start);
-    expect(startCollectorMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(startCollectorMock).toHaveBeenCalledOnce());
   });
 
   it('allows Start after every registered market confirms a free slot', async () => {

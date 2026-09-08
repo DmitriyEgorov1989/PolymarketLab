@@ -21,9 +21,12 @@ export function isPollableCollectorStatus(status: string | null | undefined): bo
     && POLLABLE_COLLECTOR_STATUSES.has(status);
 }
 
-export function isExclusiveCollectorStatus(status: string | null | undefined): boolean {
+export function isActiveCollectorStatus(status: string | null | undefined): boolean {
   return isPollableCollectorStatus(status);
 }
+
+/** Backend ограничивает активность сессий отдельным рынком, а не приложением. */
+export const isExclusiveCollectorStatus = isActiveCollectorStatus;
 
 export function isStoppableCollectorStatus(status: string | null | undefined): boolean {
   return status !== null

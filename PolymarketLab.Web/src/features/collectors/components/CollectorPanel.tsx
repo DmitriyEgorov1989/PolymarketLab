@@ -2,7 +2,6 @@ import { formatLocalDate } from '../../../shared/formatters/formatLocalDate';
 import { ApiError } from '../../../api/apiError';
 import { useCollectorByIdQuery } from '../hooks/useCollectorByIdQuery';
 import { useCollectorByMarketQuery } from '../hooks/useCollectorByMarketQuery';
-import { useCollectorSlotsQuery } from '../hooks/useCollectorSlotsQuery';
 import { useStartCollector } from '../hooks/useStartCollector';
 import { useStopCollector } from '../hooks/useStopCollector';
 import {
@@ -18,22 +17,17 @@ import './CollectorPanel.css';
 
 interface CollectorPanelProps {
   marketId: string | null;
+  /** Старый prop больше не участвует в принятии решения о Start. */
   registeredMarketIds?: string[];
 }
 
 export function CollectorPanel({
   marketId,
-  registeredMarketIds = marketId === null ? [] : [marketId],
 }: CollectorPanelProps) {
-  const slotsQuery = useCollectorSlotsQuery(registeredMarketIds);
   const collectorByMarketQuery = useCollectorByMarketQuery(marketId);
   const startMutation = useStartCollector();
   const stopMutation = useStopCollector();
-  const slotSession = slotsQuery.exclusiveSession;
-  const marketSession = slotSession !== null && slotSession.marketId === marketId
-    ? slotSession
-    : collectorByMarketQuery.data;
-  const isBlockedByOtherMarket = slotSession !== null && slotSession.marketId !== marketId;
+  const marketSession = collectorByMarketQuery.data;
   const startedSessionId = startMutation.data?.marketId === marketId
     ? startMutation.data.sessionId
     : null;
@@ -78,7 +72,7 @@ export function CollectorPanel({
   const isMutationPending = startMutation.isPending || stopMutation.isPending;
 
   function startCollector() {
-    if (marketId !== null && slotsQuery.isResolved && !isBlockedByOtherMarket) {
+    if (marketId !== null) {
       startMutation.mutate({ marketId });
     }
   }
@@ -111,39 +105,9 @@ export function CollectorPanel({
         isStartPending={isStartPending}
         isStopPending={isStopPending}
         isMutationPending={isMutationPending}
-        isGlobalSlotResolved={slotsQuery.isResolved}
-        isBlockedByOtherMarket={isBlockedByOtherMarket}
         onStart={startCollector}
         onStop={stopCollector}
       />
-
-      {!slotsQuery.isResolved && slotsQuery.errors.length === 0 ? (
-        <p className="collector-slot-status" role="status">Проверяем global collector slot...</p>
-      ) : null}
-      {slotsQuery.errors.length > 0 ? (
-        <div className="collector-query-error" role="alert">
-          <p>Global collector slot не подтверждён.</p>
-          {slotsQuery.errors.map((error, index) => (
-            <CollectorOperationError
-              key={`${error.name}-${error.message}-${index}`}
-              error={error}
-              nested
-            />
-          ))}
-          <button
-            className="collector-retry-button"
-            type="button"
-            onClick={() => void slotsQuery.retry()}
-            disabled={slotsQuery.isFetching}
-          >
-            Повторить проверку slot
-          </button>
-        </div>
-      ) : isBlockedByOtherMarket ? (
-        <p className="collector-slot-warning" role="status">
-          Global collector slot занят рынком {slotSession.marketId}.
-        </p>
-      ) : null}
 
       {startError !== null ? <CollectorOperationError error={startError} /> : null}
       {stopError !== null ? <CollectorOperationError error={stopError} /> : null}
@@ -154,7 +118,11 @@ export function CollectorPanel({
         <p role="status">Загружаем collector session...</p>
       ) : session === undefined ? (
         <div className="collector-query-error" role="alert">
-          <p>{collectorError?.message ?? 'Не удалось загрузить collector session.'}</p>
+          {collectorError !== null ? (
+            <CollectorOperationError error={collectorError} />
+          ) : (
+            <p>Не удалось загрузить collector session.</p>
+          )}
           <button
             className="collector-retry-button"
             type="button"

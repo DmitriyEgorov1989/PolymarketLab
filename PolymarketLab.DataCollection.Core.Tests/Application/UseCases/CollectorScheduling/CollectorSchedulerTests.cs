@@ -89,6 +89,36 @@ public sealed class CollectorSchedulerTests
     }
 
     [Fact]
+    public async Task TickAsync_WhenOneSessionFails_ShouldContinueWithOtherSessions()
+    {
+        var cleanupError = new Error(
+            "collector.cleanup.failed",
+            "Cleanup failed.",
+            ErrorType.Failure);
+        var fixture = new Fixture(CreatedAt.AddMinutes(2), cleanupError: cleanupError);
+        fixture.Session.BeginInvalidation(
+            CreatedAt,
+            CollectorStopReason.StartupFailure,
+            "collector.first.failed",
+            "First session failed.");
+        var secondSession = CollectorSessionTestFactory.CreateScheduled(
+            marketId: MarketId.Create(Guid.NewGuid()).Value,
+            createdAt: CreatedAt);
+        secondSession.BeginInvalidation(
+            CreatedAt,
+            CollectorStopReason.StartupFailure,
+            "collector.second.failed",
+            "Second session failed.");
+        fixture.Repository.ActiveSessions.Add(secondSession);
+
+        var result = await fixture.Scheduler.TickAsync(CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        fixture.Runtime.FencedSessions.Should().Contain(fixture.Session.Id);
+        fixture.Runtime.FencedSessions.Should().Contain(secondSession.Id);
+    }
+
+    [Fact]
     public async Task TickAsync_BeforePreparationBoundary_ShouldRemainScheduledWithoutGamma()
     {
         var fixture = new Fixture(CreatedAt.AddMinutes(1));
@@ -478,25 +508,22 @@ public sealed class CollectorSchedulerTests
         }
     }
 
-    private sealed class StubRepository(CollectorSessionAggregate exclusiveSession)
+    private sealed class StubRepository(CollectorSessionAggregate session)
         : ICollectorSessionRepository
     {
         public Queue<Result<CollectorSessionUpdateStatus, Error>> UpdateResults { get; } = [];
         public Queue<CollectorSessionAggregate> ReloadedSessions { get; } = [];
+        public List<CollectorSessionAggregate> ActiveSessions { get; } = [session];
         public List<UpdateCall> UpdateCalls { get; } = [];
         public CollectorSessionAggregate? ReloadedSession { get; set; }
-
-        public Task<CollectorSessionAggregate?> GetExclusiveAsync(
-            CancellationToken cancellationToken) =>
-            Task.FromResult<CollectorSessionAggregate?>(exclusiveSession);
 
         public Task<CollectorSessionAggregate?> GetByIdAsync(
             CollectorSessionId sessionId,
             CancellationToken cancellationToken) =>
             Task.FromResult<CollectorSessionAggregate?>(
-                ReloadedSessions.TryDequeue(out var session)
-                    ? session
-                    : ReloadedSession ?? exclusiveSession);
+                ReloadedSessions.TryDequeue(out var reloadedSession)
+                    ? reloadedSession
+                    : ReloadedSession ?? session);
 
         public Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
             CollectorSessionAggregate session,
@@ -520,7 +547,8 @@ public sealed class CollectorSchedulerTests
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<IReadOnlyCollection<CollectorSessionAggregate>> GetActiveAsync(
-            CancellationToken cancellationToken) => throw new NotSupportedException();
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<CollectorSessionAggregate>>(ActiveSessions);
 
         public Task<Result<CollectorSessionInsertStatus, Error>> TryAddAsync(
             CollectorSessionAggregate session,

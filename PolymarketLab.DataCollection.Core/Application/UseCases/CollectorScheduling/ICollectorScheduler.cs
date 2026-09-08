@@ -18,7 +18,7 @@ public interface ICollectorScheduler
         CollectionMarket market,
         CancellationToken cancellationToken);
 
-    /// <summary>Обрабатывает текущую global exclusive session, если наступила её граница.</summary>
+    /// <summary>Обрабатывает все активные sessions, если наступили их границы.</summary>
     /// <param name="cancellationToken">Токен отмены операции.</param>
     /// <returns>Успех либо ожидаемая ошибка tick.</returns>
     Task<UnitResult<Error>> TickAsync(CancellationToken cancellationToken);

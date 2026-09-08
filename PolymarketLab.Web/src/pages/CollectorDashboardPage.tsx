@@ -94,7 +94,6 @@ export function CollectorDashboardPage() {
           <h2 id="collector-panel-title">Управление коллектором</h2>
           <CollectorPanel
             marketId={selectedMarketId}
-            registeredMarketIds={marketsQuery.data?.map((market) => market.marketId) ?? []}
           />
         </article>
       </section>

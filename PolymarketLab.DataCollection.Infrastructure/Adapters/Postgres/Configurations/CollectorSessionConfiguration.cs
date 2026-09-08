@@ -11,12 +11,7 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Configur
     {
         public void Configure(EntityTypeBuilder<CollectorSession> builder)
         {
-            builder.ToTable(
-                "collector_sessions",
-                "data_collection",
-                table => table.HasCheckConstraint(
-                    CollectorSessionDatabaseConstraints.ExclusiveSlotCheck,
-                    "\"exclusive_slot\" = 1"));
+            builder.ToTable("collector_sessions", "data_collection");
             builder.HasKey(x => x.Id);
 
             builder.Property(x => x.Id)
@@ -108,15 +103,10 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Configur
                 .HasColumnName("failure_message")
                 .HasMaxLength(2000);
 
-            builder.Property<short>(CollectorSessionDatabaseConstraints.ExclusiveSlotProperty)
-                .HasColumnName("exclusive_slot")
-                .HasDefaultValue((short)1)
-                .IsRequired();
-
-            builder.HasIndex(CollectorSessionDatabaseConstraints.ExclusiveSlotProperty)
+            builder.HasIndex(session => session.MarketId)
                 .IsUnique()
-                .HasFilter(CollectorSessionDatabaseConstraints.ExclusiveStatusFilter)
-                .HasDatabaseName(CollectorSessionDatabaseConstraints.ExclusiveSlot);
+                .HasFilter(CollectorSessionDatabaseConstraints.ActiveStatusFilter)
+                .HasDatabaseName(CollectorSessionDatabaseConstraints.ActiveMarket);
 
             builder.HasMany(x => x.Tokens)
                 .WithOne()

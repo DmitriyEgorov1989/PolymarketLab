@@ -6,7 +6,7 @@ namespace PolymarketLab.DataCollection.Core.Application.UseCases.ResolutionConse
 /// <summary>Согласует устойчивые terminal-наблюдения resolution активной collector session.</summary>
 public interface IResolutionConsensusCoordinator
 {
-    /// <summary>Обрабатывает временные границы, новые наблюдения и consensus текущей exclusive session.</summary>
+    /// <summary>Обрабатывает временные границы, новые наблюдения и consensus всех активных sessions.</summary>
     /// <param name="cancellationToken">Токен отмены операции.</param>
     /// <returns>Успех либо ожидаемая ошибка orchestration или persistence.</returns>
     Task<UnitResult<Error>> TickAsync(CancellationToken cancellationToken);

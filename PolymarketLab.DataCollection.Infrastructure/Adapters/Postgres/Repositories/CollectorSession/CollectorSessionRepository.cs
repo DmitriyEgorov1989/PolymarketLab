@@ -32,14 +32,6 @@ internal sealed class CollectorSessionRepository(DataCollectionDbContext dbConte
             cancellationToken);
     }
 
-    public Task<CollectorSessionAggregate?> GetExclusiveAsync(
-        CancellationToken cancellationToken)
-    {
-        return QuerySessions().SingleOrDefaultAsync(
-            session => ExclusiveStatuses.Contains(session.Status),
-            cancellationToken);
-    }
-
     public Task<CollectorSessionAggregate?> GetActiveByMarketIdAsync(
         MarketId marketId,
         CancellationToken cancellationToken)
@@ -82,13 +74,13 @@ internal sealed class CollectorSessionRepository(DataCollectionDbContext dbConte
             await dbContext.SaveChangesAsync(cancellationToken);
             return CollectorSessionInsertStatus.Inserted;
         }
-        catch (DbUpdateException exception) when (IsExclusiveSlotConflict(exception))
+        catch (DbUpdateException exception) when (IsActiveMarketConflict(exception))
         {
             dbContext.Entry(session).State = EntityState.Detached;
             dbContext.Entry(progress).State = EntityState.Detached;
             foreach (var token in session.Tokens)
                 dbContext.Entry(token).State = EntityState.Detached;
-            return CollectorSessionInsertStatus.ExclusiveSessionConflict;
+            return CollectorSessionInsertStatus.ActiveMarketConflict;
         }
     }
 
@@ -107,13 +99,21 @@ internal sealed class CollectorSessionRepository(DataCollectionDbContext dbConte
         try
         {
             await dbContext.SaveChangesAsync(cancellationToken);
+            Detach(session);
             return CollectorSessionUpdateStatus.Updated;
         }
         catch (DbUpdateConcurrencyException)
         {
-            entry.State = EntityState.Detached;
+            Detach(session);
             return CollectorSessionUpdateStatus.ConcurrencyConflict;
         }
+    }
+
+    private void Detach(CollectorSessionAggregate session)
+    {
+        dbContext.Entry(session).State = EntityState.Detached;
+        foreach (var token in session.Tokens)
+            dbContext.Entry(token).State = EntityState.Detached;
     }
 
     private IQueryable<CollectorSessionAggregate> QuerySessions()
@@ -123,11 +123,11 @@ internal sealed class CollectorSessionRepository(DataCollectionDbContext dbConte
             .AsNoTracking();
     }
 
-    private static bool IsExclusiveSlotConflict(DbUpdateException exception)
+    private static bool IsActiveMarketConflict(DbUpdateException exception)
     {
         return exception.InnerException is PostgresException postgresException
             && postgresException.SqlState == PostgresErrorCodes.UniqueViolation
-            && CollectorSessionDatabaseConstraints.IsExclusiveSlotConstraint(
-                postgresException.ConstraintName);
+             && CollectorSessionDatabaseConstraints.IsActiveMarketConstraint(
+                 postgresException.ConstraintName);
     }
 }

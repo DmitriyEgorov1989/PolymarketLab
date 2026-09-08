@@ -30,9 +30,11 @@ public sealed class StartCollectorHandler(
             return Failure(marketIdResult.Error);
 
         var marketId = marketIdResult.Value;
-        var exclusiveSession = await sessionRepository.GetExclusiveAsync(cancellationToken);
-        if (exclusiveSession is not null)
-            return ResolveExclusiveSession(exclusiveSession, marketId);
+        var activeMarketSession = await sessionRepository.GetActiveByMarketIdAsync(
+            marketId,
+            cancellationToken);
+        if (activeMarketSession is not null)
+            return Response(activeMarketSession);
 
         var window = await marketSource.GetWindowAsync(marketId, cancellationToken);
         if (window is null)
@@ -96,13 +98,15 @@ public sealed class StartCollectorHandler(
                 ? Failure(schedulingResult.Error)
                 : Response(schedulingResult.Value);
         }
-        if (insertResult.Value != CollectorSessionInsertStatus.ExclusiveSessionConflict)
+        if (insertResult.Value != CollectorSessionInsertStatus.ActiveMarketConflict)
             return Failure(StartCollectorErrors.RaceUnresolved);
 
-        exclusiveSession = await sessionRepository.GetExclusiveAsync(cancellationToken);
-        return exclusiveSession is null
+        activeMarketSession = await sessionRepository.GetActiveByMarketIdAsync(
+            marketId,
+            cancellationToken);
+        return activeMarketSession is null
             ? Failure(StartCollectorErrors.RaceUnresolved)
-            : ResolveExclusiveSession(exclusiveSession, marketId);
+            : Response(activeMarketSession);
     }
 
     private static Error? ValidateTokens(CollectionMarket market)
@@ -129,13 +133,6 @@ public sealed class StartCollectorHandler(
 
         return null;
     }
-
-    private static Result<StartCollectorResponse, ErrorList> ResolveExclusiveSession(
-        CollectorSessionAggregate session,
-        MarketId requestedMarketId) =>
-        session.MarketId == requestedMarketId
-            ? Response(session)
-            : Failure(StartCollectorErrors.GlobalSessionConflict);
 
     private static StartCollectorResponse Response(CollectorSessionAggregate session) =>
         new(session.Id.Value, session.MarketId.Value, session.Status.ToString());

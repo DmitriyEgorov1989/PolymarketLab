@@ -92,8 +92,25 @@ public sealed class CollectorScheduler(
 
     public async Task<UnitResult<Error>> TickAsync(CancellationToken cancellationToken)
     {
-        var session = await sessionRepository.GetExclusiveAsync(cancellationToken);
-        if (session is null || session.Status == CollectorSessionStatus.Stopping)
+        var sessions = await sessionRepository.GetActiveAsync(cancellationToken);
+        Error? firstError = null;
+        foreach (var session in sessions)
+        {
+            var result = await TickSessionAsync(session, cancellationToken);
+            if (result.IsFailure && firstError is null)
+                firstError = result.Error;
+        }
+
+        return firstError is null
+            ? UnitResult.Success<Error>()
+            : UnitResult.Failure(firstError);
+    }
+
+    private async Task<UnitResult<Error>> TickSessionAsync(
+        CollectorSessionAggregate session,
+        CancellationToken cancellationToken)
+    {
+        if (session.Status == CollectorSessionStatus.Stopping)
             return UnitResult.Success<Error>();
 
         if (session.Status == CollectorSessionStatus.Invalidating)
@@ -283,10 +300,4 @@ public sealed class CollectorScheduler(
                 (token.TokenId, token.Outcome, token.OutcomeIndex)));
     }
 
-    private static bool IsExclusive(CollectorSessionStatus status) =>
-        status is CollectorSessionStatus.Scheduled
-            or CollectorSessionStatus.Starting
-            or CollectorSessionStatus.Running
-            or CollectorSessionStatus.Stopping
-            or CollectorSessionStatus.Invalidating;
 }

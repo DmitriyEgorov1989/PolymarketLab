@@ -461,10 +461,9 @@ Request:
 
 Backend возвращает фактический сохранённый status. Ранний Start создаёт session как
 `Scheduled`; Start после `T-60s`, прошедший preparation checks, возвращает `Starting`.
-Session сразу занимает глобальный exclusive slot. Если exclusive session
-этого же рынка уже существует, новая не создаётся и возвращается существующая
-session без повторного запроса Gamma. Если slot занят другим рынком, endpoint
-возвращает `409` с кодом `collector.start.global_session_conflict`.
+Session сразу занимает слот своего рынка. Если активная session этого же рынка
+уже существует, новая не создаётся и возвращается существующая session без
+повторного запроса Gamma. Активная session другого рынка не мешает запуску.
 
 При свободном slot backend сначала читает сохранённый `EventStartsAt` без Gamma.
 Если `EventStartsAt <= now`, endpoint возвращает `409` с кодом

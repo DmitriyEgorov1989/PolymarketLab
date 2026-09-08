@@ -299,12 +299,11 @@ public sealed class CollectorSessionReadModelPostgreSqlTests(PostgreSqlFixture f
                 subscription_ready_at, resolution_signaled_at,
                 resolution_confirmed_at, awaiting_normalization_at, winning_token_id,
                 winning_outcome, resolution_connection_epoch, stopped_at,
-                invalidating_at, stop_reason, failure_code, failure_message,
-                exclusive_slot)
+                invalidating_at, stop_reason, failure_code, failure_message)
             VALUES (
                 @session_id, @market_id, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
                 NULL, 5, NULL, @created_at, @started_at, NULL, NULL, NULL, NULL,
-                NULL, NULL, NULL, @stopped_at, NULL, 8, NULL, NULL, 1);
+                 NULL, NULL, NULL, @stopped_at, NULL, 8, NULL, NULL);
             """;
         command.Parameters.AddWithValue("session_id", sessionId.Value);
         command.Parameters.AddWithValue("market_id", marketId.Value);

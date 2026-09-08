@@ -49,9 +49,24 @@ public sealed class ResolutionConsensusCoordinator(
 
     private async Task<UnitResult<Error>> TickCoreAsync(CancellationToken cancellationToken)
     {
-        var session = await sessionRepository.GetExclusiveAsync(cancellationToken);
-        if (session is null)
-            return UnitResult.Success<Error>();
+        var sessions = await sessionRepository.GetActiveAsync(cancellationToken);
+        Error? firstError = null;
+        foreach (var session in sessions)
+        {
+            var result = await TickSessionAsync(session, cancellationToken);
+            if (result.IsFailure && firstError is null)
+                firstError = result.Error;
+        }
+
+        return firstError is null
+            ? UnitResult.Success<Error>()
+            : UnitResult.Failure(firstError);
+    }
+
+    private async Task<UnitResult<Error>> TickSessionAsync(
+        CollectorSessionAggregate session,
+        CancellationToken cancellationToken)
+    {
 
         if (session.Status == CollectorSessionStatus.Stopping
             && session.Phase == CollectorSessionPhase.AwaitingNormalization)

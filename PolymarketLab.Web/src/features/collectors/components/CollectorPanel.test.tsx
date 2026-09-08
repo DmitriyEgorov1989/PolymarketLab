@@ -212,7 +212,7 @@ describe('CollectorPanel', () => {
     getCollectorByMarketIdMock.mockResolvedValue({ session: null });
     startCollectorMock.mockRejectedValue(new ApiError('Collector start failed.', 409, {
       errors: [{
-        errorCode: 'collector.start.global_session_conflict',
+        errorCode: 'collector.start.active_market_conflict',
         errorMessage: 'Collector start failed.',
         invalidField: null,
       }],
@@ -225,7 +225,7 @@ describe('CollectorPanel', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('Collector start failed.');
     expect(screen.getByRole('alert').textContent).toContain('HTTP 409');
     expect(screen.getByRole('alert').textContent)
-      .toContain('collector.start.global_session_conflict');
+      .toContain('collector.start.active_market_conflict');
     expect((screen.getByRole('button', { name: 'Start collector' }) as HTMLButtonElement).disabled)
       .toBe(false);
   });
@@ -287,21 +287,21 @@ describe('CollectorPanel', () => {
     await vi.waitFor(() => expect(screen.getByText('Failed')).toBeTruthy());
   });
 
-  it('blocks Start when another market owns the known global slot', async () => {
+  it('does not block Start when another market has an active session', async () => {
     const other = createCollectorSession({ marketId: 'market-b', status: 'Running' });
     getCollectorByMarketIdMock.mockImplementation(async (marketId) => ({
       session: marketId === 'market-b' ? other : null,
     }));
     renderPanel('market-a', ['market-a', 'market-b']);
 
-    await screen.findByText(/занят рынком market-b/);
+    await screen.findByText(/ещё нет collector sessions/);
     const button = screen.getByRole('button', { name: 'Start collector' }) as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
+    expect(button.disabled).toBe(false);
     fireEvent.click(button);
-    expect(startCollectorMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(startCollectorMock).toHaveBeenCalledOnce());
   });
 
-  it('shows every failed global slot read', async () => {
+  it('shows an error for the selected market read', async () => {
     getCollectorByMarketIdMock.mockImplementation(async (marketId) => {
       throw new ApiError(`Read ${marketId} failed.`, 503, {
         errors: [{
@@ -311,33 +311,26 @@ describe('CollectorPanel', () => {
         }],
       });
     });
-    renderPanel('market-a', ['market-a', 'market-b']);
+    renderPanel('market-a');
 
     expect(await screen.findByText('collector.read.market-a')).toBeTruthy();
-    expect(screen.getByText('collector.read.market-b')).toBeTruthy();
-    expect(screen.getAllByText('HTTP 503')).toHaveLength(2);
+    expect(screen.getAllByText('HTTP 503')).toHaveLength(1);
   });
 
-  it('allows Start only after a failed global slot read succeeds on retry', async () => {
-    getCollectorByMarketIdMock.mockImplementation(async (marketId) => {
-      if (marketId === 'market-b') {
-        throw new ApiError('Discovery failed.', 500, {
-          errors: [{
-            errorCode: 'collector.read.failed',
-            errorMessage: 'Discovery failed.',
-            invalidField: null,
-          }],
-        });
-      }
-
-      return { session: null };
-    });
+  it('allows Start after the selected market read succeeds on retry', async () => {
+    getCollectorByMarketIdMock.mockRejectedValueOnce(new ApiError('Discovery failed.', 500, {
+      errors: [{
+        errorCode: 'collector.read.failed',
+        errorMessage: 'Discovery failed.',
+        invalidField: null,
+      }],
+    }));
     startCollectorMock.mockResolvedValue({
       sessionId: 'session-id', marketId: 'market-a', status: 'Scheduled',
     });
-    renderPanel('market-a', ['market-a', 'market-b']);
+    renderPanel('market-a');
 
-    const retry = await screen.findByRole('button', { name: 'Повторить проверку slot' });
+    const retry = await screen.findByRole('button', { name: 'Повторить' });
     expect(screen.getByText('HTTP 500')).toBeTruthy();
     expect(screen.getByText('collector.read.failed')).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Start collector' }) as HTMLButtonElement).disabled)

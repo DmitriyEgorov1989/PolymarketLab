@@ -45,6 +45,32 @@ public sealed class CollectorRuntimeStartTests
     }
 
     [Fact]
+    public async Task StartAsync_ForDifferentSessions_ShouldKeepWorkersIndependent()
+    {
+        var firstWorker = new StubCollectorWorker();
+        var secondWorker = new StubCollectorWorker();
+        var factory = new StubCollectorWorkerFactory(
+            () => firstWorker,
+            () => secondWorker);
+        var runtime = CreateRuntime(factory);
+        var firstRequest = CreateRequest();
+        var secondRequest = CreateRequest();
+
+        (await runtime.StartAsync(firstRequest, CancellationToken.None))
+            .IsSuccess.Should().BeTrue();
+        (await runtime.StartAsync(secondRequest, CancellationToken.None))
+            .IsSuccess.Should().BeTrue();
+
+        // Остановка первой session не должна затрагивать worker второй.
+        (await runtime.StopAsync(firstRequest.SessionId, CancellationToken.None))
+            .IsSuccess.Should().BeTrue();
+
+        firstWorker.StopCallCount.Should().Be(1);
+        secondWorker.StopCallCount.Should().Be(0);
+        factory.CreateCallCount.Should().Be(2);
+    }
+
+    [Fact]
     public async Task StartAsync_WithConcurrentCalls_ShouldStartWorkerOnce()
     {
         var startResult = new TaskCompletionSource<UnitResult<Error>>(

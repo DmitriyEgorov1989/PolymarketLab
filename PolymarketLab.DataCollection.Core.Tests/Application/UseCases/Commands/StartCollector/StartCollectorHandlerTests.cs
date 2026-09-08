@@ -27,7 +27,7 @@ public sealed class StartCollectorHandlerTests
     {
         var fixture = new Fixture();
         var existing = CreateSession(fixture.Market!);
-        fixture.Repository.ExclusiveResults.Enqueue(existing);
+        fixture.Repository.ActiveMarketResults.Enqueue(existing);
 
         var result = await fixture.HandleAsync(fixture.Market!.MarketId.Value);
 
@@ -39,18 +39,15 @@ public sealed class StartCollectorHandlerTests
     }
 
     [Fact]
-    public async Task Handle_WithExistingSessionForDifferentMarket_ShouldReturnGlobalConflictBeforeGamma()
+    public async Task Handle_WithExistingSessionForDifferentMarket_ShouldStartIndependently()
     {
         var fixture = new Fixture();
-        fixture.Repository.ExclusiveResults.Enqueue(
-            CreateSession(CreateMarket(MarketId.Create(Guid.NewGuid()).Value)));
+        fixture.Repository.ActiveMarketResults.Enqueue(null);
 
         var result = await fixture.HandleAsync();
 
-        result.IsFailure.Should().BeTrue();
-        result.Error.Single().Should().Be(StartCollectorErrors.GlobalSessionConflict);
-        fixture.MarketSource.CallCount.Should().Be(0);
-        fixture.Repository.TryAddCallCount.Should().Be(0);
+        result.IsSuccess.Should().BeTrue();
+        fixture.Repository.TryAddCallCount.Should().Be(1);
     }
 
     [Fact]
@@ -162,9 +159,9 @@ public sealed class StartCollectorHandlerTests
     {
         var fixture = new Fixture();
         var winner = CreateSession(fixture.Market!);
-        fixture.Repository.InsertResult = CollectorSessionInsertStatus.ExclusiveSessionConflict;
-        fixture.Repository.ExclusiveResults.Enqueue(null);
-        fixture.Repository.ExclusiveResults.Enqueue(winner);
+        fixture.Repository.InsertResult = CollectorSessionInsertStatus.ActiveMarketConflict;
+        fixture.Repository.ActiveMarketResults.Enqueue(null);
+        fixture.Repository.ActiveMarketResults.Enqueue(winner);
 
         var result = await fixture.HandleAsync();
 
@@ -173,27 +170,12 @@ public sealed class StartCollectorHandlerTests
     }
 
     [Fact]
-    public async Task Handle_WhenInsertLosesRaceToDifferentMarket_ShouldReturnGlobalConflict()
-    {
-        var fixture = new Fixture();
-        var winnerMarket = CreateMarket(MarketId.Create(Guid.NewGuid()).Value);
-        fixture.Repository.InsertResult = CollectorSessionInsertStatus.ExclusiveSessionConflict;
-        fixture.Repository.ExclusiveResults.Enqueue(null);
-        fixture.Repository.ExclusiveResults.Enqueue(CreateSession(winnerMarket));
-
-        var result = await fixture.HandleAsync();
-
-        result.IsFailure.Should().BeTrue();
-        result.Error.Single().Should().Be(StartCollectorErrors.GlobalSessionConflict);
-    }
-
-    [Fact]
     public async Task Handle_WhenInsertRaceCannotBeResolved_ShouldReturnConflict()
     {
         var fixture = new Fixture();
-        fixture.Repository.InsertResult = CollectorSessionInsertStatus.ExclusiveSessionConflict;
-        fixture.Repository.ExclusiveResults.Enqueue(null);
-        fixture.Repository.ExclusiveResults.Enqueue(null);
+        fixture.Repository.InsertResult = CollectorSessionInsertStatus.ActiveMarketConflict;
+        fixture.Repository.ActiveMarketResults.Enqueue(null);
+        fixture.Repository.ActiveMarketResults.Enqueue(null);
 
         var result = await fixture.HandleAsync();
 
@@ -333,16 +315,17 @@ public sealed class StartCollectorHandlerTests
 
     private sealed class StubCollectorSessionRepository : ICollectorSessionRepository
     {
-        public Queue<CollectorSessionAggregate?> ExclusiveResults { get; } = [];
+        public Queue<CollectorSessionAggregate?> ActiveMarketResults { get; } = [];
         public CollectorSessionInsertStatus InsertResult { get; set; } =
             CollectorSessionInsertStatus.Inserted;
         public CollectorSessionAggregate? InsertedSession { get; private set; }
         public int TryAddCallCount { get; private set; }
 
-        public Task<CollectorSessionAggregate?> GetExclusiveAsync(
+        public Task<CollectorSessionAggregate?> GetActiveByMarketIdAsync(
+            MarketId marketId,
             CancellationToken cancellationToken) =>
             Task.FromResult(
-                ExclusiveResults.TryDequeue(out var session) ? session : null);
+                ActiveMarketResults.TryDequeue(out var session) ? session : null);
 
         public Task<Result<CollectorSessionInsertStatus, Error>> TryAddAsync(
             CollectorSessionAggregate session,
@@ -355,10 +338,6 @@ public sealed class StartCollectorHandlerTests
 
         public Task<CollectorSessionAggregate?> GetByIdAsync(
             CollectorSessionId sessionId,
-            CancellationToken cancellationToken) => throw new NotSupportedException();
-
-        public Task<CollectorSessionAggregate?> GetActiveByMarketIdAsync(
-            MarketId marketId,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<CollectorSessionAggregate?> GetCurrentByMarketIdAsync(

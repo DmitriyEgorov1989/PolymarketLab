@@ -19,7 +19,7 @@ public sealed class CollectorSessionRepositoryPostgreSqlTests(PostgreSqlFixture 
         new(2026, 8, 27, 11, 57, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task ConcurrentInserts_ForDifferentMarkets_ShouldAllowOneGlobalWinner()
+    public async Task ConcurrentInserts_ForDifferentMarkets_ShouldAllowBothSessions()
     {
         await using var database = await CreateMigratedDatabaseAsync();
         var first = CreateSession(MarketId.Create(Guid.NewGuid()).Value);
@@ -29,15 +29,13 @@ public sealed class CollectorSessionRepositoryPostgreSqlTests(PostgreSqlFixture 
             InsertAsync(database.ConnectionString, first),
             InsertAsync(database.ConnectionString, second));
 
-        results.Should().ContainSingle(result =>
+        results.Should().OnlyContain(result =>
             result == CollectorSessionInsertStatus.Inserted);
-        results.Should().ContainSingle(result =>
-            result == CollectorSessionInsertStatus.ExclusiveSessionConflict);
         await using var context = CreateContext(database.ConnectionString);
-        var exclusive = await new CollectorSessionRepository(context)
-            .GetExclusiveAsync(CancellationToken.None);
-        exclusive.Should().NotBeNull();
-        exclusive!.Id.Should().BeOneOf(first.Id, second.Id);
+        var active = await new CollectorSessionRepository(context)
+            .GetActiveAsync(CancellationToken.None);
+        active.Should().HaveCount(2);
+        active.Select(session => session.Id).Should().Contain([first.Id, second.Id]);
     }
 
     [Fact]
@@ -55,15 +53,16 @@ public sealed class CollectorSessionRepositoryPostgreSqlTests(PostgreSqlFixture 
         results.Should().ContainSingle(result =>
             result == CollectorSessionInsertStatus.Inserted);
         results.Should().ContainSingle(result =>
-            result == CollectorSessionInsertStatus.ExclusiveSessionConflict);
+            result == CollectorSessionInsertStatus.ActiveMarketConflict);
         await using var context = CreateContext(database.ConnectionString);
-        var exclusive = await new CollectorSessionRepository(context)
-            .GetExclusiveAsync(CancellationToken.None);
-        exclusive!.MarketId.Should().Be(marketId);
+        var active = await new CollectorSessionRepository(context)
+            .GetActiveByMarketIdAsync(marketId, CancellationToken.None);
+        active.Should().NotBeNull();
+        active!.MarketId.Should().Be(marketId);
     }
 
     [Fact]
-    public async Task TerminalSession_ShouldReleaseGlobalSlot()
+    public async Task TerminalSession_ShouldReleaseMarketSlot()
     {
         await using var database = await CreateMigratedDatabaseAsync();
         var first = CreateSession(MarketId.Create(Guid.NewGuid()).Value);
@@ -86,7 +85,7 @@ public sealed class CollectorSessionRepositoryPostgreSqlTests(PostgreSqlFixture 
     }
 
     [Fact]
-    public async Task TryUpdateAsync_AfterDetachedRead_ShouldPreserveExclusiveSlot()
+    public async Task TryUpdateAsync_AfterDetachedRead_ShouldPreserveActiveMarketIndex()
     {
         await using var database = await CreateMigratedDatabaseAsync();
         var session = CreateSession(MarketId.Create(Guid.NewGuid()).Value);
