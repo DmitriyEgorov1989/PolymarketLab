@@ -21,7 +21,6 @@ public sealed class CollectorScheduler(
 {
     private const int MaximumUpdateAttempts = 3;
     private static readonly TimeSpan PreparationLeadTime = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan RegularReadinessLeadTime = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan CompensationTimeout = TimeSpan.FromSeconds(10);
 
     public async Task<Result<CollectorSessionAggregate, Error>> PrepareAsync(
@@ -38,8 +37,10 @@ public sealed class CollectorScheduler(
             return await InvalidateAsync(session, cancellationToken);
         if (now < eventStartsAt.Value - PreparationLeadTime)
             return session;
-        if (!MatchesSnapshot(session, market) || !IsReadyForPreparation(market))
+        if (!MatchesSnapshot(session, market) || IsPermanentPreparationFailure(market))
             return await InvalidateAsync(session, cancellationToken);
+        if (!IsReadyForPreparation(market))
+            return session;
 
         var transition = session.BeginPreparation(now);
         if (transition.IsFailure)
@@ -54,14 +55,11 @@ public sealed class CollectorScheduler(
         if (updateResult.Value == CollectorSessionUpdateStatus.ConcurrencyConflict)
             return await ResolveConflictAsync(session, cancellationToken);
 
-        var readinessDeadline = now < eventStartsAt.Value - RegularReadinessLeadTime
-            ? eventStartsAt.Value - RegularReadinessLeadTime
-            : eventStartsAt.Value;
         UnitResult<Error> runtimeResult;
         try
         {
             runtimeResult = await runtime.StartAsync(
-                new CollectorRuntimeStartRequest(session.Id, market, readinessDeadline),
+                new CollectorRuntimeStartRequest(session.Id, market, eventStartsAt.Value),
                 cancellationToken);
         }
         catch
@@ -224,12 +222,8 @@ public sealed class CollectorScheduler(
             return await InvalidateAsUnitAsync(session, cancellationToken);
 
         var eventStartsAt = session.EventStartsAt.Value;
-        var readinessDeadline = session.StartedAt.Value
-            < eventStartsAt - RegularReadinessLeadTime
-            ? eventStartsAt - RegularReadinessLeadTime
-            : eventStartsAt;
         var now = timeProvider.GetUtcNow();
-        if (now < readinessDeadline)
+        if (now < eventStartsAt)
             return UnitResult.Success<Error>();
         if (boundaryChecks.IsReadinessVerified(session.Id))
             return UnitResult.Success<Error>();
@@ -240,7 +234,7 @@ public sealed class CollectorScheduler(
         if (marketResult.IsFailure
             || marketResult.Value is null
             || !MatchesSnapshot(session, marketResult.Value)
-            || !IsReadyForPreparation(marketResult.Value))
+            || IsPermanentPreparationFailure(marketResult.Value))
         {
             return await InvalidateAsUnitAsync(session, cancellationToken);
         }
@@ -277,6 +271,9 @@ public sealed class CollectorScheduler(
         && !market.Closed
         && market.AcceptingOrders
         && market.OrderBookEnabled;
+
+    private static bool IsPermanentPreparationFailure(CollectionMarket market) =>
+        market.Closed || !market.OrderBookEnabled;
 
     private static bool MatchesSnapshot(
         CollectorSessionAggregate session,

@@ -15,7 +15,6 @@ public sealed class CollectorSessionResponseFactory(
     : ICollectorSessionResponseFactory
 {
     private static readonly TimeSpan PreparationLead = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan ReadinessLead = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ResolutionWindow = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan NormalizationWindow = TimeSpan.FromMinutes(5);
 
@@ -220,7 +219,7 @@ public sealed class CollectorSessionResponseFactory(
                 session.EventStartsAt - PreparationLead,
             CollectorSessionPhase.Connecting or
             CollectorSessionPhase.AwaitingInitialBooks or
-            CollectorSessionPhase.AwaitingHeartbeat => ReadinessDeadline(session),
+            CollectorSessionPhase.AwaitingHeartbeat => session.EventStartsAt,
             CollectorSessionPhase.ReadyBeforeWindow => session.EventStartsAt,
             CollectorSessionPhase.CollectingWindow => session.EventEndsAt,
             CollectorSessionPhase.AwaitingResolution =>
@@ -230,14 +229,4 @@ public sealed class CollectorSessionResponseFactory(
             _ => null
         };
 
-    private static DateTimeOffset? ReadinessDeadline(CollectorSessionAggregate session)
-    {
-        if (session.EventStartsAt is not { } eventStartsAt)
-            return null;
-
-        var regularDeadline = eventStartsAt - ReadinessLead;
-        return session.StartedAt is null || session.StartedAt < regularDeadline
-            ? regularDeadline
-            : eventStartsAt;
-    }
 }

@@ -43,7 +43,8 @@ public sealed class CollectorRuntimeReadinessHandler(
         UpdateStartingPhaseAsync(
             sessionId,
             session => session.MarkRunning(subscriptionReadyAt),
-            cancellationToken);
+            cancellationToken,
+            failIfNotStarting: true);
 
     public async Task<UnitResult<Error>> RecordInitialBookEnqueuedAsync(
         CollectorSessionId sessionId,
@@ -91,7 +92,8 @@ public sealed class CollectorRuntimeReadinessHandler(
     private async Task<UnitResult<Error>> UpdateStartingPhaseAsync(
         CollectorSessionId sessionId,
         Func<Domain.Models.CollectorSession.CollectorSession, UnitResult<Error>> transition,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool failIfNotStarting = false)
     {
         for (var attempt = 0; attempt < MaximumUpdateAttempts; attempt++)
         {
@@ -99,8 +101,20 @@ public sealed class CollectorRuntimeReadinessHandler(
                 sessionId,
                 cancellationToken);
 
-            if (session is null || session.Status != CollectorSessionStatus.Starting)
+            if (session is null)
+            {
+                return failIfNotStarting
+                    ? UnitResult.Failure(CollectorRuntimeReadinessErrors.SessionNotStarting(sessionId))
+                    : UnitResult.Success<Error>();
+            }
+
+            if (session.Status != CollectorSessionStatus.Starting)
+            {
+                if (failIfNotStarting)
+                    return UnitResult.Failure(CollectorRuntimeReadinessErrors.SessionNotStarting(sessionId));
+
                 return UnitResult.Success<Error>();
+            }
 
             var result = transition(session);
             if (result.IsFailure)

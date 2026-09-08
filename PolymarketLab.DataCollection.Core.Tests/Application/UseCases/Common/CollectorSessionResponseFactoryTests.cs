@@ -292,7 +292,7 @@ public sealed class CollectorSessionResponseFactoryTests
     }
 
     [Theory]
-    [InlineData(-70, -10)]
+    [InlineData(-70, 0)]
     [InlineData(-10, 0)]
     [InlineData(0, 0)]
     public async Task CreateAsync_WithConnectingPhase_ShouldMapReadinessDeadline(
@@ -464,18 +464,18 @@ public sealed class CollectorSessionResponseFactoryTests
             case CollectorSessionPhase.Connecting:
                 var connecting = CreateSession();
                 connecting.BeginPreparation(startedAt).IsSuccess.Should().BeTrue();
-                return (connecting, EventStartsAt.AddSeconds(-10));
+                return (connecting, EventStartsAt);
             case CollectorSessionPhase.AwaitingInitialBooks:
                 var initialBooks = CreateSession();
                 initialBooks.BeginPreparation(startedAt).IsSuccess.Should().BeTrue();
                 initialBooks.MarkAwaitingInitialBooks().IsSuccess.Should().BeTrue();
-                return (initialBooks, EventStartsAt.AddSeconds(-10));
+                return (initialBooks, EventStartsAt);
             case CollectorSessionPhase.AwaitingHeartbeat:
                 var heartbeat = CreateSession();
                 heartbeat.BeginPreparation(startedAt).IsSuccess.Should().BeTrue();
                 heartbeat.MarkAwaitingInitialBooks().IsSuccess.Should().BeTrue();
                 heartbeat.MarkAwaitingHeartbeat().IsSuccess.Should().BeTrue();
-                return (heartbeat, EventStartsAt.AddSeconds(-10));
+                return (heartbeat, EventStartsAt);
             case CollectorSessionPhase.ReadyBeforeWindow:
                 return (session, EventStartsAt);
             case CollectorSessionPhase.CollectingWindow:

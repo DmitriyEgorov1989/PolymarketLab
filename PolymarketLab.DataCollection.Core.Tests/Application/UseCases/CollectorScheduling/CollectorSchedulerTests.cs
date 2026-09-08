@@ -133,7 +133,7 @@ public sealed class CollectorSchedulerTests
     }
 
     [Fact]
-    public async Task TickAsync_AtPreparationBoundary_ShouldStartWithRegularDeadline()
+    public async Task TickAsync_AtPreparationBoundary_ShouldStartWithMarketOpenDeadline()
     {
         var fixture = new Fixture(CreatedAt.AddMinutes(2));
 
@@ -147,7 +147,7 @@ public sealed class CollectorSchedulerTests
             .Which.ExpectedStatus.Should().Be(CollectorSessionStatus.Scheduled);
         fixture.Runtime.StartRequests.Should().ContainSingle();
         fixture.Runtime.StartRequests.Single().ReadinessDeadline.Should()
-            .Be(fixture.Session.EventStartsAt!.Value.AddSeconds(-10));
+            .Be(fixture.Session.EventStartsAt);
     }
 
     [Fact]
@@ -166,11 +166,9 @@ public sealed class CollectorSchedulerTests
     }
 
     [Theory]
-    [InlineData(false, false, true, true)]
     [InlineData(true, true, true, true)]
-    [InlineData(true, false, false, true)]
     [InlineData(true, false, true, false)]
-    public async Task PrepareAsync_WithUnavailableBoundaryFlags_ShouldInvalidate(
+    public async Task PrepareAsync_WithPermanentBoundaryFlags_ShouldInvalidate(
         bool active,
         bool closed,
         bool acceptingOrders,
@@ -193,6 +191,30 @@ public sealed class CollectorSchedulerTests
         result.IsSuccess.Should().BeTrue();
         result.Value.Status.Should().Be(CollectorSessionStatus.Invalidating);
         result.Value.Phase.Should().Be(CollectorSessionPhase.Cleaning);
+        fixture.Runtime.StartRequests.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task PrepareAsync_WithTemporaryBoundaryFlags_ShouldRemainScheduled(
+        bool active,
+        bool acceptingOrders)
+    {
+        var fixture = new Fixture(CreatedAt.AddMinutes(2));
+        var market = fixture.Market with
+        {
+            Active = active,
+            AcceptingOrders = acceptingOrders
+        };
+
+        var result = await fixture.Scheduler.PrepareAsync(
+            fixture.Session,
+            market,
+            CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Status.Should().Be(CollectorSessionStatus.Scheduled);
         fixture.Runtime.StartRequests.Should().BeEmpty();
     }
 
@@ -271,21 +293,31 @@ public sealed class CollectorSchedulerTests
     }
 
     [Fact]
-    public async Task TickAsync_AtRegularReadinessDeadline_WhenStillStarting_ShouldInvalidate()
+    public async Task TickAsync_AtFormerReadinessBoundary_WhenStillStarting_ShouldRemainPending()
     {
         var fixture = new Fixture(CreatedAt.AddMinutes(2).AddSeconds(50));
         fixture.Session.BeginPreparation(CreatedAt.AddMinutes(2));
 
         var result = await fixture.Scheduler.TickAsync(CancellationToken.None);
-        fixture.Session.Status.Should().Be(CollectorSessionStatus.Invalidating);
-        var repeated = await fixture.Scheduler.TickAsync(CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
-        repeated.IsSuccess.Should().BeTrue();
-        fixture.Source.FreshReadCallCount.Should().Be(1);
-        fixture.Session.Status.Should().Be(CollectorSessionStatus.Failed);
-        fixture.Runtime.StoppedSessions.Should().Equal(fixture.Session.Id, fixture.Session.Id);
-        fixture.Cleanup.Calls.Should().Equal(fixture.Session.Id);
+        fixture.Source.FreshReadCallCount.Should().Be(0);
+        fixture.Session.Status.Should().Be(CollectorSessionStatus.Starting);
+        fixture.Runtime.StoppedSessions.Should().BeEmpty();
+        fixture.Cleanup.Calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task TickAsync_AtMarketOpen_WhenStillStarting_ShouldInvalidate()
+    {
+        var fixture = new Fixture(CreatedAt.AddMinutes(3));
+        fixture.Session.BeginPreparation(CreatedAt.AddMinutes(2));
+
+        var result = await fixture.Scheduler.TickAsync(CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        fixture.Session.Status.Should().Be(CollectorSessionStatus.Invalidating);
+        fixture.Runtime.StoppedSessions.Should().Contain(fixture.Session.Id);
     }
 
     [Fact]
@@ -302,7 +334,7 @@ public sealed class CollectorSchedulerTests
 
         result.IsSuccess.Should().BeTrue();
         repeated.IsSuccess.Should().BeTrue();
-        fixture.Source.FreshReadCallCount.Should().Be(1);
+        fixture.Source.FreshReadCallCount.Should().Be(0);
         fixture.Session.Status.Should().Be(CollectorSessionStatus.Running);
         fixture.Repository.UpdateCalls.Should().BeEmpty();
     }

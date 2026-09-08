@@ -501,6 +501,58 @@ public sealed class CollectorWebSocketWorkerTests
     }
 
     [Fact]
+    public async Task ReceiveAsync_WhenEvidenceArrivesExactlyAtDeadline_ShouldNotBecomeReady()
+    {
+        var connection = new StubWebSocketConnection();
+        connection.AddFrame(BookMessage("yes-token"));
+        connection.AddFrame(BookMessage("no-token"));
+        connection.AddFrame("PONG"u8);
+        var dispatcher = new StubReadinessDispatcher();
+        var request = CreateRequest();
+        var worker = CreateWorker(
+            request,
+            connection,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(request.ReadinessDeadline));
+
+        await worker.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => dispatcher.TokenReadinessRecords.Count == 2);
+        await worker.StopAsync(CancellationToken.None);
+
+        dispatcher.RunningCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ReceiveAsync_WithSeveralInitialBooksInOneArray_ShouldRecordEveryToken()
+    {
+        var connection = new StubWebSocketConnection();
+        var arrayPayload = "[" + BookMessageText("yes-token") + "," +
+            BookMessageText("no-token") + "]";
+        connection.AddFrame(Encoding.UTF8.GetBytes(
+            arrayPayload));
+        var sink = new StubRawMarketMessageSink();
+        var dispatcher = new StubReadinessDispatcher();
+        var request = CreateRequest();
+        var worker = CreateWorker(
+            request,
+            connection,
+            messageSink: sink,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:40Z")));
+
+        await worker.StartAsync(CancellationToken.None);
+        await sink.WaitForMessageAsync();
+        await WaitUntilAsync(() => dispatcher.TokenReadinessRecords.Count == 2);
+        await worker.StopAsync(CancellationToken.None);
+
+        dispatcher.TokenReadinessRecords
+            .Select(record => record.TokenId)
+            .Should()
+            .Equal("yes-token", "no-token");
+    }
+
+    [Fact]
     public async Task ReceiveAsync_WithInitialBook_ShouldRecordTokenReadinessForCurrentEpoch()
     {
         var connection = new StubWebSocketConnection();
@@ -983,7 +1035,10 @@ public sealed class CollectorWebSocketWorkerTests
 
     private static byte[] BookMessage(string tokenId) =>
         Encoding.UTF8.GetBytes(
-            $"{{\"event_type\":\"book\",\"market\":\"0xcondition\",\"asset_id\":\"{tokenId}\",\"bids\":[],\"asks\":[]}}");
+            BookMessageText(tokenId));
+
+    private static string BookMessageText(string tokenId) =>
+        $"{{\"event_type\":\"book\",\"market\":\"0xcondition\",\"asset_id\":\"{tokenId}\",\"bids\":[],\"asks\":[]}}";
 
     private sealed class StubWebSocketFactory(params StubWebSocketConnection[] connections)
         : ICollectorWebSocketFactory

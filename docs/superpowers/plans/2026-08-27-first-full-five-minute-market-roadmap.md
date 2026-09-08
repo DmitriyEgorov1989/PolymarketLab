@@ -121,7 +121,7 @@
 
 **Зачем это делаем:** Collector должен быть готов ровно к открытию, но не должен менять официальное окно данных ради позднего запуска. Scheduler отделяет раннее планирование от подготовки и запрещает притворяться, что неполный сбор после открытия является полным.
 
-**Успешный пример:** Start в `11:57:00 UTC` создаёт `Scheduled/WaitingForPreparation`; в `11:59:00 UTC`, то есть `T-60s`, CAS переводит session в `Starting`. Readiness должна наступить не позднее `11:59:50 UTC`, то есть `T-10s`.
+**Успешный пример:** Start в `11:57:00 UTC` создаёт `Scheduled/WaitingForPreparation`; в `11:59:00 UTC`, то есть `T-60s`, CAS переводит session в `Starting`. Readiness должна наступить строго до `12:00:00 UTC`, то есть `T`.
 
 **Ожидающий пример:** Start в `11:59:30 UTC` сразу начинает preparation и ждёт readiness до `11:59:50 UTC`. Start в `11:59:55 UTC` разрешён как late preparation, но deadline остаётся `12:00:00 UTC`.
 
@@ -139,7 +139,7 @@
 
 **Implementation:**
 
-- [ ] Написать table-driven tests для `<T-60s`, `T-60s..T-10s`, `T-10s..T` и `now>=T` через fake `TimeProvider`.
+- [ ] Написать table-driven tests для `<T-60s`, `T-60s..T`, `readyAt == T` и `now>=T` через fake `TimeProvider`.
 - [ ] Реализовать precedence: global slot, persisted open-time rejection, fresh Gamma verification, time-window branch.
 - [ ] Реализовать идемпотентный durable tick и CAS preparation без `Task.Delay` в tests.
 - [ ] На preparation/readiness boundaries требовать `active=true`, `closed=false`, `acceptingOrders=true`, `enableOrderBook=true`; snapshot mismatch направлять в invalidation.

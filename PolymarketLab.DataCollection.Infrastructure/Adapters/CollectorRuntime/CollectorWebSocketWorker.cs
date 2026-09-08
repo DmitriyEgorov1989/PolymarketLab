@@ -697,24 +697,24 @@ internal sealed class CollectorWebSocketWorker(
                     payload,
                     request.Market.ConditionId,
                     state.ExpectedTokenIds);
-                if (observation.IsProtocolViolation && state.IsReady)
+                if (observation.IsProtocolViolation)
                 {
                     return UnitResult.Failure(
                         CollectorRuntimeErrors.ProtocolViolation(request.SessionId));
                 }
 
-                if (observation.TokenId is not null)
+                foreach (var tokenId in observation.TokenIds)
                 {
                     var readinessResult = await readinessDispatcher.RecordInitialBookEnqueuedAsync(
                         request.SessionId,
-                        TokenId.Create(observation.TokenId).Value,
+                        TokenId.Create(tokenId).Value,
                         state.Epoch,
                         timeProvider.GetUtcNow(),
                         receiveToken);
                     if (readinessResult.IsFailure)
                         return UnitResult.Failure(readinessResult.Error);
 
-                    state.ObserveInitialBook(observation.TokenId);
+                    state.ObserveInitialBook(tokenId);
                     await TryCompleteReadinessAsync(state, receiveToken);
                 }
             }
@@ -890,7 +890,7 @@ internal sealed class CollectorWebSocketWorker(
             return;
 
         var readyAt = timeProvider.GetUtcNow();
-        if (readyAt > request.ReadinessDeadline)
+        if (readyAt >= request.ReadinessDeadline)
             return;
 
         var runningResult = await readinessDispatcher.MarkRunningAsync(
@@ -1161,7 +1161,7 @@ internal sealed class CollectorWebSocketWorker(
     }
 
     private sealed record ReadinessObservation(
-        string? TokenId,
+        IReadOnlyList<string> TokenIds,
         bool IsProtocolViolation)
     {
         public static ReadinessObservation TryRead(
@@ -1175,24 +1175,26 @@ internal sealed class CollectorWebSocketWorker(
                 var root = document.RootElement;
                 if (root.ValueKind == JsonValueKind.Array)
                 {
+                    var tokenIds = new List<string>();
+                    var protocolViolation = false;
                     foreach (var item in root.EnumerateArray())
                     {
                         var observation = TryReadObject(
                             item,
                             conditionId,
                             expectedTokenIds);
-                        if (observation.TokenId is not null || observation.IsProtocolViolation)
-                            return observation;
+                        tokenIds.AddRange(observation.TokenIds);
+                        protocolViolation |= observation.IsProtocolViolation;
                     }
 
-                    return new ReadinessObservation(null, false);
+                    return new ReadinessObservation(tokenIds, protocolViolation);
                 }
 
                 return TryReadObject(root, conditionId, expectedTokenIds);
             }
             catch (JsonException)
             {
-                return new ReadinessObservation(null, true);
+                return new ReadinessObservation([], false);
             }
         }
 
@@ -1202,12 +1204,12 @@ internal sealed class CollectorWebSocketWorker(
             HashSet<string> expectedTokenIds)
         {
             if (element.ValueKind != JsonValueKind.Object)
-                return new ReadinessObservation(null, true);
+                return new ReadinessObservation([], true);
 
             if (!element.TryGetProperty("event_type", out var eventType)
                 || eventType.GetString() != "book")
             {
-                return new ReadinessObservation(null, false);
+                return new ReadinessObservation([], false);
             }
 
             if (!TryGetString(element, "market", out var market)
@@ -1219,10 +1221,10 @@ internal sealed class CollectorWebSocketWorker(
                 || !element.TryGetProperty("asks", out var asks)
                 || asks.ValueKind != JsonValueKind.Array)
             {
-                return new ReadinessObservation(null, true);
+                return new ReadinessObservation([], true);
             }
 
-            return new ReadinessObservation(tokenId, false);
+            return new ReadinessObservation([tokenId], false);
         }
 
         private static bool TryGetString(

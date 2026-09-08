@@ -398,7 +398,7 @@ GET и Stop возвращают одинаковый полный снимок 
 | Фаза | Граница |
 |---|---|
 | `WaitingForPreparation` | `eventStartsAt - 60s` |
-| `Connecting`, `AwaitingInitialBooks`, `AwaitingHeartbeat` | `eventStartsAt - 10s`; при позднем `startedAt` (в диапазоне `T-10s..T`) — `eventStartsAt` |
+| `Connecting`, `AwaitingInitialBooks`, `AwaitingHeartbeat` | `eventStartsAt` |
 | `ReadyBeforeWindow` | `eventStartsAt` |
 | `CollectingWindow` | `eventEndsAt` |
 | `AwaitingResolution` | `eventEndsAt + 5m` |
@@ -488,8 +488,7 @@ policy не применяется на этом шаге, поэтому кор
 `Scheduled/WaitingForPreparation`. Начиная с `T-60s`, lifecycle scheduler требует
 `active=true`, `closed=false`, `acceptingOrders=true`, `enableOrderBook=true`,
 выполняет CAS в `Starting/Connecting` и запускает runtime. Обычный readiness
-deadline равен `T-10s`; для Start в диапазоне `T-10s..EventStartsAt` deadline
-равен `EventStartsAt`. Snapshot live-проверки остаётся неизменяемым для всей
+Readiness deadline равен `EventStartsAt`, а readiness принимается только строго до этой границы. Snapshot live-проверки остаётся неизменяемым для всей
 session; mismatch инициирует `Invalidating/Cleaning`.
 
 Удалённое закрытие WebSocket переводит session в `Failed` с кодом

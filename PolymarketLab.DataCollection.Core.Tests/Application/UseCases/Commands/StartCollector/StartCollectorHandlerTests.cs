@@ -81,7 +81,7 @@ public sealed class StartCollectorHandlerTests
     }
 
     [Fact]
-    public async Task Handle_AtPreparationBoundary_ShouldStartRuntimeWithRegularDeadline()
+    public async Task Handle_AtPreparationBoundary_ShouldStartRuntimeWithMarketOpenDeadline()
     {
         var fixture = new Fixture(now: Now.AddMinutes(2));
 
@@ -91,7 +91,7 @@ public sealed class StartCollectorHandlerTests
         result.Value.Status.Should().Be("Starting");
         fixture.Runtime.StartRequests.Should().ContainSingle();
         fixture.Runtime.StartRequests.Single().ReadinessDeadline.Should()
-            .Be(fixture.Market!.EventStartsAt.AddSeconds(-10));
+            .Be(fixture.Market!.EventStartsAt);
     }
 
     [Fact]

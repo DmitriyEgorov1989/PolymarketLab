@@ -18,4 +18,10 @@ public static class CollectorRuntimeReadinessErrors
         "collector.runtime.readiness.observation.invalid",
         $"Collector runtime readiness observation for session '{sessionId.Value}' is invalid.",
         ErrorType.Failure);
+
+    /// <summary>Готовность пришла после того, как сессия перестала быть Starting.</summary>
+    public static Error SessionNotStarting(CollectorSessionId sessionId) => new(
+        "collector.runtime.readiness.session_not_starting",
+        $"Collector session '{sessionId.Value}' is no longer starting.",
+        ErrorType.Conflict);
 }

@@ -232,9 +232,9 @@ Application flow разделён между [`StartCollectorHandler`](../../../
 5. До `T-60s` оставить session запланированной.
 6. Начиная с `T-60s`, проверить exact snapshot и operational flags.
 7. CAS-переходом установить `Starting/Connecting` и вызвать `ICollectorRuntime.StartAsync`.
-8. Оставить session в `Starting`: connect и отправка subscription не доказывают readiness.
+8. Оставить session в `Starting`: connect и отправка subscription не доказывают readiness; временные ошибки подготовки повторяются до `T = EventStartsAt`.
 9. Runtime получает initial `book` по каждому snapshot token, успешно передаёт их в bounded ingestion, отправляет text `PING` и ждёт text `PONG` до readiness deadline.
-10. Только после этой readiness boundary runtime сохраняет `Starting -> Running` через scoped dispatcher и CAS.
+10. Только после этой readiness boundary, зафиксированной строго до `T`, runtime сохраняет `Starting -> Running` через scoped dispatcher и CAS.
 11. При startup failure перевести session в `Invalidating/Cleaning` и остановить runtime как compensation.
 
 DataCollection Application и Presentation подключены к API host. Публичные endpoints collector session:

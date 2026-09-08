@@ -541,7 +541,7 @@ Cover:
 3. Cleaned `Failed`: historical counters remain non-zero, `remainingRawMessageCount=0`, `normalization=null`, cleanup deleted counts are non-zero.
 4. Legacy `Interrupted`: cover JSON nullability in Core contract tests and add a PostgreSQL test with an explicitly inserted legacy row; do not add a production rehydration API only for a unit test.
 5. Resolution reduction: multiple observations of one source produce latest `sourceStates` by `(ObservedAt, Id)` while `confirmationSources` still references the earlier terminal evidence used by consensus. Test a later `NonTerminal` after `Terminal`, a newer timestamp with lower ID and equal timestamps with different IDs.
-6. Table-driven deadline cases: all ten phases, early readiness `T-10s`, late readiness `T`, exact `StartedAt == T-10s`, terminal statuses and nullable legacy window.
+6. Table-driven deadline cases: all ten phases, readiness strictly before `T`, exact `readyAt == T`, terminal statuses and nullable legacy window.
 
 - [ ] **Step 2: Run the factory tests and confirm RED**
 
