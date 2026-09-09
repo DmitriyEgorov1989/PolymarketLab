@@ -53,6 +53,21 @@ internal sealed class CollectorSessionRepository(DataCollectionDbContext dbConte
             .FirstOrDefaultAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<CollectorSessionAggregate>> GetCurrentAsync(
+        CancellationToken cancellationToken)
+    {
+        var sessions = await QuerySessions()
+            .OrderBy(session => session.MarketId)
+            .ThenBy(session => ExclusiveStatuses.Contains(session.Status) ? 0 : 1)
+            .ThenByDescending(session => session.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        return sessions
+            .GroupBy(session => session.MarketId)
+            .Select(group => group.First())
+            .ToArray();
+    }
+
     public Task<CollectorSessionAggregate?> GetSuccessfulByMarketIdAsync(
         MarketId marketId,
         CancellationToken cancellationToken)

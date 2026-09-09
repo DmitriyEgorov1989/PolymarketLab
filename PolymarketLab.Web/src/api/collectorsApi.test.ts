@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getCollectorById,
   getCollectorByMarketId,
+  getCollectors,
   startCollector,
   stopCollector,
 } from './collectorsApi';
@@ -27,6 +28,16 @@ describe('collectorsApi', () => {
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/Collector/session%2Fid');
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/Collector/by-market/market%2Fid');
+  });
+
+  it('loads all current collector jobs', async () => {
+    fetchMock.mockResolvedValue(envelopeResponse({ sessions: [] }));
+
+    await getCollectors();
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/Collector', expect.objectContaining({
+      method: 'GET',
+    }));
   });
 
   it('starts a collector with a market id', async () => {

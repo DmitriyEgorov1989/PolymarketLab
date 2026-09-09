@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CollectorPanel } from '../features/collectors/components/CollectorPanel';
+import { CollectorJobsPanel } from '../features/collectors/components/CollectorJobsPanel';
 import { AddMarketForm } from '../features/markets/components/AddMarketForm';
 import { MarketDetails } from '../features/markets/components/MarketDetails';
 import { MarketList } from '../features/markets/components/MarketList';
@@ -91,10 +91,8 @@ export function CollectorDashboardPage() {
         </article>
 
         <article className="card collector-card" aria-labelledby="collector-panel-title">
-          <h2 id="collector-panel-title">Управление коллектором</h2>
-          <CollectorPanel
-            marketId={selectedMarketId}
-          />
+          <h2 id="collector-panel-title">Collector jobs</h2>
+          <CollectorJobsPanel />
         </article>
       </section>
     </main>

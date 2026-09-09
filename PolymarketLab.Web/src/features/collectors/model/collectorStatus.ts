@@ -12,7 +12,6 @@ const STOPPABLE_COLLECTOR_STATUSES = new Set([
   'Scheduled',
   'Starting',
   'Running',
-  'Stopping',
 ]);
 
 export function isPollableCollectorStatus(status: string | null | undefined): boolean {

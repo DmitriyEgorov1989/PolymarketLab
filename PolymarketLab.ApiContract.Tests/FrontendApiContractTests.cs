@@ -44,6 +44,8 @@ public sealed class FrontendApiContractTests
             .Should().Be("{marketId:guid}");
         GetTemplate<HttpGetAttribute>(typeof(CollectorController), "GetCollectorSessionById")
             .Should().Be("{sessionId:guid}");
+        GetTemplate<HttpGetAttribute>(typeof(CollectorController), "GetCollectorSessions")
+            .Should().BeNull();
         GetTemplate<HttpGetAttribute>(typeof(CollectorController), "GetCollectorSessionByMarket")
             .Should().Be("by-market/{marketId:guid}");
     }

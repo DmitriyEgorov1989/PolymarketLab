@@ -428,6 +428,23 @@ provenance (`rawMessageId`, `rawItemIndex`) и outcome arrays наблюдени
 
 Неизвестный `sessionId` возвращает `404`.
 
+## GET /api/Collector
+
+Возвращает актуальную session каждого зарегистрированного рынка. Для рынка с
+активной session возвращается она; иначе возвращается последняя session рынка.
+Результат включает sessions после `eventEndsAt`, пока backend ещё выполняет
+resolution, drain, normalization или cleanup.
+
+Успешный `result`:
+
+```json
+{
+  "sessions": []
+}
+```
+
+Каждый элемент `sessions` имеет форму `CollectorSession DTO`.
+
 ## GET /api/Collector/by-market/{marketId}
 
 Возвращает активную session рынка. Если активной session нет, возвращает последнюю

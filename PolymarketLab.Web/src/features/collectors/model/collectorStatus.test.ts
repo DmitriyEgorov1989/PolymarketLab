@@ -46,14 +46,14 @@ describe('collector status', () => {
     },
   );
 
-  it.each(['Scheduled', 'Starting', 'Running', 'Stopping'])(
+  it.each(['Scheduled', 'Starting', 'Running'])(
     'allows Stop for %s',
     (status) => {
       expect(isStoppableCollectorStatus(status)).toBe(true);
     },
   );
 
-  it.each(['Invalidating', ...terminalAndUnknownStatuses])(
+  it.each(['Stopping', 'Invalidating', ...terminalAndUnknownStatuses])(
     'does not allow Stop for %s',
     (status) => {
       expect(isStoppableCollectorStatus(status)).toBe(false);

@@ -132,6 +132,20 @@ export interface GetCollectorSessionByMarketResponse {
   session: CollectorSessionResponse | null;
 }
 
+export interface GetCollectorSessionsResponse {
+  sessions: CollectorSessionResponse[];
+}
+
+export function getCollectors(
+  signal?: AbortSignal,
+): Promise<GetCollectorSessionsResponse> {
+  return request<GetCollectorSessionsResponse>({
+    method: 'GET',
+    path: '/api/Collector',
+    signal,
+  });
+}
+
 export function getCollectorById(
   sessionId: string,
   signal?: AbortSignal,

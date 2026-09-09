@@ -50,6 +50,12 @@
   color: #fda4af;
 }
 
+.collector-jobs-list {
+  display: grid;
+  min-width: 0;
+  gap: 20px;
+}
+
 .collector-operation-error {
   display: flex;
   flex-wrap: wrap;

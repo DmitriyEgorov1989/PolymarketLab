@@ -34,6 +34,13 @@ public interface ICollectorSessionRepository
         MarketId marketId,
         CancellationToken cancellationToken);
 
+    /// <summary>Получает актуальную сессию каждого зарегистрированного рынка.</summary>
+    /// <param name="cancellationToken">Токен отмены операции.</param>
+    /// <returns>Активные сессии либо последние сессии рынков без активной попытки.</returns>
+    Task<IReadOnlyCollection<CollectorSession>> GetCurrentAsync(
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyCollection<CollectorSession>>([]);
+
     /// <summary>Получает успешно завершённую попытку рынка.</summary>
     /// <param name="marketId">Идентификатор рынка.</param>
     /// <param name="cancellationToken">Токен отмены операции.</param>

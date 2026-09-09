@@ -34,11 +34,11 @@ Frontend не собирает данные Polymarket самостоятель�
 - увидеть зарегистрированные рынки, на которых сейчас доступны торги;
 - выбрать рынок;
 - увидеть вопрос, event/market identity, schedule timestamps, outcomes и token ids;
-- запустить CollectorSession;
+- наблюдать автоматически созданные CollectorSession;
 - наблюдать статус коллектора;
 - видеть количество полученных и сохранённых сообщений;
 - видеть reconnect count и последнюю ошибку;
-- корректно остановить активную сессию.
+- отменить незавершённую сессию при необходимости.
 
 Главный критерий успеха:
 
@@ -176,10 +176,10 @@ normalization и cleanup без локальной подмены server state.
 Открыть frontend
     -> добавить активный рынок по URL
     -> увидеть рынок и его token ids
-    -> запустить CollectorSession
+    -> автоматически создать CollectorSession
     -> дождаться Running
     -> увидеть рост MessagesReceived и MessagesPersisted
-    -> остановить сессию
+    -> дождаться terminal status или отменить сбор
     -> дождаться terminal status
     -> убедиться, что MessagesReceived == MessagesPersisted
 ```
@@ -198,8 +198,8 @@ normalization и cleanup без локальной подмены server state.
 - Созданный рынок появляется в списке.
 - Рынок можно выбрать.
 - Детали и token ids отображаются.
-- CollectorSession запускается.
-- После явного добавления рынка CollectorSession создаётся без обязательного отдельного Start.
+- CollectorSession создаётся автоматически после явного добавления рынка.
+- Dashboard не требует отдельного Start.
 - Перед запуском CollectorSession backend проверяет актуальную доступность рынка.
 - Вторая активная сессия не запускается из UI.
 - Статусы отображаются без искажения смысла.

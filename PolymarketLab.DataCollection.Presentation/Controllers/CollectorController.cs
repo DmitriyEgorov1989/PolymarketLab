@@ -4,6 +4,7 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartColle
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionById;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessionByMarket;
+using PolymarketLab.DataCollection.Core.Application.UseCases.Queries.GetCollectorSessions;
 using PolymarketLab.DataCollection.Presentation.Controllers.Models;
 using PolymarketLab.Framework;
 using PolymarketLab.Framework.Response;
@@ -12,6 +13,14 @@ namespace PolymarketLab.DataCollection.Presentation.Controllers;
 
 public sealed class CollectorController(IMediator mediator) : ApplicationController
 {
+    [HttpGet]
+    public async Task<ActionResult<GetCollectorSessionsResponse>> GetCollectorSessions(
+        CancellationToken cancellationToken)
+    {
+        var response = await mediator.Send(new GetCollectorSessionsQuery(), cancellationToken);
+        return response.ToResponseErrorOrResult();
+    }
+
     [HttpGet("{sessionId:guid}")]
     public async Task<ActionResult<GetCollectorSessionByIdResponse>> GetCollectorSessionById(
         Guid sessionId,

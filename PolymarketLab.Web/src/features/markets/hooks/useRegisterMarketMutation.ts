@@ -6,6 +6,7 @@ import {
 } from '../../../api/marketsApi';
 import type { RegisterMarketRequest } from '../model/market';
 import { marketKeys } from '../model/marketKeys';
+import { collectorKeys } from '../../collectors/model/collectorKeys';
 
 export function useRegisterMarketMutation() {
   const queryClient = useQueryClient();
@@ -14,6 +15,7 @@ export function useRegisterMarketMutation() {
     mutationFn: (request) => registerMarket(request),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: marketKeys.list() });
+      void queryClient.invalidateQueries({ queryKey: collectorKeys.current() });
     },
   });
 }

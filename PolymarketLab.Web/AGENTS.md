@@ -29,7 +29,7 @@ Frontend является одной React dashboard-страницей. Он у
 - Неизвестный статус отображать как `Unknown`; token ids и таблицы не должны ломать mobile viewport.
 - Основной сценарий должен работать с клавиатуры; inputs имеют labels, focus видим, статус не передаётся только цветом.
 - Форму регистрации не очищать при ошибке и блокировать во время mutation; после успеха очистить и обновить список.
-- Start блокировать без выбранного рынка, во время mutation и при активной session. Stop разрешать только для рабочей session и блокировать до ответа или изменения статуса.
+- Dashboard не вызывает ручной Start: задание создаётся регистрацией market. Cancel разрешать только для `Scheduled`, `Starting`, `Running` и блокировать до ответа или изменения статуса.
 - `unpersisted = messagesReceived - messagesPersisted` считать только производным отображаемым значением, не server state.
 - Новую логику проверять на подходящем уровне: API/error parsing и formatters unit-тестами, пользовательские состояния component-тестами.
 - Component tests должны покрывать loading/empty/error/success, регистрацию success/error, выбор рынка, Start/Stop disabled states, Failed/lastError и polling активной session.

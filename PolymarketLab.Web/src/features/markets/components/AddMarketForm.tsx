@@ -77,7 +77,7 @@ export function AddMarketForm() {
       <div className="form-copy">
         <p className="card-intro">
           Вставьте ссылку на событие Polymarket. Backend получит метаданные рынка и вернёт
-          ` MarketId` для дальнейшего запуска collector session.
+           `MarketId`. Collector job создаётся автоматически, без отдельного Start.
         </p>
       </div>
 

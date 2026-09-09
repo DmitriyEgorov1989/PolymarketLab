@@ -88,15 +88,15 @@ WebSocket, а не количество сделок. В счётчик вход
 
 ## Lifecycle Сборщика
 
-Dashboard показывает точные status/phase, effective deadline и countdown,
+Dashboard автоматически получает `GET /api/Collector` и показывает несколько
+параллельных jobs. Он показывает точные status/phase, effective deadline и countdown,
 readiness каждого snapshot token, connection epoch, historical counters,
 remaining raw rows, resolution WebSocket/Gamma/Clob, normalization и cleanup audit.
 Polling выполняется для `Scheduled`, `Starting`, `Running`, `Stopping` и
 `Invalidating`, а для terminal и неизвестного status останавливается.
 
-Известная активная session выбранного рынка блокирует Start до POST. Активные
-sessions других зарегистрированных рынков не блокируют запуск. Backend HTTP `409`
-остаётся авторитетной защитой гонки. Досрочный Stop требует подтверждения и
+Ручной Start в dashboard не используется: job создаётся при добавлении market.
+Досрочная отмена требует подтверждения и
 отображается как фактический переход `Invalidating -> Failed`.
 
 ## Проверки
