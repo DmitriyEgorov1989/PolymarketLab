@@ -380,3 +380,47 @@ ingestion и не равны normalization lag. Сначала raw-сообще�
 
 Метрики доступны на `http://localhost:5285/metrics`. Инструкции по локальным
 Prometheus, Grafana и Loki находятся в `observability/README.md`.
+
+## Host acceptance
+
+Deterministic acceptance suite запускает настоящий ASP.NET host и отдельную
+PostgreSQL database на тест. Gamma, CLOB и WebSocket заменены управляемыми
+transport fakes; обращения к live Polymarket отсутствуют. Нужен работающий
+Docker daemon:
+
+```powershell
+dotnet test .\PolymarketLab.Acceptance.Tests\PolymarketLab.Acceptance.Tests.csproj
+```
+
+Suite применяет migrations `MarketsDbContext` и `DataCollectionDbContext` к
+чистой базе, проверяет HTTP routing, model binding и Envelope, полный lifecycle,
+durable equality для snapshot `ProjectionVersion` и cleanup после перезапуска.
+Каждая временная database удаляется после теста.
+
+## Opt-in live run
+
+Live run является отдельной ручной операцией. Он не входит в `dotnet test`, не
+заменяет deterministic acceptance и выполняется только после явного решения
+оператора использовать выбранный реальный рынок.
+
+1. Зафиксируй `git rev-parse HEAD` и UTC-время через `(Get-Date).ToUniversalTime().ToString("o")`.
+2. Запусти PostgreSQL, примени migrations обоих DbContexts и настрой `Database:ConnectionString` через user secrets или переменную окружения. Не помещай строку подключения в журнал evidence.
+3. Запусти один экземпляр API: `dotnet run --project .\PolymarketLab.Api\PolymarketLab.Api.csproj --launch-profile http`.
+4. Зарегистрируй выбранный market и запусти collector через существующий HTTP API или dashboard.
+5. Дождись terminal DTO от `GET /api/Collector/{sessionId}`. Успешное доказательство имеет `status=Stopped`, `phase=null`, `stopReason=MarketClosed`, подтверждённого winner и `cleanup=null`.
+6. Проверь в PostgreSQL, что `messages_received = messages_enqueued = messages_persisted = raw rows = Processed rows` для snapshot `projection_version`, и каждое значение больше `0` сообщений.
+
+В комментарии issue сохраняются commit SHA, UTC-время, обезличенные event/market
+идентификаторы, `sessionId`, безопасные настройки, terminal DTO без сообщений об
+ошибках интеграции и итоговые counts. Не публикуются raw payload, credentials,
+строка подключения и stack traces. Transient внешний сбой означает неуспешную
+live-попытку, а не дефект deterministic suite.
+
+Если процесс завершился до terminal state, не запускай второй экземпляр API
+параллельно. После остановки старого процесса перезапусти один экземпляр на той
+же базе. Startup reconciliation до HTTP и workers переводит незавершённую
+session через invalidation, атомарно удаляет её raw/normalization/projection
+dataset, сохраняет cleanup audit и завершает session как `Failed` с
+`stopReason=ProcessTerminated`. Подтверди через `GET /api/Collector/{sessionId}`:
+`remainingRawMessageCount=0`, `normalization=null` и ненулевые deleted counts в
+`cleanup`, если до сбоя данные успели сохраниться.

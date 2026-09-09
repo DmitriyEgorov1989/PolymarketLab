@@ -150,3 +150,5 @@ app.MapPrometheusScrapingEndpoint();
 app.MapControllers();
 
 app.Run();
+
+public partial class Program;

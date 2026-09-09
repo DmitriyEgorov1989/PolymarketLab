@@ -36,6 +36,14 @@ $expectedSources = @{
         license_path = ".harness/licenses/mattpocock-skills-MIT.txt"
         license_sha256 = "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5"
     }
+    "mattpocock-handoff-v1.2.3" = @{
+        role = "skill-content"
+        repository = "https://github.com/mattpocock/skills.git"
+        revision = "6acc160e4e0cd062dbbbd7a1b26ae92855edf07e"
+        license = "MIT"
+        license_path = ".harness/licenses/mattpocock-skills-v1.2.3-MIT.txt"
+        license_sha256 = "4981c5f6a90eb3a969dacabb9350f5a75695ff3910b39b6534952908dfdc5ff7"
+    }
     "superpowers-direct" = @{
         role = "skill-content"
         repository = "https://github.com/obra/superpowers.git"
@@ -93,6 +101,7 @@ $expectedSkills = @(
     "code-review",
     "codebase-design",
     "domain-modeling",
+    "handoff",
     "orchestrate-project",
     "polymarket-integration",
     "polymarketlab-feature",

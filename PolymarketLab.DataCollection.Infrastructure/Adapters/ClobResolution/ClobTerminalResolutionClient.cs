@@ -16,12 +16,7 @@ internal sealed class ClobTerminalResolutionClient : IClobTerminalResolutionSour
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _requestTimeout;
 
-    public ClobTerminalResolutionClient(HttpClient httpClient)
-        : this(httpClient, TimeProvider.System, DefaultRequestTimeout)
-    {
-    }
-
-    internal ClobTerminalResolutionClient(HttpClient httpClient, TimeProvider timeProvider)
+    public ClobTerminalResolutionClient(HttpClient httpClient, TimeProvider timeProvider)
         : this(httpClient, timeProvider, DefaultRequestTimeout)
     {
     }

@@ -119,6 +119,34 @@ public sealed class CollectorSessionRepositoryTests
     }
 
     [Fact]
+    public async Task TryUpdateAsync_WhenUpdated_ShouldDetachAggregateGraph()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var options = CreateOptions(databaseRoot);
+        var session = CreateSession();
+        await using (var seedContext = new DataCollectionDbContext(options))
+        {
+            await new CollectorSessionRepository(seedContext)
+                .TryAddAsync(session, CancellationToken.None);
+        }
+
+        await using var context = new DataCollectionDbContext(options);
+        var repository = new CollectorSessionRepository(context);
+        var persisted = await repository.GetByIdAsync(
+            session.Id,
+            CancellationToken.None);
+        persisted!.BeginPreparation(Now).IsSuccess.Should().BeTrue();
+
+        var update = await repository.TryUpdateAsync(
+            persisted,
+            CollectorSessionStatus.Scheduled,
+            CancellationToken.None);
+
+        update.Value.Should().Be(CollectorSessionUpdateStatus.Updated);
+        context.ChangeTracker.Entries().Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task GetActiveAsync_ShouldReturnAllExclusiveStatuses()
     {
         var options = CreateOptions(new InMemoryDatabaseRoot());

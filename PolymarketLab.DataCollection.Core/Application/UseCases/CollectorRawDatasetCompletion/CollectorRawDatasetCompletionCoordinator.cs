@@ -75,7 +75,7 @@ public sealed class CollectorRawDatasetCompletionCoordinator(
         }
 
         var awaitingNormalization = await MarkAwaitingNormalizationAsync(
-            sessionId,
+            draining.Value,
             cancellationToken);
         return awaitingNormalization.IsFailure
             ? await InvalidateAndStopAsync(
@@ -134,13 +134,10 @@ public sealed class CollectorRawDatasetCompletionCoordinator(
     }
 
     private async Task<Result<CollectorSessionAggregate, Error>> MarkAwaitingNormalizationAsync(
-        CollectorSessionId sessionId,
+        CollectorSessionAggregate session,
         CancellationToken cancellationToken)
     {
-        var session = await sessionRepository.GetByIdAsync(sessionId, cancellationToken);
-        if (session is null)
-            return CollectorRawDatasetCompletionErrors.SessionNotFound(sessionId);
-
+        var sessionId = session.Id;
         var awaitingNormalizationAt = timeProvider.GetUtcNow();
 
         for (var attempt = 0; attempt < MaximumUpdateAttempts; attempt++)

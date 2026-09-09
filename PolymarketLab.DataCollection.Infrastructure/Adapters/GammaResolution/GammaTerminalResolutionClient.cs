@@ -20,12 +20,7 @@ internal sealed class GammaTerminalResolutionClient : IGammaTerminalResolutionSo
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _requestTimeout;
 
-    public GammaTerminalResolutionClient(HttpClient httpClient)
-        : this(httpClient, TimeProvider.System, DefaultRequestTimeout)
-    {
-    }
-
-    internal GammaTerminalResolutionClient(HttpClient httpClient, TimeProvider timeProvider)
+    public GammaTerminalResolutionClient(HttpClient httpClient, TimeProvider timeProvider)
         : this(httpClient, timeProvider, DefaultRequestTimeout)
     {
     }

@@ -26,6 +26,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="PolymarketLab.Acceptance.Tests" />
     <InternalsVisibleTo Include="PolymarketLab.DataCollection.Infrastructure.Tests" />
   </ItemGroup>
 
