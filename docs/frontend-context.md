@@ -21,7 +21,7 @@ PolymarketLab - приложение для регистрации рынков 
         -> backend подключается к Polymarket WebSocket
         -> backend сохраняет raw JSON в PostgreSQL
         -> frontend показывает состояние, counters и ошибки
-        -> пользователь корректно останавливает сбор
+        -> рынок закрывается, backend завершает сбор как Stopped/MarketClosed
 ```
 
 Frontend не собирает данные Polymarket самостоятельно. Он только управляет backend и отображает состояние.
@@ -104,6 +104,7 @@ Collector panel
 GET  /api/Market
 GET  /api/Market/{marketId}
 POST /api/Market
+GET  /api/Collector
 GET  /api/Collector/{sessionId}
 GET  /api/Collector/by-market/{marketId}
 POST /api/Collector
@@ -115,17 +116,20 @@ snapshot, status/phase/deadline, readiness, durable counters, resolution,
 normalization и cleanup audit.
 `messagesReceived` означает число полных WebSocket text messages, а не число сделок;
 активные краткосрочные рынки могут генерировать сотни таких сообщений в секунду.
+`POST /api/Market` автоматически создаёт долговечный collector job. Публичный
+`POST /api/Collector` остаётся compatibility/administrative endpoint и не входит
+в основной сценарий dashboard.
 
 Frontend использует `GET /api/Market` без query parameters и обновляет список каждые
 30 секунд. Backend исключает рынки с `EventEndsAt <= now`; future market остаётся
-видимым и selectable до открытия торгов. Live Gamma checks выполняются backend на
-Start и lifecycle boundaries, а не при отображении списка.
+видимым и selectable до открытия торгов. Live Gamma checks выполняются backend при
+регистрации и на lifecycle boundaries, а не при отображении списка.
 
-Перед созданием collector session backend выполняет live-проверку Gamma. Сбор
-доступен только при `active`, отсутствии `closed`, включённых `acceptingOrders` и
-order book. Ошибка
-доступности возвращается как `409 market.collection.unavailable`, а integration
-errors Gamma сохраняют исходные код и сообщение.
+Регистрация future market допускает временно выключенные `active` и
+`acceptingOrders`, но требует незакрытый рынок с включённым order book. Начиная с
+`T-60s` backend повторяет live-проверку Gamma; переход к сбору требует `active`,
+отсутствия `closed`, включённых `acceptingOrders` и order book. Integration errors
+Gamma сохраняют исходные код и сообщение.
 
 При прямом обращении браузера к API допустимые origins задаются массивом
 `Cors:AllowedOrigins`. В Development разрешён `http://localhost:5173`.
@@ -201,7 +205,7 @@ normalization и cleanup без локальной подмены server state.
 - CollectorSession создаётся автоматически после явного добавления рынка.
 - Dashboard не требует отдельного Start.
 - Перед запуском CollectorSession backend проверяет актуальную доступность рынка.
-- Вторая активная сессия не запускается из UI.
+- Для одного рынка одновременно существует не более одной активной попытки; разные рынки могут собираться параллельно без глобального admission queue.
 - Статусы отображаются без искажения смысла.
 - Polling работает для `Scheduled`, `Starting`, `Running`, `Stopping`, `Invalidating`.
 - Polling останавливается для terminal и неизвестных statuses.

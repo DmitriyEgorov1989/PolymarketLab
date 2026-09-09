@@ -5,16 +5,39 @@ using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime.WebS
 
 namespace PolymarketLab.Acceptance.Tests.Host;
 
-internal sealed class ControllableWebSocketFactory(ControllableWebSocketConnection connection)
-    : ICollectorWebSocketFactory
+internal sealed class ControllableWebSocketFactory : ICollectorWebSocketFactory
 {
-    public ControllableWebSocketConnection Connection { get; } = connection;
-    public int CreateCount { get; private set; }
+    private readonly IReadOnlyList<ControllableWebSocketConnection> _configuredConnections;
+    private readonly Queue<ControllableWebSocketConnection> _availableConnections;
+    private readonly List<ControllableWebSocketConnection> _createdConnections = [];
+
+    public ControllableWebSocketFactory(params ControllableWebSocketConnection[] connections)
+    {
+        _configuredConnections = connections;
+        _availableConnections = new Queue<ControllableWebSocketConnection>(connections);
+    }
+
+    public ControllableWebSocketConnection Connection => _configuredConnections.Single();
+    public IReadOnlyList<ControllableWebSocketConnection> Connections
+    {
+        get
+        {
+            lock (_availableConnections)
+                return _createdConnections.ToArray();
+        }
+    }
+    public int CreateCount => Connections.Count;
 
     public ICollectorWebSocketConnection Create()
     {
-        CreateCount++;
-        return Connection;
+        lock (_availableConnections)
+        {
+            if (!_availableConnections.TryDequeue(out var connection))
+                throw new InvalidOperationException("No acceptance WebSocket connection is available.");
+
+            _createdConnections.Add(connection);
+            return connection;
+        }
     }
 }
 

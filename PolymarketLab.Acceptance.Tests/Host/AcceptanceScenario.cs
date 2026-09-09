@@ -4,20 +4,48 @@ using System.Text.Json;
 
 namespace PolymarketLab.Acceptance.Tests.Host;
 
-internal sealed class AcceptanceScenario(DateTimeOffset eventStartsAt)
+internal sealed class AcceptanceScenario
 {
-    public const string EventSlug = "acceptance-event";
-    public const string EventId = "event-acceptance";
-    public const string MarketId = "market-acceptance";
-    public const string MarketSlug = "acceptance-market";
-    public const string ConditionId = "0xacceptance";
-    public const string YesTokenId = "token-yes";
-    public const string NoTokenId = "token-no";
+    public AcceptanceScenario(DateTimeOffset eventStartsAt, string suffix = "")
+    {
+        var discriminator = string.IsNullOrEmpty(suffix) ? string.Empty : $"-{suffix}";
+        EventSlug = $"acceptance-event{discriminator}";
+        EventId = $"event-acceptance{discriminator}";
+        MarketId = $"market-acceptance{discriminator}";
+        MarketSlug = $"acceptance-market{discriminator}";
+        ConditionId = $"0xacceptance{discriminator}";
+        YesTokenId = $"token-yes{discriminator}";
+        NoTokenId = $"token-no{discriminator}";
+        EventStartsAt = eventStartsAt;
+        EventEndsAt = eventStartsAt.AddMinutes(5);
+    }
 
-    public DateTimeOffset EventStartsAt { get; } = eventStartsAt;
-    public DateTimeOffset EventEndsAt { get; } = eventStartsAt.AddMinutes(5);
+    public string EventSlug { get; }
+    public string EventId { get; }
+    public string MarketId { get; }
+    public string MarketSlug { get; }
+    public string ConditionId { get; }
+    public string YesTokenId { get; }
+    public string NoTokenId { get; }
+    public DateTimeOffset EventStartsAt { get; }
+    public DateTimeOffset EventEndsAt { get; }
     public bool IsResolved { get; set; }
     public bool ClobSelectsNo { get; set; }
+
+    public bool CanRespond(HttpRequestMessage request)
+    {
+        var uri = request.RequestUri;
+        if (uri is null)
+            return false;
+
+        return uri.Host == "gamma-api.polymarket.com"
+            ? uri.AbsolutePath.EndsWith($"/{EventSlug}", StringComparison.Ordinal)
+            : uri.Host == "clob.polymarket.com"
+              && (uri.Query.Contains(YesTokenId, StringComparison.Ordinal)
+                  || uri.Query.Contains(NoTokenId, StringComparison.Ordinal)
+                  || uri.AbsolutePath.Contains(ConditionId, StringComparison.Ordinal)
+                  || uri.AbsolutePath.Contains(MarketId, StringComparison.Ordinal));
+    }
 
     public HttpResponseMessage Respond(HttpRequestMessage request)
     {
@@ -73,7 +101,7 @@ internal sealed class AcceptanceScenario(DateTimeOffset eventStartsAt)
         });
     }
 
-    private static string CreateOrderBookPayload(string tokenId) =>
+    private string CreateOrderBookPayload(string tokenId) =>
         JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             ["market"] = ConditionId,

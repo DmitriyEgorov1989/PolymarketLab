@@ -188,6 +188,9 @@ sequenceDiagram
 Registry key — `CollectorSessionId`, а не `MarketId`.
 
 Application layer отдельно обеспечивает не более одной active persisted session на market. Runtime знает только session ID и не проверяет уникальность market.
+Это per-market slot: sessions разных рынков могут работать параллельно. Global
+capacity limit и admission queue отсутствуют, но collectors совместно используют
+конечные ресурсы процесса, ingestion channel и PostgreSQL.
 
 ### Frame и message
 
@@ -217,36 +220,51 @@ public sealed record RawMarketMessage(
 | `StopAsync` | Запрошенная остановка завершилась или исчерпала deadline |
 | `Completion` | Весь долгоживущий lifecycle worker завершён |
 
-> **Важно:** успешный `StartAsync` не гарантирует `Running`. Session переходит в `Running` только после initial `book` каждого snapshot token и matching text `PONG` текущей connection epoch.
+> **Важно:** успешный `StartAsync` не гарантирует `Running`. Session переходит в `Running` только строго до `T = EventStartsAt`, после durable enqueue initial `book` каждого snapshot token и matching text `PONG` текущей connection epoch. Connect и subscription недостаточны.
 
 ## Запуск collector
 
-Application flow разделён между [`StartCollectorHandler`](../../../PolymarketLab.DataCollection.Core/Application/UseCases/Commands/StartCollector/StartCollectorHandler.cs) и `CollectorScheduler`.
+Основной application flow начинается с регистрации market, которая автоматически
+гарантирует durable collector job. [`StartCollectorHandler`](../../../PolymarketLab.DataCollection.Core/Application/UseCases/Commands/StartCollector/StartCollectorHandler.cs)
+остаётся частью orchestration и обслуживает публичный compatibility/administrative
+`POST /api/Collector`; dashboard отдельный Start не выполняет. Дальнейший lifecycle
+разделён с `CollectorScheduler`.
 
 Упрощённая последовательность:
 
 1. Валидировать command.
 2. Проверить активную session конкретного рынка.
-3. Прочитать сохранённый `EventStartsAt` без Gamma и отклонить уже открытый рынок.
+3. Прочитать сохранённый `EventStartsAt` без Gamma; после `T` переиспользовать существующий успешный результат, но не создавать новую попытку.
 4. Получить свежий Gamma snapshot и создать persisted `Scheduled/WaitingForPreparation`.
 5. До `T-60s` оставить session запланированной.
 6. Начиная с `T-60s`, проверить exact snapshot и operational flags.
 7. CAS-переходом установить `Starting/Connecting` и вызвать `ICollectorRuntime.StartAsync`.
-8. Оставить session в `Starting`: connect и отправка subscription не доказывают readiness; временные ошибки подготовки повторяются до `T = EventStartsAt`.
-9. Runtime получает initial `book` по каждому snapshot token, успешно передаёт их в bounded ingestion, отправляет text `PING` и ждёт text `PONG` до readiness deadline.
+8. Оставить session в `Starting`: connect и отправка subscription не доказывают readiness; временные ошибки подготовки повторяются до `T = EventStartsAt`, включая период после `T-10s`.
+9. Runtime получает initial `book` по каждому snapshot token, выполняет durable enqueue в bounded ingestion, отправляет text `PING` и ждёт matching text `PONG` текущей connection epoch до readiness deadline.
 10. Только после этой readiness boundary, зафиксированной строго до `T`, runtime сохраняет `Starting -> Running` через scoped dispatcher и CAS.
 11. При startup failure перевести session в `Invalidating/Cleaning` и остановить runtime как compensation.
 
 DataCollection Application и Presentation подключены к API host. Публичные endpoints collector session:
 
 ```http
+GET /api/Collector
 GET /api/Collector/{sessionId}
 GET /api/Collector/by-market/{marketId}
 POST /api/Collector
 POST /api/Collector/{sessionId}/stop
 ```
 
-Запуск принимает `marketId`; тело запроса остановки отсутствует.
+Compatibility/administrative запуск принимает `marketId`; тело запроса остановки
+отсутствует. Future `Scheduled` job хранится в PostgreSQL, переживает restart host и
+не зависит от браузера. Уже начатая partial session после restart не возобновляется,
+а missed window завершается failure и cleanup.
+
+Snapshot identity и расписания неизменяем для одной session. Mismatch с актуальным
+schedule инвалидирует попытку; после cleanup явное повторное добавление market до
+`T` создаёт новую попытку с обновлённым snapshot. То же правило действует после
+cancel или pre-window failure. Успешный `Stopped/MarketClosed` результат
+переиспользуется даже после окна, а старые Markets без job автоматически не
+включаются.
 
 ## Registry и дедупликация start
 
@@ -413,6 +431,9 @@ Binary messages не сохраняются. Они считаются protocol 
 4. Давление распространяется на socket и network stack.
 
 Это сознательный выбор в пользу полноты raw history вместо drop-oldest/drop-newest.
+Channel общий для параллельных collectors и имеет `FullMode.Wait`: заполнение
+создаёт backpressure, а не silent drop. Оно не является admission queue и не
+ограничивает число одновременно активных рынков.
 
 ### Ownership payload
 
@@ -597,7 +618,11 @@ Runtime ждёт completion, удаляет именно старую entry и �
 3. [`CollectorSessionStartupReconciliationService`](CollectorSessionStartupReconciliationService.cs).
 4. [`CollectorSchedulerBackgroundService`](CollectorSchedulerBackgroundService.cs).
 
-При запуске службы вызываются последовательно. Служба согласования находит незавершённые сессии предыдущего процесса и атомарно переводит их в `Invalidating/Cleaning`; collection и preparation не возобновляются. Scheduler запускается только после согласования. Ошибка чтения или обновления PostgreSQL прекращает запуск приложения.
+При запуске службы вызываются последовательно. Служба согласования сохраняет future
+`Scheduled` jobs для продолжения scheduler, но active partial sessions предыдущего
+процесса атомарно переводит в `Invalidating/Cleaning`; их collection не
+возобновляется. Scheduler запускается только после согласования. Ошибка чтения или
+обновления PostgreSQL прекращает запуск приложения.
 
 Ожидаемый порядок:
 
@@ -1012,7 +1037,7 @@ Options читаются через обычный `IOptions<T>`. Hot reload у�
 |---|---|
 | `RawMarketMessagePersistenceWorker` | Channel consumer и batch persistence |
 | `CollectorRuntimeShutdownService` | Остановка collectors до ingestion shutdown |
-| `CollectorSessionStartupReconciliationService` | До остальных hosted services очищает dataset незавершённых сессий предыдущего процесса и отклоняет startup при ошибке recovery |
+| `CollectorSessionStartupReconciliationService` | До остальных hosted services сохраняет future `Scheduled`, очищает dataset active partial sessions предыдущего процесса и отклоняет startup при ошибке recovery |
 | `CollectorSchedulerBackgroundService` | Идемпотентная обработка preparation и readiness boundaries |
 
 Singleton runtime/factory не должны напрямую зависеть от scoped repository или DbContext.
@@ -1098,11 +1123,11 @@ Singleton runtime/factory не должны напрямую зависеть о
 ### Что тестами не покрывается
 
 - реальное соединение с Polymarket;
-- API/Application/Runtime/PostgreSQL end-to-end;
+- обращения deterministic host acceptance к live Polymarket;
 - реальный shutdown ordering Generic Host;
 - длительная нагрузка и memory pressure;
 - network partitions и неоднозначный результат DB write;
-- работу согласования с настоящим PostgreSQL и реальное аварийное завершение процесса.
+- реальное аварийное завершение процесса на уровне ОС.
 
 ## Известные ограничения
 
@@ -1134,7 +1159,8 @@ Singleton runtime/factory не должны напрямую зависеть о
 stop command
   -> active session -> Invalidating/Cleaning
   -> CollectorRuntime.StopAsync
-  -> startup recovery удаляет неполный dataset и завершает session как Failed
+  -> scheduler или startup recovery удаляет неполный dataset
+  -> session завершается как Failed, successful dataset остаётся нетронутым
 ```
 
-Следующий этап — проектировать reconnect, повторную subscription и heartbeat.
+Следующий этап — проектировать reconnect после readiness и multi-instance ownership.

@@ -229,6 +229,13 @@ Request:
 явная регистрация достраивает отсутствующее задание. Конкурентные запросы не
 создают две активные попытки одного рынка.
 
+Повторное явное добавление до `T = EventStartsAt` создаёт новую попытку после
+cancel или pre-window failure, когда cleanup предыдущей попытки завершён. Если
+для рынка уже есть успешный `Stopped/MarketClosed`, backend переиспользует этот
+результат и после `T`, не создавая новый dataset. Рынки, сохранённые до появления
+автоматических jobs, сами по себе не включаются: для них требуется явное повторное
+добавление или административный `POST /api/Collector`.
+
 Новый рынок можно зарегистрировать до открытия заявок: `active` и
 `acceptingOrders` не ограничивают регистрацию. Требуются `closed: false`,
 отсутствующий `closedTime`, `umaResolutionStatus`, отличный от `resolved`, и
@@ -242,6 +249,10 @@ Identity включает event ID/slug, market ID/slug, condition и упоря
 `market.registration.identity_conflict`. При полном совпадении backend сохраняет
 тот же `marketId`, оставляет `discoveredAt` неизменным, обновляет внешнее расписание
 и `scheduleRefreshedAt`.
+Расписание в snapshot уже созданной session неизменяемо. Если актуальное
+расписание не совпадает со snapshot, session инвалидируется и её неполный dataset
+очищается; явное повторное добавление после cleanup создаёт попытку с обновлённым
+расписанием.
 
 ## CollectorSession DTO
 
@@ -430,10 +441,12 @@ provenance (`rawMessageId`, `rawItemIndex`) и outcome arrays наблюдени
 
 ## GET /api/Collector
 
-Возвращает актуальную session каждого зарегистрированного рынка. Для рынка с
+Возвращает актуальную session каждого рынка, для которого существует job. Для рынка с
 активной session возвращается она; иначе возвращается последняя session рынка.
 Результат включает sessions после `eventEndsAt`, пока backend ещё выполняет
 resolution, drain, normalization или cleanup.
+Старые Markets без job не появляются в этом списке и автоматически не включаются
+в сбор.
 
 Успешный `result`:
 
@@ -464,7 +477,9 @@ Endpoint не различает неизвестный market и рынок б�
 
 ## POST /api/Collector
 
-Запускает collector для рынка.
+Публичный compatibility/administrative endpoint гарантирует collector job для
+рынка. Основной flow использует `POST /api/Market`, поэтому dashboard этот endpoint
+не вызывает.
 
 Request:
 
@@ -489,10 +504,14 @@ Backend возвращает фактический сохранённый statu
 Session сразу занимает слот своего рынка. Если активная session этого же рынка
 уже существует, новая не создаётся и возвращается существующая session без
 повторного запроса Gamma. Активная session другого рынка не мешает запуску.
+Глобального capacity limit или admission queue нет: разные рынки готовятся и
+собираются параллельно. При этом WebSocket connections, bounded ingestion channel,
+consumer, память и PostgreSQL являются общими конечными ресурсами.
 
-При свободном slot backend сначала читает сохранённый `EventStartsAt` без Gamma.
-Если `EventStartsAt <= now`, endpoint возвращает `409` с кодом
-`collector.start.market_already_open`, не вызывает Gamma и не создаёт session.
+Если подходящей существующей session нет, backend сначала читает сохранённый
+`EventStartsAt` без Gamma. Если `EventStartsAt <= now`, endpoint возвращает `409`
+с кодом `collector.start.market_already_open`, не вызывает Gamma и не создаёт
+session. Существующий успешный результат возвращается и после этой границы.
 
 Перед созданием новой session backend повторно запрашивает Gamma и сохраняет
 неизменяемый snapshot identity, расписания и ordered tokens. Временная readiness
@@ -500,13 +519,26 @@ policy не применяется на этом шаге, поэтому кор
 `acceptingOrders: false`. Ошибка Gamma возвращается без замены исходного кода и
 сообщения.
 
-Для новой session проверка выполняется до её создания. До `T-60s`
+Для новой session проверка выполняется до её создания. Здесь и далее
+`T = EventStartsAt`. До `T-60s`
 `POST /api/Collector` не подключает WebSocket: session остаётся
 `Scheduled/WaitingForPreparation`. Начиная с `T-60s`, lifecycle scheduler требует
 `active=true`, `closed=false`, `acceptingOrders=true`, `enableOrderBook=true`,
-выполняет CAS в `Starting/Connecting` и запускает runtime. Обычный readiness
-Readiness deadline равен `EventStartsAt`, а readiness принимается только строго до этой границы. Snapshot live-проверки остаётся неизменяемым для всей
-session; mismatch инициирует `Invalidating/Cleaning`.
+выполняет CAS в `Starting/Connecting` и запускает runtime. Временные ошибки
+подготовки повторяются до `T`, в том числе после `T-10s`; пропущенное окно
+завершает session как `Failed` с cleanup неполного dataset.
+
+Readiness принимается только строго до `T` и требует durably enqueued initial
+`book` для каждого snapshot token, а также matching text `PONG` текущей connection
+epoch. Connect и отправка subscription сами по себе недостаточны. Snapshot
+identity и расписания неизменяем для всей session; mismatch инициирует
+`Invalidating/Cleaning`.
+
+Future `Scheduled` хранится в PostgreSQL, переживает restart host и не зависит от
+браузера. После restart scheduler продолжает такую попытку. Уже начатая partial
+`Starting`/`Running` session не возобновляется: startup reconciliation инвалидирует
+её и очищает неполный dataset. Фактический успешный результат имеет только
+`status=Stopped` и `stopReason=MarketClosed`.
 
 Удалённое закрытие WebSocket переводит session в `Failed` с кодом
 `collector.runtime.receive.closed`, в том числе если Polymarket закрывает connection
@@ -529,7 +561,12 @@ full evidence slices. Для активной session после установ�
 Очистка выполняется фоновым планировщиком в работающем процессе, без обязательного
 перезапуска. До подтверждённого завершения сборщика и фиксации очистки сессия
 остаётся в `Invalidating`, а `cleanup` равен `null`. После очистки статус становится
-`Failed`, появляется аудит `cleanup` и освобождается глобальный слот. Исходная
+`Failed`, появляется аудит `cleanup` и освобождается слот этого рынка. Исходная
 причина `collector.stop.requested` сохраняется: досрочная остановка не считается
 успешным сбором данных. При ошибке остановки или очистки планировщик повторяет
 попытку; клиент продолжает опрашивать сессию в состоянии `Invalidating`.
+
+Cancel применяется к `Scheduled`, `Starting` и `Running`, сохраняется как durable
+write fence и очищает только неполный dataset. Успешный `Stopped/MarketClosed`
+dataset Stop не изменяет. После завершённого cleanup явное повторное добавление до
+`T` может создать новую попытку.

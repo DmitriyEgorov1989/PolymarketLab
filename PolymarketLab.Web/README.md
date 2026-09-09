@@ -6,7 +6,7 @@ Dashboard позволяет:
 
 - зарегистрировать доступный рынок по Polymarket URL;
 - выбрать рынок и просмотреть event/market identity, schedule, outcomes и token ids;
-- запустить и остановить collector session;
+- наблюдать автоматически созданные collector jobs и отменять незавершённые session;
 - наблюдать статусы, durable counters, отставание persistence и ошибки.
 
 ## Стек
@@ -61,13 +61,14 @@ docker compose up -d --build api
 ## Доступные рынки
 
 Frontend запрашивает `GET /api/Market` и обновляет список всех зарегистрированных
-рынков каждые 30 секунд. Поэтому будущий рынок можно выбрать и запустить заранее.
+рынков каждые 30 секунд. Регистрация будущего рынка сразу создаёт долговечный
+collector job: он не зависит от открытого браузера и переживает restart host.
 Frontend показывает `marketSlug` в списке, а в деталях различает identity
 родительского event и дочернего market и отображает все schedule timestamps.
 Nullable timestamps показываются как `-`. Schedule не определяет доступность:
 Gamma может продолжать принимать orders после формального `eventEndsAt`.
 
-Перед запуском collector backend повторно проверяет identity, schedule и terminal
+При подготовке collector backend повторно проверяет identity, schedule и terminal
 state через Gamma. Readiness flags проверяются backend на lifecycle boundaries;
 frontend не повторяет эту orchestration.
 
@@ -98,6 +99,11 @@ Polling выполняется для `Scheduled`, `Starting`, `Running`, `Stopp
 Ручной Start в dashboard не используется: job создаётся при добавлении market.
 Досрочная отмена требует подтверждения и
 отображается как фактический переход `Invalidating -> Failed`.
+Разные рынки могут собираться параллельно; ограничение одной активной попыткой
+действует только внутри рынка, глобального admission queue или capacity limit нет.
+После restart future `Scheduled` job продолжает ожидание, а уже начатая partial
+session инвалидируется с очисткой неполного dataset. Успешный результат имеет
+`Stopped/MarketClosed` и при повторном добавлении рынка не удаляется.
 
 ## Проверки
 

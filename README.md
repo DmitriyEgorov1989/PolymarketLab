@@ -393,9 +393,11 @@ dotnet test .\PolymarketLab.Acceptance.Tests\PolymarketLab.Acceptance.Tests.cspr
 ```
 
 Suite применяет migrations `MarketsDbContext` и `DataCollectionDbContext` к
-чистой базе, проверяет HTTP routing, model binding и Envelope, полный lifecycle,
-durable equality для snapshot `ProjectionVersion` и cleanup после перезапуска.
-Каждая временная database удаляется после теста.
+чистой базе и проверяет HTTP routing, model binding, Envelope, автоматическое
+создание collector job, параллельный сбор нескольких рынков, временные границы,
+restart и cancel cleanup, а также изоляцию сбоя одного рынка от остальных.
+Transport fakes делают эти сценарии детерминированными, но не доказывают работу с
+live Polymarket. Каждая временная database удаляется после теста.
 
 ## Opt-in live run
 
@@ -406,7 +408,7 @@ Live run является отдельной ручной операцией. О
 1. Зафиксируй `git rev-parse HEAD` и UTC-время через `(Get-Date).ToUniversalTime().ToString("o")`.
 2. Запусти PostgreSQL, примени migrations обоих DbContexts и настрой `Database:ConnectionString` через user secrets или переменную окружения. Не помещай строку подключения в журнал evidence.
 3. Запусти один экземпляр API: `dotnet run --project .\PolymarketLab.Api\PolymarketLab.Api.csproj --launch-profile http`.
-4. Зарегистрируй выбранный market и запусти collector через существующий HTTP API или dashboard.
+4. Зарегистрируй выбранный market через `POST /api/Market` или dashboard. Регистрация автоматически создаёт долговечный collector job; ручной Start не требуется.
 5. Дождись terminal DTO от `GET /api/Collector/{sessionId}`. Успешное доказательство имеет `status=Stopped`, `phase=null`, `stopReason=MarketClosed`, подтверждённого winner и `cleanup=null`.
 6. Проверь в PostgreSQL, что `messages_received = messages_enqueued = messages_persisted = raw rows = Processed rows` для snapshot `projection_version`, и каждое значение больше `0` сообщений.
 
@@ -418,9 +420,9 @@ live-попытку, а не дефект deterministic suite.
 
 Если процесс завершился до terminal state, не запускай второй экземпляр API
 параллельно. После остановки старого процесса перезапусти один экземпляр на той
-же базе. Startup reconciliation до HTTP и workers переводит незавершённую
-session через invalidation, атомарно удаляет её raw/normalization/projection
-dataset, сохраняет cleanup audit и завершает session как `Failed` с
-`stopReason=ProcessTerminated`. Подтверди через `GET /api/Collector/{sessionId}`:
-`remainingRawMessageCount=0`, `normalization=null` и ненулевые deleted counts в
-`cleanup`, если до сбоя данные успели сохраниться.
+же базе. Future `Scheduled` job переживает restart и снова обрабатывается
+scheduler без браузера. Уже начатая partial session не возобновляется: startup
+reconciliation переводит её через invalidation, атомарно удаляет неполный
+raw/normalization/projection dataset, сохраняет cleanup audit и завершает как
+`Failed` с `stopReason=ProcessTerminated`. Успешный `Stopped/MarketClosed`
+dataset остаётся нетронутым.
