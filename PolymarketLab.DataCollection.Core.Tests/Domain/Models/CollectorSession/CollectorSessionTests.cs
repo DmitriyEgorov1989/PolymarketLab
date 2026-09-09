@@ -94,7 +94,7 @@ public sealed class CollectorSessionTests
         var subscriptionReadyAt = preparationStartedAt.AddSeconds(20);
 
         session.BeginPreparation(preparationStartedAt).IsSuccess.Should().BeTrue();
-        session.MarkAwaitingInitialBooks().IsSuccess.Should().BeTrue();
+        session.MarkNewConnectionEpoch().IsSuccess.Should().BeTrue();
         session.MarkAwaitingHeartbeat().IsSuccess.Should().BeTrue();
         session.MarkRunning(subscriptionReadyAt).IsSuccess.Should().BeTrue();
 
@@ -274,16 +274,57 @@ public sealed class CollectorSessionTests
     }
 
     [Fact]
-    public void MarkAwaitingInitialBooks_WithoutPreparation_ShouldReturnError()
+    public void MarkNewConnectionEpoch_WithoutPreparation_ShouldReturnError()
     {
         var session = CreateSession();
 
-        var result = session.MarkAwaitingInitialBooks();
+        var result = session.MarkNewConnectionEpoch();
 
         result.IsFailure.Should().BeTrue();
         result.Error.Code.Should().Be("collector.session.phase_transition.invalid");
         session.Status.Should().Be(CollectorSessionStatus.Scheduled);
         session.Phase.Should().Be(CollectorSessionPhase.WaitingForPreparation);
+    }
+
+    [Fact]
+    public void MarkNewConnectionEpoch_FromAwaitingInitialBooks_ShouldKeepAwaitingInitialBooks()
+    {
+        var session = CreateSession();
+        session.BeginPreparation(CreatedAt.AddMinutes(2));
+        session.MarkNewConnectionEpoch();
+
+        var result = session.MarkNewConnectionEpoch();
+
+        result.IsSuccess.Should().BeTrue();
+        session.Status.Should().Be(CollectorSessionStatus.Starting);
+        session.Phase.Should().Be(CollectorSessionPhase.AwaitingInitialBooks);
+    }
+
+    [Fact]
+    public void MarkNewConnectionEpoch_FromAwaitingHeartbeat_ShouldReturnToAwaitingInitialBooks()
+    {
+        var session = CreateSession();
+        session.BeginPreparation(CreatedAt.AddMinutes(2));
+        session.MarkNewConnectionEpoch();
+        session.MarkAwaitingHeartbeat();
+
+        var result = session.MarkNewConnectionEpoch();
+
+        result.IsSuccess.Should().BeTrue();
+        session.Status.Should().Be(CollectorSessionStatus.Starting);
+        session.Phase.Should().Be(CollectorSessionPhase.AwaitingInitialBooks);
+    }
+
+    [Fact]
+    public void MarkNewConnectionEpoch_WhenRunning_ShouldReturnError()
+    {
+        var session = CreateRunningSession();
+
+        var result = session.MarkNewConnectionEpoch();
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be("collector.session.phase_transition.invalid");
+        session.Status.Should().Be(CollectorSessionStatus.Running);
     }
 
     [Fact]
@@ -304,7 +345,7 @@ public sealed class CollectorSessionTests
     {
         var session = CreateSession();
         session.BeginPreparation(CreatedAt.AddMinutes(2));
-        session.MarkAwaitingInitialBooks();
+        session.MarkNewConnectionEpoch();
         session.MarkAwaitingHeartbeat();
         session.MarkRunning(CreatedAt.AddMinutes(2).AddSeconds(20));
         return session;

@@ -14,6 +14,7 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.ReplayNorm
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRawDatasetCompletion;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorNormalizationSuitability;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorOrderBookIntegrity;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionShutdown;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
@@ -110,6 +111,10 @@ public sealed class DataCollectionApplicationDependencyInjectionTests
         services.Should().ContainSingle(descriptor =>
             descriptor.ServiceType == typeof(ICollectorNormalizationSuitabilityCoordinator)
             && descriptor.ImplementationType == typeof(CollectorNormalizationSuitabilityCoordinator)
+            && descriptor.Lifetime == ServiceLifetime.Scoped);
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(ICollectorOrderBookIntegrityCoordinator)
+            && descriptor.ImplementationType == typeof(CollectorOrderBookIntegrityCoordinator)
             && descriptor.Lifetime == ServiceLifetime.Scoped);
         services.Should().ContainSingle(descriptor =>
             descriptor.ServiceType == typeof(WebSocketResolutionValidator)

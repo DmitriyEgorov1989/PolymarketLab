@@ -63,7 +63,7 @@ internal static class CollectorSessionTestFactory
     {
         if (session.Status == CollectorSessionStatus.Scheduled)
             session.BeginPreparation(subscriptionReadyAt);
-        session.MarkAwaitingInitialBooks();
+        session.MarkNewConnectionEpoch();
         session.MarkAwaitingHeartbeat();
         session.MarkRunning(subscriptionReadyAt);
     }

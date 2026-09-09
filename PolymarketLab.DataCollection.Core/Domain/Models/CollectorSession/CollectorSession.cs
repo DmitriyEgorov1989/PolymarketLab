@@ -220,12 +220,37 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
         return UnitResult.Success<Error>();
     }
 
-    /// <summary>Отмечает ожидание initial books текущей WebSocket epoch.</summary>
-    public UnitResult<Error> MarkAwaitingInitialBooks() =>
-        ChangePhase(
-            CollectorSessionStatus.Starting,
-            CollectorSessionPhase.Connecting,
-            CollectorSessionPhase.AwaitingInitialBooks);
+    /// <summary>
+    /// Отмечает начало readiness новой WebSocket connection epoch: сбрасывает фазу
+    /// в ожидание initial books как для первого подключения, так и при повторном
+    /// подключении из <see cref="CollectorSessionPhase.AwaitingInitialBooks"/> или
+    /// <see cref="CollectorSessionPhase.AwaitingHeartbeat"/>.
+    /// </summary>
+    public UnitResult<Error> MarkNewConnectionEpoch()
+    {
+        if (Status != CollectorSessionStatus.Starting)
+        {
+            return UnitResult.Failure(
+                CollectorSessionErrors.InvalidPhaseTransition(
+                    Status,
+                    Phase,
+                    CollectorSessionPhase.AwaitingInitialBooks));
+        }
+
+        if (Phase is not CollectorSessionPhase.Connecting
+            and not CollectorSessionPhase.AwaitingInitialBooks
+            and not CollectorSessionPhase.AwaitingHeartbeat)
+        {
+            return UnitResult.Failure(
+                CollectorSessionErrors.InvalidPhaseTransition(
+                    Status,
+                    Phase,
+                    CollectorSessionPhase.AwaitingInitialBooks));
+        }
+
+        Phase = CollectorSessionPhase.AwaitingInitialBooks;
+        return UnitResult.Success<Error>();
+    }
 
     /// <summary>Отмечает ожидание heartbeat после получения initial books.</summary>
     public UnitResult<Error> MarkAwaitingHeartbeat() =>

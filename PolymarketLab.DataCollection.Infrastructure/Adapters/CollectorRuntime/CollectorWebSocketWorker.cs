@@ -171,13 +171,7 @@ internal sealed class CollectorWebSocketWorker(
                 exception,
                 "Collector WebSocket {SessionId} failed unexpectedly during startup.",
                 request.SessionId.Value);
-            startupError = CollectorRuntimeErrors.StartFailed(request.SessionId);
-            if (CanRetryStartup())
-            {
-                startupError = null;
-                return StartBackgroundReconnectAfterStartupFailure();
-            }
-
+            startupError = CollectorRuntimeErrors.StartUnexpected(request.SessionId);
             CancelAndDisposeLifetime();
             return UnitResult.Failure(startupError);
         }
@@ -306,6 +300,8 @@ internal sealed class CollectorWebSocketWorker(
             var delay = request.ReadinessDeadline - timeProvider.GetUtcNow();
             if (delay > options.ReconnectDelay)
                 delay = options.ReconnectDelay;
+            if (delay < TimeSpan.Zero)
+                delay = TimeSpan.Zero;
 
             try
             {
@@ -320,12 +316,50 @@ internal sealed class CollectorWebSocketWorker(
                 return;
             }
 
+            if (IsStopping()
+                || applicationLifetime.ApplicationStopping.IsCancellationRequested)
+            {
+                _completion.TrySetResult(new CollectorWorkerCompletion(
+                    UnitResult.Success<Error>(),
+                    GetRequestedCompletionOrigin(),
+                    timeProvider.GetUtcNow()));
+                return;
+            }
+
+            if (timeProvider.GetUtcNow() >= request.ReadinessDeadline)
+                break;
+
             state = state.NextEpoch();
             var reconnect = await ConnectAndSubscribeAsync(
                 state.Epoch,
                 _receiveCts.Token);
             if (reconnect.IsFailure)
+            {
+                if (IsStopping()
+                    || applicationLifetime.ApplicationStopping.IsCancellationRequested)
+                {
+                    _completion.TrySetResult(new CollectorWorkerCompletion(
+                        UnitResult.Success<Error>(),
+                        GetRequestedCompletionOrigin(),
+                        timeProvider.GetUtcNow()));
+                    return;
+                }
+
+                if (timeProvider.GetUtcNow() >= request.ReadinessDeadline)
+                    break;
+
+                if (!IsRetryableConnectionFailure(reconnect.Error))
+                {
+                    var origin = await InvalidateSessionAsync(reconnect.Error);
+                    _completion.TrySetResult(new CollectorWorkerCompletion(
+                        UnitResult.Failure(reconnect.Error),
+                        origin,
+                        timeProvider.GetUtcNow()));
+                    return;
+                }
+
                 continue;
+            }
 
             telemetry.RecordConnectionEpoch(request.SessionId, state.Epoch);
             telemetry.RecordReconnect(request.SessionId);
@@ -334,14 +368,43 @@ internal sealed class CollectorWebSocketWorker(
         }
 
         var error = CollectorRuntimeErrors.ReadinessTimedOut(request.SessionId);
-        await readinessDispatcher.BeginInvalidationAsync(
-            request.SessionId,
-            error,
-            CancellationToken.None);
+        var invalidationOrigin = await InvalidateSessionAsync(error);
         _completion.TrySetResult(new CollectorWorkerCompletion(
             UnitResult.Failure(error),
-            CollectorWorkerCompletionOrigin.Invalidated,
+            invalidationOrigin,
             timeProvider.GetUtcNow()));
+    }
+
+    /// <summary>
+    /// Немедленно аннулирует session для постоянной или deadline-ошибки и возвращает
+    /// origin завершения: при успешной durable invalidation — Invalidated, при сбое
+    /// сохранения — Autonomous, чтобы runtime failure dispatcher сохранил fallback.
+    /// </summary>
+    private async Task<CollectorWorkerCompletionOrigin> InvalidateSessionAsync(Error failure)
+    {
+        var invalidation = await readinessDispatcher.BeginInvalidationAsync(
+            request.SessionId,
+            failure,
+            CancellationToken.None);
+        if (invalidation.IsSuccess)
+            return CollectorWorkerCompletionOrigin.Invalidated;
+
+            logger.LogError(
+                "Collector WebSocket {SessionId} failed to persist invalidation for {ErrorCode}: {ErrorMessage}.",
+                request.SessionId.Value,
+                invalidation.Error.Code,
+                invalidation.Error.Message);
+        return CollectorWorkerCompletionOrigin.Autonomous;
+    }
+
+    private static bool IsRetryableConnectionFailure(Error error)
+    {
+        return error.Code is
+            "collector.runtime.start.timeout"
+            or "collector.runtime.start.failed"
+            or "collector.runtime.receive.failed"
+            or "collector.runtime.receive.closed"
+            or "collector.runtime.heartbeat.timeout";
     }
 
     private async Task RunConnectionAttemptsAsync(
@@ -350,40 +413,25 @@ internal sealed class CollectorWebSocketWorker(
     {
         UnitResult<Error> result = UnitResult.Success<Error>();
         var completionOrigin = CollectorWorkerCompletionOrigin.RequestedStop;
+        var pendingConnection = connection;
 
         while (true)
         {
-            result = await RunSingleConnectionAsync(connection, state);
+            if (pendingConnection is not null)
+            {
+                result = await RunSingleConnectionAsync(pendingConnection, state);
 
-            try
-            {
-                var closeResult = await CloseConnectionAsync(connection);
-                if (result.IsSuccess && closeResult.IsFailure)
-                    result = closeResult;
-            }
-            catch (Exception exception)
-            {
-                logger.LogError(
-                    exception,
-                    "Collector WebSocket {SessionId} failed unexpectedly during cleanup.",
-                    request.SessionId.Value);
-                if (result.IsSuccess)
-                {
-                    result = UnitResult.Failure(
-                        CollectorRuntimeErrors.StopFailed(request.SessionId));
-                }
-            }
-            finally
-            {
                 try
                 {
-                    connection.Dispose();
+                    var closeResult = await CloseConnectionAsync(pendingConnection);
+                    if (result.IsSuccess && closeResult.IsFailure)
+                        result = closeResult;
                 }
                 catch (Exception exception)
                 {
                     logger.LogError(
                         exception,
-                        "Collector WebSocket {SessionId} failed to dispose.",
+                        "Collector WebSocket {SessionId} failed unexpectedly during cleanup.",
                         request.SessionId.Value);
                     if (result.IsSuccess)
                     {
@@ -391,39 +439,60 @@ internal sealed class CollectorWebSocketWorker(
                             CollectorRuntimeErrors.StopFailed(request.SessionId));
                     }
                 }
-
-                lock (_sync)
+                finally
                 {
-                    if (ReferenceEquals(_activeConnection, connection))
-                        _activeConnection = null;
+                    try
+                    {
+                        pendingConnection.Dispose();
+                    }
+                    catch (Exception exception)
+                    {
+                        logger.LogError(
+                            exception,
+                            "Collector WebSocket {SessionId} failed to dispose.",
+                            request.SessionId.Value);
+                        if (result.IsSuccess)
+                        {
+                            result = UnitResult.Failure(
+                                CollectorRuntimeErrors.StopFailed(request.SessionId));
+                        }
+                    }
+
+                    lock (_sync)
+                    {
+                        if (ReferenceEquals(_activeConnection, pendingConnection))
+                            _activeConnection = null;
+                    }
                 }
-            }
 
-            if (result.IsSuccess)
-            {
-                completionOrigin = GetRequestedCompletionOrigin();
-                break;
-            }
+                pendingConnection = null;
 
-            if (IsStopping() || applicationLifetime.ApplicationStopping.IsCancellationRequested)
-            {
-                completionOrigin = CollectorWorkerCompletionOrigin.Autonomous;
-                break;
-            }
+                if (result.IsSuccess)
+                {
+                    completionOrigin = GetRequestedCompletionOrigin();
+                    break;
+                }
 
-            if (state.IsReady || timeProvider.GetUtcNow() >= request.ReadinessDeadline)
-            {
-                await readinessDispatcher.BeginInvalidationAsync(
-                    request.SessionId,
-                    result.Error,
-                    CancellationToken.None);
-                completionOrigin = CollectorWorkerCompletionOrigin.Invalidated;
-                break;
+                if (IsStopping() || applicationLifetime.ApplicationStopping.IsCancellationRequested)
+                {
+                    completionOrigin = CollectorWorkerCompletionOrigin.Autonomous;
+                    break;
+                }
+
+                if (state.IsReady
+                    || timeProvider.GetUtcNow() >= request.ReadinessDeadline
+                    || !IsRetryableConnectionFailure(result.Error))
+                {
+                    completionOrigin = await InvalidateSessionAsync(result.Error);
+                    break;
+                }
             }
 
             var reconnectDelay = request.ReadinessDeadline - timeProvider.GetUtcNow();
             if (reconnectDelay > options.ReconnectDelay)
                 reconnectDelay = options.ReconnectDelay;
+            if (reconnectDelay < TimeSpan.Zero)
+                reconnectDelay = TimeSpan.Zero;
 
             try
             {
@@ -436,27 +505,49 @@ internal sealed class CollectorWebSocketWorker(
                 break;
             }
 
+            if (IsStopping()
+                || applicationLifetime.ApplicationStopping.IsCancellationRequested)
+            {
+                result = UnitResult.Success<Error>();
+                completionOrigin = GetRequestedCompletionOrigin();
+                break;
+            }
+
+            if (timeProvider.GetUtcNow() >= request.ReadinessDeadline)
+            {
+                result = UnitResult.Failure(
+                    CollectorRuntimeErrors.ReadinessTimedOut(request.SessionId));
+                completionOrigin = await InvalidateSessionAsync(result.Error);
+                break;
+            }
+
             state = state.NextEpoch();
             var reconnect = await ConnectAndSubscribeAsync(
                 state.Epoch,
                 _receiveCts.Token);
-            if (reconnect.IsFailure)
+            if (reconnect.IsSuccess)
             {
-                result = UnitResult.Failure(reconnect.Error);
-                if (timeProvider.GetUtcNow() < request.ReadinessDeadline)
-                    continue;
+                telemetry.RecordConnectionEpoch(request.SessionId, state.Epoch);
+                telemetry.RecordReconnect(request.SessionId);
+                pendingConnection = reconnect.Value;
+                continue;
+            }
 
-                await readinessDispatcher.BeginInvalidationAsync(
-                    request.SessionId,
-                    result.Error,
-                    CancellationToken.None);
-                completionOrigin = CollectorWorkerCompletionOrigin.Invalidated;
+            if (IsStopping()
+                || applicationLifetime.ApplicationStopping.IsCancellationRequested)
+            {
+                result = UnitResult.Success<Error>();
+                completionOrigin = GetRequestedCompletionOrigin();
                 break;
             }
 
-            telemetry.RecordConnectionEpoch(request.SessionId, state.Epoch);
-            telemetry.RecordReconnect(request.SessionId);
-            connection = reconnect.Value;
+            if (timeProvider.GetUtcNow() >= request.ReadinessDeadline
+                || !IsRetryableConnectionFailure(reconnect.Error))
+            {
+                result = UnitResult.Failure(reconnect.Error);
+                completionOrigin = await InvalidateSessionAsync(reconnect.Error);
+                break;
+            }
         }
 
         var completedAt = timeProvider.GetUtcNow();
@@ -504,7 +595,8 @@ internal sealed class CollectorWebSocketWorker(
         {
             return UnitResult.Success<Error>();
         }
-        catch (Exception exception)
+        catch (Exception exception) when
+            (exception is WebSocketException or IOException or InvalidOperationException)
         {
             logger.LogError(
                 exception,
@@ -512,6 +604,15 @@ internal sealed class CollectorWebSocketWorker(
                 request.SessionId.Value);
             return UnitResult.Failure(
                 CollectorRuntimeErrors.ReceiveFailed(request.SessionId));
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                exception,
+                "Collector WebSocket {SessionId} failed unexpectedly while initializing readiness or sending initial heartbeat.",
+                request.SessionId.Value);
+            return UnitResult.Failure(
+                CollectorRuntimeErrors.ReceiveUnexpected(request.SessionId));
         }
 
         var heartbeat = HeartbeatLoopAsync(connection, state, heartbeatCts);
@@ -596,7 +697,7 @@ internal sealed class CollectorWebSocketWorker(
                 "Collector WebSocket {SessionId} failed unexpectedly.",
                 request.SessionId.Value);
             return UnitResult.Failure(
-                CollectorRuntimeErrors.ReceiveFailed(request.SessionId));
+                CollectorRuntimeErrors.ReceiveUnexpected(request.SessionId));
         }
     }
 
@@ -655,7 +756,11 @@ internal sealed class CollectorWebSocketWorker(
                     if (isPong)
                     {
                         state.ObservePong(timeProvider.GetTimestamp());
-                        await TryCompleteReadinessAsync(state, receiveToken);
+                        var readinessResult = await TryCompleteReadinessAsync(
+                            state,
+                            receiveToken);
+                        if (readinessResult.IsFailure)
+                            return UnitResult.Failure(readinessResult.Error);
                     }
 
                     continue;
@@ -715,7 +820,11 @@ internal sealed class CollectorWebSocketWorker(
                         return UnitResult.Failure(readinessResult.Error);
 
                     state.ObserveInitialBook(tokenId);
-                    await TryCompleteReadinessAsync(state, receiveToken);
+                    var completeResult = await TryCompleteReadinessAsync(
+                        state,
+                        receiveToken);
+                    if (completeResult.IsFailure)
+                        return UnitResult.Failure(completeResult.Error);
                 }
             }
         }
@@ -763,11 +872,30 @@ internal sealed class CollectorWebSocketWorker(
             await connection.SendTextAsync(subscription, startupCts.Token);
             startupCts.Token.ThrowIfCancellationRequested();
 
+            Error? activationError = null;
             lock (_sync)
             {
-                _startupConnection = null;
-                _activeConnection = connection;
+                if (_stopRequested
+                    || _receiveCts.IsCancellationRequested
+                    || applicationLifetime.ApplicationStopping.IsCancellationRequested)
+                {
+                    activationError = CollectorRuntimeErrors.StartCancelled(
+                        request.SessionId);
+                }
+                else if (timeProvider.GetUtcNow() >= request.ReadinessDeadline)
+                {
+                    activationError = CollectorRuntimeErrors.ReadinessTimedOut(
+                        request.SessionId);
+                }
+                else
+                {
+                    _startupConnection = null;
+                    _activeConnection = connection;
+                }
             }
+
+            if (activationError is not null)
+                return Result.Failure<ICollectorWebSocketConnection, Error>(activationError);
 
             logger.LogInformation(
                 "Collector WebSocket {SessionId} connected for market {MarketId} at epoch {ConnectionEpoch}.",
@@ -801,6 +929,15 @@ internal sealed class CollectorWebSocketWorker(
                 request.SessionId.Value);
             return Result.Failure<ICollectorWebSocketConnection, Error>(
                 CollectorRuntimeErrors.StartFailed(request.SessionId));
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                exception,
+                "Collector WebSocket {SessionId} failed unexpectedly during reconnect startup.",
+                request.SessionId.Value);
+            return Result.Failure<ICollectorWebSocketConnection, Error>(
+                CollectorRuntimeErrors.StartUnexpected(request.SessionId));
         }
         finally
         {
@@ -864,16 +1001,25 @@ internal sealed class CollectorWebSocketWorker(
             return UnitResult.Failure(
                 CollectorRuntimeErrors.ReceiveFailed(request.SessionId));
         }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                exception,
+                "Collector WebSocket {SessionId} failed unexpectedly while sending heartbeat.",
+                request.SessionId.Value);
+            return UnitResult.Failure(
+                CollectorRuntimeErrors.ReceiveUnexpected(request.SessionId));
+        }
 
         return UnitResult.Success<Error>();
     }
 
-    private async Task TryCompleteReadinessAsync(
+    private async Task<UnitResult<Error>> TryCompleteReadinessAsync(
         ConnectionReadinessState state,
         CancellationToken cancellationToken)
     {
         if (state.IsReady || !state.HasAllInitialBooks)
-            return;
+            return UnitResult.Success<Error>();
 
         if (!state.AwaitingHeartbeatPersisted)
         {
@@ -881,24 +1027,27 @@ internal sealed class CollectorWebSocketWorker(
                 request.SessionId,
                 cancellationToken);
             if (result.IsFailure)
-                return;
+                return result;
 
             state.AwaitingHeartbeatPersisted = true;
         }
 
         if (!state.HasMatchingPong)
-            return;
+            return UnitResult.Success<Error>();
 
         var readyAt = timeProvider.GetUtcNow();
         if (readyAt >= request.ReadinessDeadline)
-            return;
+            return UnitResult.Success<Error>();
 
         var runningResult = await readinessDispatcher.MarkRunningAsync(
             request.SessionId,
             readyAt,
             cancellationToken);
-        if (runningResult.IsSuccess)
-            state.MarkReady();
+        if (runningResult.IsFailure)
+            return runningResult;
+
+        state.MarkReady();
+        return UnitResult.Success<Error>();
     }
 
     private static bool IsPing(byte[] payload) =>

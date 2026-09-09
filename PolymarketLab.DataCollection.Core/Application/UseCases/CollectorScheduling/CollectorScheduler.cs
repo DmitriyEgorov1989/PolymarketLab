@@ -5,6 +5,7 @@ using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
+using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using CollectorSessionAggregate = PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.CollectorSession;
 
@@ -102,6 +103,25 @@ public sealed class CollectorScheduler(
         return firstError is null
             ? UnitResult.Success<Error>()
             : UnitResult.Failure(firstError);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyCollection<CollectorSessionId>> GetActiveSessionIdsAsync(
+        CancellationToken cancellationToken)
+    {
+        var sessions = await sessionRepository.GetActiveAsync(cancellationToken);
+        return sessions.Select(session => session.Id).ToArray();
+    }
+
+    /// <inheritdoc />
+    public async Task<UnitResult<Error>> TickSessionAsync(
+        CollectorSessionId sessionId,
+        CancellationToken cancellationToken)
+    {
+        var session = await sessionRepository.GetByIdAsync(sessionId, cancellationToken);
+        return session is null
+            ? UnitResult.Success<Error>()
+            : await TickSessionAsync(session, cancellationToken);
     }
 
     private async Task<UnitResult<Error>> TickSessionAsync(

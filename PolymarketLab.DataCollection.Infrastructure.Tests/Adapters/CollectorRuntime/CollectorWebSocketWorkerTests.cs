@@ -12,6 +12,7 @@ using PolymarketLab.SharedKernel.Errors;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 using Xunit;
 
 namespace PolymarketLab.DataCollection.Infrastructure.Tests.Adapters.CollectorRuntime;
@@ -609,6 +610,385 @@ public sealed class CollectorWebSocketWorkerTests
     }
 
     [Fact]
+    public async Task ReceiveAsync_WithBinaryMessageBeforeDeadline_ShouldInvalidateWithoutReconnect()
+    {
+        var connection = new StubWebSocketConnection();
+        connection.AddFrame([1, 2, 3], WebSocketMessageType.Binary);
+        var dispatcher = new StubReadinessDispatcher();
+        var factory = new StubWebSocketFactory(connection);
+        var worker = CreateWorker(
+            CreateRequest(DateTimeOffset.Parse("2026-08-28T12:00:00Z")),
+            connection,
+            options: CreateOptions(reconnectDelay: TimeSpan.Zero),
+            webSocketFactory: factory,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:50Z")));
+
+        await worker.StartAsync(CancellationToken.None);
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Code.Should().Be(
+            "collector.runtime.receive.message_type.unsupported");
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
+        dispatcher.InvalidationCount.Should().Be(1);
+        factory.CreateCallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReceiveAsync_WhenProtocolViolationBeforeDeadline_ShouldInvalidateWithoutReconnect()
+    {
+        var connection = new StubWebSocketConnection();
+        connection.AddFrame(
+            Encoding.UTF8.GetBytes(
+                "{\"event_type\":\"book\",\"market\":\"0xOTHER\",\"asset_id\":\"yes-token\",\"bids\":[],\"asks\":[]}"));
+        var dispatcher = new StubReadinessDispatcher();
+        var factory = new StubWebSocketFactory(connection);
+        var worker = CreateWorker(
+            CreateRequest(DateTimeOffset.Parse("2026-08-28T12:00:00Z")),
+            connection,
+            options: CreateOptions(reconnectDelay: TimeSpan.Zero),
+            webSocketFactory: factory,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:50Z")));
+
+        await worker.StartAsync(CancellationToken.None);
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Code.Should().Be("collector.runtime.protocol.violation");
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
+        dispatcher.InvalidationCount.Should().Be(1);
+        factory.CreateCallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReceiveAsync_WhenReadinessRecordFailsBeforeDeadline_ShouldInvalidateWithoutReconnect()
+    {
+        var connection = new StubWebSocketConnection();
+        connection.AddFrame(BookMessage("yes-token"));
+        var persistenceError = new Error(
+            "collector.runtime.readiness.persistence_failed",
+            "Readiness persistence failed.",
+            ErrorType.Failure);
+        var dispatcher = new StubReadinessDispatcher
+        {
+            RecordInitialBookResult = UnitResult.Failure(persistenceError)
+        };
+        var factory = new StubWebSocketFactory(connection);
+        var worker = CreateWorker(
+            CreateRequest(DateTimeOffset.Parse("2026-08-28T12:00:00Z")),
+            connection,
+            options: CreateOptions(reconnectDelay: TimeSpan.Zero),
+            webSocketFactory: factory,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:50Z")));
+
+        await worker.StartAsync(CancellationToken.None);
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Should().BeSameAs(persistenceError);
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
+        dispatcher.InvalidationCount.Should().Be(1);
+        factory.CreateCallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReceiveAsync_WhenMarkAwaitingHeartbeatFailsBeforeDeadline_ShouldInvalidateWithoutReconnect()
+    {
+        var connection = new StubWebSocketConnection();
+        connection.AddFrame(BookMessage("yes-token"));
+        connection.AddFrame(BookMessage("no-token"));
+        var persistenceError = new Error(
+            "collector.runtime.readiness.persistence_failed",
+            "Readiness persistence failed.",
+            ErrorType.Failure);
+        var dispatcher = new StubReadinessDispatcher
+        {
+            AwaitingHeartbeatHandler = _ =>
+                Task.FromResult(UnitResult.Failure(persistenceError))
+        };
+        var factory = new StubWebSocketFactory(connection);
+        var worker = CreateWorker(
+            CreateRequest(DateTimeOffset.Parse("2026-08-28T12:00:00Z")),
+            connection,
+            options: CreateOptions(reconnectDelay: TimeSpan.Zero),
+            webSocketFactory: factory,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:50Z")));
+
+        await worker.StartAsync(CancellationToken.None);
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Should().BeSameAs(persistenceError);
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
+        dispatcher.InvalidationCount.Should().Be(1);
+        dispatcher.AwaitingHeartbeatCount.Should().Be(1);
+        factory.CreateCallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReceiveAsync_WhenMarkRunningFailsBeforeDeadline_ShouldInvalidateWithoutReconnect()
+    {
+        var connection = new StubWebSocketConnection();
+        connection.AddFrame(BookMessage("yes-token"));
+        connection.AddFrame(BookMessage("no-token"));
+        connection.AddFrame("PONG"u8);
+        var persistenceError = new Error(
+            "collector.runtime.readiness.persistence_failed",
+            "Readiness persistence failed.",
+            ErrorType.Failure);
+        var dispatcher = new StubReadinessDispatcher
+        {
+            RunningHandler = _ =>
+                Task.FromResult(UnitResult.Failure(persistenceError))
+        };
+        var factory = new StubWebSocketFactory(connection);
+        var worker = CreateWorker(
+            CreateRequest(DateTimeOffset.Parse("2026-08-28T12:00:00Z")),
+            connection,
+            options: CreateOptions(reconnectDelay: TimeSpan.Zero),
+            webSocketFactory: factory,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:50Z")));
+
+        await worker.StartAsync(CancellationToken.None);
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Should().BeSameAs(persistenceError);
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
+        dispatcher.InvalidationCount.Should().Be(1);
+        dispatcher.RunningCount.Should().Be(1);
+        factory.CreateCallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReceiveAsync_WhenInvalidationFails_ShouldCompleteAutonomousWithOriginalError()
+    {
+        var connection = new StubWebSocketConnection();
+        connection.AddFrame([1, 2, 3], WebSocketMessageType.Binary);
+        var invalidationError = new Error(
+            "collector.runtime.invalidation.failed",
+            "Invalidation persistence failed.",
+            ErrorType.Failure);
+        var dispatcher = new StubReadinessDispatcher
+        {
+            InvalidationHandler = _ =>
+                Task.FromResult(UnitResult.Failure(invalidationError))
+        };
+        var factory = new StubWebSocketFactory(connection);
+        var worker = CreateWorker(
+            CreateRequest(DateTimeOffset.Parse("2026-08-28T12:00:00Z")),
+            connection,
+            options: CreateOptions(reconnectDelay: TimeSpan.Zero),
+            webSocketFactory: factory,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:50Z")));
+
+        await worker.StartAsync(CancellationToken.None);
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Code.Should().Be(
+            "collector.runtime.receive.message_type.unsupported");
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Autonomous);
+        dispatcher.InvalidationCount.Should().Be(1);
+        factory.CreateCallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReceiveAsync_WithTransientFailureBeforeDeadline_ShouldReconnect()
+    {
+        var firstConnection = new StubWebSocketConnection();
+        firstConnection.AddFrame([], WebSocketMessageType.Close);
+        var secondConnection = new StubWebSocketConnection();
+        var dispatcher = new StubReadinessDispatcher();
+        var factory = new StubWebSocketFactory(firstConnection, secondConnection);
+        var request = CreateRequest(DateTimeOffset.Parse("2026-08-28T12:00:00Z"));
+        var worker = CreateWorker(
+            request,
+            firstConnection,
+            options: CreateOptions(reconnectDelay: TimeSpan.Zero),
+            webSocketFactory: factory,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:50Z")));
+
+        await worker.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => factory.CreateCallCount == 2);
+
+        worker.Completion.IsCompleted.Should().BeFalse();
+        dispatcher.InvalidationCount.Should().Be(0);
+        dispatcher.AwaitingInitialBooksCount.Should().Be(2);
+
+        await worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task Reconnect_WhenConnectCompletesAtDeadline_ShouldInvalidateWithoutActivation()
+    {
+        var deadline = DateTimeOffset.Parse("2026-08-28T12:00:00Z");
+        var timeProvider = new StubTimeProvider(deadline.AddSeconds(-10));
+        var firstConnection = new StubWebSocketConnection();
+        firstConnection.AddFrame([], WebSocketMessageType.Close);
+        var secondConnection = new StubWebSocketConnection
+        {
+            ConnectHandler = _ =>
+            {
+                timeProvider.SetUtcNow(deadline);
+                return Task.CompletedTask;
+            }
+        };
+        var dispatcher = new StubReadinessDispatcher();
+        var factory = new StubWebSocketFactory(firstConnection, secondConnection);
+        var worker = CreateWorker(
+            CreateRequest(deadline),
+            firstConnection,
+            options: CreateOptions(reconnectDelay: TimeSpan.Zero),
+            webSocketFactory: factory,
+            readinessDispatcher: dispatcher,
+            timeProvider: timeProvider);
+
+        await worker.StartAsync(CancellationToken.None);
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Code.Should().Be("collector.runtime.readiness.timeout");
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
+        dispatcher.InvalidationCount.Should().Be(1);
+        secondConnection.IsDisposed.Should().BeTrue();
+        secondConnection.ReceiveCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Reconnect_AfterAwaitingHeartbeat_ShouldRestartEpochReadinessWithoutOldEvidence()
+    {
+        var firstConnection = new StubWebSocketConnection();
+        firstConnection.AddFrame(BookMessage("yes-token"));
+        firstConnection.AddFrame(BookMessage("no-token"));
+        firstConnection.AddFrame([], WebSocketMessageType.Close);
+        var secondFrames = Channel.CreateUnbounded<byte[]>();
+        var secondConnection = new StubWebSocketConnection
+        {
+            ReceiveHandler = async (buffer, cancellationToken) =>
+            {
+                var payload = await secondFrames.Reader.ReadAsync(cancellationToken);
+                payload.CopyTo(buffer);
+                return new CollectorWebSocketReceiveResult(
+                    payload.Length,
+                    WebSocketMessageType.Text,
+                    true);
+            }
+        };
+        var dispatcher = new StubReadinessDispatcher();
+        var telemetry = new RawMarketMessageTelemetry();
+        var request = CreateRequest(DateTimeOffset.Parse("2026-08-28T12:00:00Z"));
+        var worker = CreateWorker(
+            request,
+            firstConnection,
+            options: CreateOptions(reconnectDelay: TimeSpan.Zero),
+            webSocketFactory: new StubWebSocketFactory(
+                firstConnection,
+                secondConnection),
+            readinessDispatcher: dispatcher,
+            telemetry: telemetry,
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:50Z")));
+
+        await worker.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => dispatcher.AwaitingInitialBooksCount == 2);
+
+        secondFrames.Writer.TryWrite(BookMessage("no-token"));
+        secondFrames.Writer.TryWrite("PONG"u8.ToArray());
+        await WaitUntilAsync(
+            () => dispatcher.TokenReadinessRecords.Count(record => record.Epoch == 2) == 1);
+        dispatcher.RunningCount.Should().Be(0);
+
+        secondFrames.Writer.TryWrite(BookMessage("yes-token"));
+        await dispatcher.WaitForRunningAsync();
+
+        dispatcher.RunningCount.Should().Be(1);
+        dispatcher.InvalidationCount.Should().Be(0);
+        dispatcher.AwaitingHeartbeatCount.Should().Be(2);
+        telemetry.GetCheckpoint(request.SessionId).CurrentConnectionEpoch.Should().Be(2);
+        telemetry.GetCheckpoint(request.SessionId).ReconnectCount.Should().Be(1);
+
+        await worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenUnexpectedStartupFailureBeforeDeadline_ShouldFailWithoutRetry()
+    {
+        var connection = new StubWebSocketConnection
+        {
+            ConnectHandler = _ => Task.FromException(
+                new NotSupportedException("Unexpected startup failure."))
+        };
+        var factory = new StubWebSocketFactory(connection);
+        var worker = CreateWorker(
+            CreateRequest(DateTimeOffset.Parse("2026-08-28T12:00:00Z")),
+            connection,
+            webSocketFactory: factory,
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:50Z")));
+
+        var result = await worker.StartAsync(CancellationToken.None);
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be("collector.runtime.start.unexpected");
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Code.Should().Be("collector.runtime.start.unexpected");
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Startup);
+        factory.CreateCallCount.Should().Be(1);
+        connection.IsDisposed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenStartupReconnectHitsPermanentFailure_ShouldInvalidateWithoutFurtherRetry()
+    {
+        var firstConnection = new StubWebSocketConnection
+        {
+            ConnectHandler = _ => Task.FromException(
+                new WebSocketException("Transient connection failure."))
+        };
+        var secondConnection = new StubWebSocketConnection
+        {
+            ConnectHandler = _ => Task.FromException(
+                new NotSupportedException("Unexpected reconnect failure."))
+        };
+        var dispatcher = new StubReadinessDispatcher();
+        var factory = new StubWebSocketFactory(firstConnection, secondConnection);
+        var worker = CreateWorker(
+            CreateRequest(DateTimeOffset.Parse("2026-08-28T12:00:00Z")),
+            firstConnection,
+            options: CreateOptions(reconnectDelay: TimeSpan.Zero),
+            webSocketFactory: factory,
+            readinessDispatcher: dispatcher,
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:50Z")));
+
+        var startResult = await worker.StartAsync(CancellationToken.None);
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        startResult.IsSuccess.Should().BeTrue();
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Code.Should().Be("collector.runtime.start.unexpected");
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
+        dispatcher.InvalidationCount.Should().Be(1);
+        factory.CreateCallCount.Should().Be(2);
+    }
+
+    [Fact]
     public async Task StopAsync_WhenEnqueueIsCancelledAfterCompleteMessage_ShouldFail()
     {
         var enqueueEntered = new TaskCompletionSource(
@@ -995,15 +1375,18 @@ public sealed class CollectorWebSocketWorkerTests
     }
 
     private static CollectorWebSocketOptions CreateOptions(
-        bool customFeatureEnabled = true)
+        bool customFeatureEnabled = true,
+        TimeSpan? reconnectDelay = null)
     {
         return new CollectorWebSocketOptions
         {
-            CustomFeatureEnabled = customFeatureEnabled
+            CustomFeatureEnabled = customFeatureEnabled,
+            ReconnectDelay = reconnectDelay ?? TimeSpan.FromSeconds(1)
         };
     }
 
-    private static CollectorRuntimeStartRequest CreateRequest()
+    private static CollectorRuntimeStartRequest CreateRequest(
+        DateTimeOffset? readinessDeadline = null)
     {
         return new CollectorRuntimeStartRequest(
             CollectorSessionId.Create(Guid.NewGuid()).Value,
@@ -1030,7 +1413,7 @@ public sealed class CollectorWebSocketWorkerTests
                         "No",
                         1)
                 ]),
-            DateTimeOffset.Parse("2026-08-28T11:59:50Z"));
+            readinessDeadline ?? DateTimeOffset.Parse("2026-08-28T11:59:50Z"));
     }
 
     private static byte[] BookMessage(string tokenId) =>
@@ -1205,6 +1588,9 @@ public sealed class CollectorWebSocketWorkerTests
         public int RunningCount { get; private set; }
         public int InvalidationCount { get; private set; }
         public Func<CancellationToken, Task<UnitResult<Error>>>? AwaitingInitialBooksHandler { get; init; }
+        public Func<CancellationToken, Task<UnitResult<Error>>>? AwaitingHeartbeatHandler { get; init; }
+        public Func<CancellationToken, Task<UnitResult<Error>>>? RunningHandler { get; init; }
+        public Func<CancellationToken, Task<UnitResult<Error>>>? InvalidationHandler { get; init; }
         public UnitResult<Error>? RecordInitialBookResult { get; init; }
         public List<(CollectorSessionId SessionId, string TokenId, long Epoch, DateTimeOffset EnqueuedAt)>
             TokenReadinessRecords { get; } = [];
@@ -1239,7 +1625,8 @@ public sealed class CollectorWebSocketWorkerTests
             CancellationToken cancellationToken)
         {
             AwaitingHeartbeatCount++;
-            return Task.FromResult(UnitResult.Success<Error>());
+            return AwaitingHeartbeatHandler?.Invoke(cancellationToken)
+                ?? Task.FromResult(UnitResult.Success<Error>());
         }
 
         public Task<UnitResult<Error>> MarkRunningAsync(
@@ -1249,7 +1636,8 @@ public sealed class CollectorWebSocketWorkerTests
         {
             RunningCount++;
             _running.TrySetResult();
-            return Task.FromResult(UnitResult.Success<Error>());
+            return RunningHandler?.Invoke(cancellationToken)
+                ?? Task.FromResult(UnitResult.Success<Error>());
         }
 
         public async Task WaitForRunningAsync()
@@ -1263,7 +1651,8 @@ public sealed class CollectorWebSocketWorkerTests
             CancellationToken cancellationToken)
         {
             InvalidationCount++;
-            return Task.FromResult(UnitResult.Success<Error>());
+            return InvalidationHandler?.Invoke(cancellationToken)
+                ?? Task.FromResult(UnitResult.Success<Error>());
         }
     }
 
@@ -1285,9 +1674,13 @@ public sealed class CollectorWebSocketWorkerTests
 
     private sealed class StubTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
+        private DateTimeOffset _utcNow = utcNow;
+
         public override DateTimeOffset GetUtcNow()
         {
-            return utcNow;
+            return _utcNow;
         }
+
+        public void SetUtcNow(DateTimeOffset value) => _utcNow = value;
     }
 }

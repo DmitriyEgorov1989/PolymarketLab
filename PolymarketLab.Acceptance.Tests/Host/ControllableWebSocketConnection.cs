@@ -46,10 +46,15 @@ internal sealed class ControllableWebSocketConnection : ICollectorWebSocketConne
     private readonly Channel<byte[]> _incoming = Channel.CreateUnbounded<byte[]>();
     private readonly TaskCompletionSource _subscribed =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _connectEntered =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _connectReleased =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _closeReleased =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public bool AutoPong { get; set; } = true;
+    public bool HoldConnect { get; set; }
     public bool HoldClose { get; set; }
     public IReadOnlyList<string> SentMessages
     {
@@ -62,8 +67,13 @@ internal sealed class ControllableWebSocketConnection : ICollectorWebSocketConne
 
     private readonly List<string> _sentMessages = [];
 
-    public Task ConnectAsync(Uri endpoint, CancellationToken cancellationToken) =>
-        Task.CompletedTask;
+    public Task ConnectAsync(Uri endpoint, CancellationToken cancellationToken)
+    {
+        _connectEntered.TrySetResult();
+        return HoldConnect
+            ? _connectReleased.Task.WaitAsync(cancellationToken)
+            : Task.CompletedTask;
+    }
 
     public Task SendTextAsync(
         ReadOnlyMemory<byte> message,
@@ -110,6 +120,11 @@ internal sealed class ControllableWebSocketConnection : ICollectorWebSocketConne
 
     public Task WaitForSubscriptionAsync(CancellationToken cancellationToken) =>
         _subscribed.Task.WaitAsync(cancellationToken);
+
+    public Task WaitForConnectAsync(CancellationToken cancellationToken) =>
+        _connectEntered.Task.WaitAsync(cancellationToken);
+
+    public void ReleaseConnect() => _connectReleased.TrySetResult();
 
     public void ReleaseClose() => _closeReleased.TrySetResult();
 

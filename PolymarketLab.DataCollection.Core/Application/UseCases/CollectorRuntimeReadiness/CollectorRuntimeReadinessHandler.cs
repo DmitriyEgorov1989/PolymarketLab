@@ -25,7 +25,7 @@ public sealed class CollectorRuntimeReadinessHandler(
         CancellationToken cancellationToken) =>
         UpdateStartingPhaseAsync(
             sessionId,
-            session => session.MarkAwaitingInitialBooks(),
+            session => session.MarkNewConnectionEpoch(),
             cancellationToken);
 
     public Task<UnitResult<Error>> MarkAwaitingHeartbeatAsync(

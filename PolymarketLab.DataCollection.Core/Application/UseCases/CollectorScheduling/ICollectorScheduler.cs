@@ -1,5 +1,6 @@
 using CSharpFunctionalExtensions;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
+using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
 using CollectorSessionAggregate = PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.CollectorSession;
 
@@ -16,6 +17,20 @@ public interface ICollectorScheduler
     Task<Result<CollectorSessionAggregate, Error>> PrepareAsync(
         CollectorSessionAggregate session,
         CollectionMarket market,
+        CancellationToken cancellationToken);
+
+    /// <summary>Возвращает идентификаторы активных sessions для независимой обработки.</summary>
+    /// <param name="cancellationToken">Токен отмены операции.</param>
+    /// <returns>Снимок идентификаторов активных sessions.</returns>
+    Task<IReadOnlyCollection<CollectorSessionId>> GetActiveSessionIdsAsync(
+        CancellationToken cancellationToken);
+
+    /// <summary>Обрабатывает одну сохранённую session в принадлежащей ей области зависимостей.</summary>
+    /// <param name="sessionId">Идентификатор session.</param>
+    /// <param name="cancellationToken">Токен отмены операции.</param>
+    /// <returns>Успех либо ожидаемая ошибка session.</returns>
+    Task<UnitResult<Error>> TickSessionAsync(
+        CollectorSessionId sessionId,
         CancellationToken cancellationToken);
 
     /// <summary>Обрабатывает все активные sessions, если наступили их границы.</summary>

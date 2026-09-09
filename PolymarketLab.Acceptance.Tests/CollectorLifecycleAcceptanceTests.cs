@@ -241,6 +241,166 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
     }
 
     [Fact]
+    public async Task BlockedConnect_ShouldNotDelayOtherMarketReadiness()
+    {
+        var eventStartsAt = DateTimeOffset.Parse("2026-09-05T12:00:00Z");
+        var clock = new FakeTimeProvider(eventStartsAt.AddSeconds(-90));
+        var firstScenario = new AcceptanceScenario(eventStartsAt, "blocked-first");
+        var secondScenario = new AcceptanceScenario(eventStartsAt, "blocked-second");
+        var blockedSocket = new ControllableWebSocketConnection { HoldConnect = true };
+        var availableSocket = new ControllableWebSocketConnection();
+        var socketFactory = new ControllableWebSocketFactory(blockedSocket, availableSocket);
+        await using var database = await fixture.CreateDatabaseAsync();
+        await database.ApplyMigrationsAsync();
+        await using var factory = new AcceptanceWebApplicationFactory(
+            database.ConnectionString,
+            clock,
+            services => ConfigureScenarios(
+                services,
+                [firstScenario, secondScenario],
+                socketFactory,
+                new NormalizationGate()));
+        using var client = factory.CreateClient();
+
+        var firstMarketId = await RegisterMarketAsync(client, firstScenario);
+        var secondMarketId = await RegisterMarketAsync(client, secondScenario);
+        var firstSessionId = await GetSessionIdByMarketAsync(client, firstMarketId);
+        var secondSessionId = await GetSessionIdByMarketAsync(client, secondMarketId);
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await blockedSocket.WaitForConnectAsync(timeout.Token);
+        await availableSocket.WaitForSubscriptionAsync(timeout.Token);
+
+        var availableIsFirst = availableSocket.SentMessages.Any(message =>
+            message.Contains(firstScenario.YesTokenId, StringComparison.Ordinal));
+        var availableScenario = availableIsFirst ? firstScenario : secondScenario;
+        var availableSessionId = availableIsFirst ? firstSessionId : secondSessionId;
+        var blockedScenario = availableIsFirst ? secondScenario : firstScenario;
+        var blockedSessionId = availableIsFirst ? secondSessionId : firstSessionId;
+
+        availableSocket.Emit(BookMessage(availableScenario, availableScenario.YesTokenId));
+        availableSocket.Emit(BookMessage(availableScenario, availableScenario.NoTokenId));
+        await WaitForStateAsync(
+            client,
+            clock,
+            availableSessionId,
+            "Running",
+            "ReadyBeforeWindow",
+            advanceClock: false);
+        AssertState(
+            await GetSessionAsync(client, blockedSessionId),
+            "Starting",
+            "Connecting");
+
+        blockedSocket.ReleaseConnect();
+        await blockedSocket.WaitForSubscriptionAsync(timeout.Token);
+        blockedSocket.Emit(BookMessage(blockedScenario, blockedScenario.YesTokenId));
+        blockedSocket.Emit(BookMessage(blockedScenario, blockedScenario.NoTokenId));
+        await WaitForStateAsync(
+            client,
+            clock,
+            blockedSessionId,
+            "Running",
+            "ReadyBeforeWindow",
+            advanceClock: false);
+    }
+
+    [Fact]
+    public async Task OrderBookIntegrityIssue_ShouldInvalidateOnlyAffectedMarket()
+    {
+        var eventStartsAt = DateTimeOffset.Parse("2026-09-05T12:00:00Z");
+        var clock = new FakeTimeProvider(eventStartsAt.AddSeconds(-90));
+        var invalidScenario = new AcceptanceScenario(eventStartsAt, "integrity-invalid");
+        var validScenario = new AcceptanceScenario(eventStartsAt, "integrity-valid");
+        var firstSocket = new ControllableWebSocketConnection();
+        var secondSocket = new ControllableWebSocketConnection();
+        var socketFactory = new ControllableWebSocketFactory(firstSocket, secondSocket);
+        var normalizationGate = new NormalizationGate();
+        await using var database = await fixture.CreateDatabaseAsync();
+        await database.ApplyMigrationsAsync();
+        await using var factory = new AcceptanceWebApplicationFactory(
+            database.ConnectionString,
+            clock,
+            services => ConfigureScenarios(
+                services,
+                [invalidScenario, validScenario],
+                socketFactory,
+                normalizationGate));
+        using var client = factory.CreateClient();
+
+        var invalidMarketId = await RegisterMarketAsync(client, invalidScenario);
+        var validMarketId = await RegisterMarketAsync(client, validScenario);
+        var invalidSessionId = await GetSessionIdByMarketAsync(client, invalidMarketId);
+        var validSessionId = await GetSessionIdByMarketAsync(client, validMarketId);
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            await firstSocket.WaitForSubscriptionAsync(timeout.Token);
+            await secondSocket.WaitForSubscriptionAsync(timeout.Token);
+        }
+
+        var invalidSocket = SocketFor(socketFactory, invalidScenario);
+        var validSocket = SocketFor(socketFactory, validScenario);
+        invalidSocket.Emit(CrossedBookMessage(invalidScenario, invalidScenario.YesTokenId));
+        invalidSocket.Emit(BookMessage(invalidScenario, invalidScenario.NoTokenId));
+        validSocket.Emit(BookMessage(validScenario, validScenario.YesTokenId));
+        validSocket.Emit(BookMessage(validScenario, validScenario.NoTokenId));
+        await WaitForStateAsync(client, clock, invalidSessionId, "Running", "ReadyBeforeWindow");
+        await WaitForStateAsync(client, clock, validSessionId, "Running", "ReadyBeforeWindow");
+
+        AdvanceTo(clock, eventStartsAt);
+        await TickResolutionAsync(factory.Services);
+        await WaitForStateAsync(client, clock, invalidSessionId, "Running", "CollectingWindow", false);
+        await WaitForStateAsync(client, clock, validSessionId, "Running", "CollectingWindow", false);
+
+        AdvanceTo(clock, invalidScenario.EventEndsAt);
+        await TickResolutionAsync(factory.Services);
+        await WaitForStateAsync(client, clock, invalidSessionId, "Running", "AwaitingResolution", false);
+        await WaitForStateAsync(client, clock, validSessionId, "Running", "AwaitingResolution", false);
+        invalidScenario.IsResolved = true;
+        validScenario.IsResolved = true;
+        invalidSocket.Emit(ResolutionMessage(invalidScenario));
+        validSocket.Emit(ResolutionMessage(validScenario));
+        await WaitForRawCountAsync(client, invalidSessionId, minimumCount: 3);
+        await WaitForRawCountAsync(client, validSessionId, minimumCount: 3);
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await TickResolutionAsync(factory.Services);
+        await WaitForStateAsync(client, clock, invalidSessionId, "Stopping", "AwaitingNormalization", false);
+        await WaitForStateAsync(client, clock, validSessionId, "Stopping", "AwaitingNormalization", false);
+
+        normalizationGate.Release();
+        await WaitForResolutionNormalizationAsync(client, invalidSessionId);
+        await WaitForResolutionNormalizationAsync(client, validSessionId);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var result = await scope.ServiceProvider
+                .GetRequiredService<IResolutionConsensusCoordinator>()
+                .TickAsync(CancellationToken.None);
+            result.IsFailure.Should().BeTrue();
+            result.Error.Code.Should().Be("collector.order_book.integrity.issue");
+        }
+        await TickSchedulerAsync(factory.Services);
+
+        var failed = await WaitForStateAsync(client, clock, invalidSessionId, "Failed", null, false);
+        failed["stopReason"]!.GetValue<string>().Should().Be("PersistenceFailure");
+        failed["failureCode"]!.GetValue<string>().Should().Be(
+            "collector.order_book.integrity.issue");
+        failed["cleanup"].Should().NotBeNull();
+
+        var stopped = await WaitForStateAsync(client, clock, validSessionId, "Stopped", null, false);
+        stopped["stopReason"]!.GetValue<string>().Should().Be("MarketClosed");
+        stopped["cleanup"].Should().BeNull();
+        var validEvidence = await DurableCollectorAssertions.ReadAsync(
+            database.ConnectionString,
+            validSessionId,
+            projectionVersion: 1);
+        validEvidence.RawCount.Should().BeGreaterThan(0);
+        validEvidence.ProcessedCount.Should().Be(validEvidence.RawCount);
+    }
+
+    [Fact]
     public async Task Restart_ShouldInvalidateActiveSessionAndCleanupDurableDataset()
     {
         var eventStartsAt = DateTimeOffset.Parse("2026-09-05T12:00:00Z");
@@ -880,6 +1040,18 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
           "timestamp":"1788600000000",
           "bids":[],
           "asks":[]
+        }
+        """;
+
+    private static string CrossedBookMessage(AcceptanceScenario scenario, string tokenId) => $$"""
+        {
+          "event_type":"book",
+          "market":"{{scenario.ConditionId}}",
+          "asset_id":"{{tokenId}}",
+          "hash":"crossed-{{tokenId}}",
+          "timestamp":"1788600000000",
+          "bids":[{"price":"0.60","size":"10"}],
+          "asks":[{"price":"0.50","size":"10"}]
         }
         """;
 

@@ -40,6 +40,14 @@ internal static class CollectorRuntimeErrors
             ErrorType.Failure);
     }
 
+    public static Error StartUnexpected(CollectorSessionId sessionId)
+    {
+        return new Error(
+            "collector.runtime.start.unexpected",
+            $"Collector runtime '{sessionId.Value}' failed unexpectedly during startup.",
+            ErrorType.Failure);
+    }
+
     public static Error StopFailed(CollectorSessionId sessionId)
     {
         return new Error(
@@ -63,6 +71,14 @@ internal static class CollectorRuntimeErrors
         return new Error(
             "collector.runtime.receive.failed",
             $"Collector runtime '{sessionId.Value}' failed while receiving messages.",
+            ErrorType.Failure);
+    }
+
+    public static Error ReceiveUnexpected(CollectorSessionId sessionId)
+    {
+        return new Error(
+            "collector.runtime.receive.unexpected",
+            $"Collector runtime '{sessionId.Value}' failed unexpectedly while receiving messages.",
             ErrorType.Failure);
     }
 

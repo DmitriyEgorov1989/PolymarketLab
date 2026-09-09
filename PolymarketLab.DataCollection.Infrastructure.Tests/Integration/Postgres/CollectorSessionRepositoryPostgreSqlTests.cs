@@ -117,7 +117,7 @@ public sealed class CollectorSessionRepositoryPostgreSqlTests(PostgreSqlFixture 
         var repository = new CollectorSessionRepository(context);
         var persisted = await repository.GetByIdAsync(session.Id, CancellationToken.None);
         persisted!.BeginPreparation(CreatedAt).IsSuccess.Should().BeTrue();
-        persisted.MarkAwaitingInitialBooks().IsSuccess.Should().BeTrue();
+        persisted.MarkNewConnectionEpoch().IsSuccess.Should().BeTrue();
         persisted.MarkAwaitingHeartbeat().IsSuccess.Should().BeTrue();
         persisted.MarkRunning(CreatedAt.AddMinutes(2)).IsSuccess.Should().BeTrue();
         persisted.MarkCollectingWindow().IsSuccess.Should().BeTrue();

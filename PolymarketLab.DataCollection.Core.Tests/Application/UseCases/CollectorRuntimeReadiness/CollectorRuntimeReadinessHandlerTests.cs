@@ -213,11 +213,48 @@ public sealed class CollectorRuntimeReadinessHandlerTests
         await record.Should().ThrowAsync<InvalidOperationException>();
     }
 
+    [Fact]
+    public async Task MarkAwaitingInitialBooksAsync_FromAwaitingHeartbeat_ShouldResetToAwaitingInitialBooks()
+    {
+        var session = CreateAwaitingInitialBooks();
+        session.MarkAwaitingHeartbeat();
+        var repository = new StubUpdatableCollectorSessionRepository(session);
+        var handler = CreateHandler(
+            repository,
+            new StubCollectorTokenReadinessRepository());
+
+        var result = await handler.MarkAwaitingInitialBooksAsync(
+            session.Id,
+            CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        session.Status.Should().Be(CollectorSessionStatus.Starting);
+        session.Phase.Should().Be(CollectorSessionPhase.AwaitingInitialBooks);
+    }
+
+    [Fact]
+    public async Task MarkAwaitingInitialBooksAsync_FromAwaitingInitialBooks_ShouldKeepAwaitingInitialBooks()
+    {
+        var session = CreateAwaitingInitialBooks();
+        var repository = new StubUpdatableCollectorSessionRepository(session);
+        var handler = CreateHandler(
+            repository,
+            new StubCollectorTokenReadinessRepository());
+
+        var result = await handler.MarkAwaitingInitialBooksAsync(
+            session.Id,
+            CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        session.Status.Should().Be(CollectorSessionStatus.Starting);
+        session.Phase.Should().Be(CollectorSessionPhase.AwaitingInitialBooks);
+    }
+
     private static CollectorSessionAggregate CreateAwaitingInitialBooks()
     {
         var session = CollectorSessionTestFactory.CreateScheduled(createdAt: CreatedAt);
         session.BeginPreparation(CreatedAt.AddSeconds(1));
-        session.MarkAwaitingInitialBooks();
+        session.MarkNewConnectionEpoch();
         return session;
     }
 
@@ -290,6 +327,43 @@ public sealed class CollectorRuntimeReadinessHandlerTests
             CollectorSessionAggregate session,
             CollectorSessionStatus expectedStatus,
             CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class StubUpdatableCollectorSessionRepository(
+        CollectorSessionAggregate session)
+        : ICollectorSessionRepository
+    {
+        public Task<CollectorSessionAggregate?> GetByIdAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<CollectorSessionAggregate?>(
+                sessionId == session.Id ? session : null);
+
+        public Task<CollectorSessionAggregate?> GetExclusiveAsync(
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<CollectorSessionAggregate?> GetActiveByMarketIdAsync(
+            MarketId marketId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<CollectorSessionAggregate?> GetCurrentByMarketIdAsync(
+            MarketId marketId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyCollection<CollectorSessionAggregate>> GetActiveAsync(
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<Result<CollectorSessionInsertStatus, Error>> TryAddAsync(
+            CollectorSessionAggregate session,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<Result<CollectorSessionUpdateStatus, Error>> TryUpdateAsync(
+            CollectorSessionAggregate session,
+            CollectorSessionStatus expectedStatus,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(
+                Result.Success<CollectorSessionUpdateStatus, Error>(
+                    CollectorSessionUpdateStatus.Updated));
     }
 
     private sealed class StubRuntime : ICollectorRuntime

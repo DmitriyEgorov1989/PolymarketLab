@@ -3,6 +3,7 @@ using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorNormalizationSuitability;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorOrderBookIntegrity;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Domain.Models.Resolution;
 using PolymarketLab.DataCollection.Core.Ports;
@@ -53,9 +54,38 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
         fixture.Session.StopReason.Should().Be(CollectorStopReason.MarketClosed);
         fixture.Suitability.Calls.Should().ContainSingle(call =>
             call.SessionId == fixture.Session.Id && call.ProjectionVersion == 3);
+        fixture.Integrity.Calls.Should().ContainSingle(call =>
+            call.SessionId == fixture.Session.Id
+            && call.ProjectionVersion == 3
+            && call.TokenIds.SequenceEqual(
+                fixture.Session.Tokens.Select(token => token.TokenId)));
         fixture.Sessions.ExpectedStatuses.Should().Equal(
             CollectorSessionStatus.Stopping);
         fixture.Invalidation.Calls.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("collector.order_book.integrity.issue")]
+    [InlineData("collector.order_book.integrity.read_failed")]
+    public async Task EvaluateAsync_WithOrderBookIntegrityFailure_ShouldInvalidateBeforeCompletion(
+        string errorCode)
+    {
+        var fixture = new Fixture();
+        fixture.Integrity.Result = UnitResult.Failure<Error>(new Error(
+            errorCode,
+            "Order book integrity failure.",
+            ErrorType.Failure));
+
+        var result = await fixture.Coordinator.EvaluateAsync(
+            fixture.Session.Id,
+            CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be(errorCode);
+        fixture.Sessions.TryUpdateCount.Should().Be(0);
+        fixture.Invalidation.Calls.Should().ContainSingle(call =>
+            call.Reason == CollectorStopReason.PersistenceFailure
+            && call.Failure.Code == errorCode);
     }
 
     [Theory]
@@ -147,6 +177,27 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
     {
         var fixture = new Fixture();
         fixture.Time.SetUtcNow(fixture.AwaitingNormalizationAt.AddMinutes(5));
+
+        var result = await fixture.Coordinator.EvaluateAsync(
+            fixture.Session.Id,
+            CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be("collector.normalization_suitability.timeout");
+        fixture.Sessions.TryUpdateCount.Should().Be(0);
+        fixture.Invalidation.Calls.Should().ContainSingle(call =>
+            call.Reason == CollectorStopReason.PersistenceFailure
+            && call.Failure.Code == "collector.normalization_suitability.timeout");
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenDeadlineExpiresDuringIntegrityCheck_ShouldInvalidateAsTimeout()
+    {
+        var fixture = new Fixture();
+        fixture.Time.SetUtcNow(
+            fixture.AwaitingNormalizationAt.AddMinutes(5).AddTicks(-1));
+        fixture.Integrity.OnEvaluate = () =>
+            fixture.Time.SetUtcNow(fixture.AwaitingNormalizationAt.AddMinutes(5));
 
         var result = await fixture.Coordinator.EvaluateAsync(
             fixture.Session.Id,
@@ -416,6 +467,7 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
             Calls = [];
             Suitability = new SuitabilityReader(suitability ?? FullyProcessed, Calls);
             VersionProvider = new ProjectionVersionProvider(projectionVersion);
+            Integrity = new IntegrityCoordinator(Calls);
             Sessions = new SessionRepository(Session);
             Invalidation = new InvalidationCoordinator(Session, Calls);
             Logger = new TestLogger();
@@ -423,6 +475,7 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
                 Sessions,
                 Suitability,
                 VersionProvider,
+                Integrity,
                 Invalidation,
                 Time,
                 Logger);
@@ -441,10 +494,34 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
         public List<string> Calls { get; }
         public SuitabilityReader Suitability { get; }
         public ProjectionVersionProvider VersionProvider { get; }
+        public IntegrityCoordinator Integrity { get; }
         public SessionRepository Sessions { get; }
         public InvalidationCoordinator Invalidation { get; }
         public TestLogger Logger { get; }
         public ICollectorNormalizationSuitabilityCoordinator Coordinator { get; }
+    }
+
+    private sealed class IntegrityCoordinator(List<string> calls)
+        : ICollectorOrderBookIntegrityCoordinator
+    {
+        public List<(
+            CollectorSessionId SessionId,
+            int ProjectionVersion,
+            IReadOnlyCollection<TokenId> TokenIds)> Calls { get; } = [];
+        public UnitResult<Error> Result { get; set; } = UnitResult.Success<Error>();
+        public Action? OnEvaluate { get; set; }
+
+        public Task<UnitResult<Error>> EvaluateAsync(
+            CollectorSessionId sessionId,
+            int projectionVersion,
+            IReadOnlyCollection<TokenId> tokenIds,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add((sessionId, projectionVersion, tokenIds));
+            calls.Add("integrity:evaluate");
+            OnEvaluate?.Invoke();
+            return Task.FromResult(Result);
+        }
     }
 
     private sealed class MutableTimeProvider(DateTimeOffset utcNow) : TimeProvider

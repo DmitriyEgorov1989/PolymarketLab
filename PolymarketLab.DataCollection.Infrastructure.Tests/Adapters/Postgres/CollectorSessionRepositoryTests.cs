@@ -301,7 +301,7 @@ public sealed class CollectorSessionRepositoryTests
         DateTimeOffset readyAt)
     {
         session.BeginPreparation(session.CreatedAt);
-        session.MarkAwaitingInitialBooks();
+        session.MarkNewConnectionEpoch();
         session.MarkAwaitingHeartbeat();
         session.MarkRunning(readyAt);
     }

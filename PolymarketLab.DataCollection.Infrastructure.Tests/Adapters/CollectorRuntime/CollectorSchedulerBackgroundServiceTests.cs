@@ -5,7 +5,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime;
+using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
+using System.Collections.Concurrent;
 using Xunit;
 using CollectorSessionAggregate = PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.CollectorSession;
 
@@ -14,70 +16,139 @@ namespace PolymarketLab.DataCollection.Infrastructure.Tests.Adapters.CollectorRu
 public sealed class CollectorSchedulerBackgroundServiceTests
 {
     [Fact]
-    public async Task TickOnceAsync_ShouldResolveScopedSchedulerAndForwardCancellation()
+    public async Task TickOnceAsync_WhenOneSessionIsBlocked_ShouldStartOtherSessionInSeparateScope()
     {
-        var calls = new List<TickCall>();
-        var services = new ServiceCollection();
-        services.AddScoped<ICollectorScheduler>(_ => new StubScheduler(calls));
-        await using var provider = services.BuildServiceProvider(
-            new ServiceProviderOptions { ValidateScopes = true });
-        var service = new CollectorSchedulerBackgroundService(
-            provider.GetRequiredService<IServiceScopeFactory>(),
-            TimeProvider.System,
-            NullLogger<CollectorSchedulerBackgroundService>.Instance);
-        using var cancellationTokenSource = new CancellationTokenSource();
+        var firstSessionId = CollectorSessionId.Create(Guid.NewGuid()).Value;
+        var secondSessionId = CollectorSessionId.Create(Guid.NewGuid()).Value;
+        var firstRelease = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var state = new StubSchedulerState([firstSessionId, secondSessionId])
+        {
+            OperationHandler = async (sessionId, cancellationToken) =>
+            {
+                if (sessionId == firstSessionId)
+                    await firstRelease.Task.WaitAsync(cancellationToken);
 
-        await service.TickOnceAsync(cancellationTokenSource.Token);
-        await service.TickOnceAsync(cancellationTokenSource.Token);
+                return UnitResult.Success<Error>();
+            }
+        };
+        await using var provider = CreateProvider(state);
+        using var service = CreateService(provider);
 
-        calls.Should().HaveCount(2);
-        calls.Should().OnlyContain(call =>
-            call.CancellationToken == cancellationTokenSource.Token);
-        calls.Select(call => call.SchedulerId).Distinct().Should().HaveCount(2);
+        await service.TickOnceAsync(CancellationToken.None);
+        await WaitUntilAsync(() => state.OperationCalls.Count == 2);
+
+        state.OperationCalls.Select(call => call.SessionId)
+            .Should().BeEquivalentTo([firstSessionId, secondSessionId]);
+        state.OperationCalls.Select(call => call.SchedulerId).Distinct()
+            .Should().HaveCount(2);
+
+        firstRelease.TrySetResult();
+        await WaitUntilAsync(() => state.CompletedOperations == 2);
     }
 
     [Fact]
-    public async Task TickOnceAsync_WhenOperationThrows_ShouldAllowRetryInNewScope()
+    public async Task TickOnceAsync_WhileSessionOperationIsRunning_ShouldNotStartDuplicate()
     {
-        var calls = new List<TickCall>();
-        var services = new ServiceCollection();
-        services.AddScoped<ICollectorScheduler>(_ => new StubScheduler(
-            calls, calls.Count == 0 ? new InvalidOperationException("Cleanup failed.") : null));
-        await using var provider = services.BuildServiceProvider(
-            new ServiceProviderOptions { ValidateScopes = true });
-        using var service = new CollectorSchedulerBackgroundService(
-            provider.GetRequiredService<IServiceScopeFactory>(),
-            TimeProvider.System,
-            NullLogger<CollectorSchedulerBackgroundService>.Instance);
+        var sessionId = CollectorSessionId.Create(Guid.NewGuid()).Value;
+        var release = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var state = new StubSchedulerState([sessionId])
+        {
+            OperationHandler = async (_, cancellationToken) =>
+            {
+                await release.Task.WaitAsync(cancellationToken);
+                return UnitResult.Success<Error>();
+            }
+        };
+        await using var provider = CreateProvider(state);
+        using var service = CreateService(provider);
 
         await service.TickOnceAsync(CancellationToken.None);
+        await WaitUntilAsync(() => state.OperationCalls.Count == 1);
         await service.TickOnceAsync(CancellationToken.None);
 
-        calls.Should().HaveCount(2);
-        calls.Select(call => call.SchedulerId).Distinct().Should().HaveCount(2);
+        state.OperationCalls.Should().ContainSingle();
+
+        release.TrySetResult();
+        await WaitUntilAsync(() => state.CompletedOperations == 1);
+        await service.TickOnceAsync(CancellationToken.None);
+        await WaitUntilAsync(() => state.OperationCalls.Count == 2);
     }
 
     [Fact]
-    public async Task TickOnceAsync_WhenShutdownCancelsOperation_ShouldPropagateCancellation()
+    public async Task TickOnceAsync_WhenDiscoveryIsCancelled_ShouldPropagateCancellation()
     {
-        var calls = new List<TickCall>();
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        var services = new ServiceCollection();
-        services.AddScoped<ICollectorScheduler>(_ => new StubScheduler(
-            calls, new OperationCanceledException(cancellation.Token)));
-        await using var provider = services.BuildServiceProvider();
-        using var service = new CollectorSchedulerBackgroundService(
-            provider.GetRequiredService<IServiceScopeFactory>(),
-            TimeProvider.System,
-            NullLogger<CollectorSchedulerBackgroundService>.Instance);
+        var state = new StubSchedulerState([])
+        {
+            DiscoveryException = new OperationCanceledException(cancellation.Token)
+        };
+        await using var provider = CreateProvider(state);
+        using var service = CreateService(provider);
 
         var action = () => service.TickOnceAsync(cancellation.Token);
 
         await action.Should().ThrowAsync<OperationCanceledException>();
     }
 
-    private sealed class StubScheduler(List<TickCall> calls, Exception? exception = null) : ICollectorScheduler
+    [Fact]
+    public async Task StopAsync_ShouldCancelAndAwaitRunningSessionOperation()
+    {
+        var sessionId = CollectorSessionId.Create(Guid.NewGuid()).Value;
+        var cancellationObserved = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var state = new StubSchedulerState([sessionId])
+        {
+            OperationHandler = async (_, cancellationToken) =>
+            {
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                    when (cancellationToken.IsCancellationRequested)
+                {
+                    cancellationObserved.TrySetResult();
+                }
+
+                return UnitResult.Success<Error>();
+            }
+        };
+        await using var provider = CreateProvider(state);
+        using var service = CreateService(provider);
+        await service.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => state.OperationCalls.Count == 1);
+
+        await service.StopAsync(CancellationToken.None);
+
+        cancellationObserved.Task.IsCompletedSuccessfully.Should().BeTrue();
+        state.CompletedOperations.Should().Be(1);
+    }
+
+    private static ServiceProvider CreateProvider(StubSchedulerState state)
+    {
+        var services = new ServiceCollection();
+        services.AddScoped<ICollectorScheduler>(_ => new StubScheduler(state));
+        return services.BuildServiceProvider(
+            new ServiceProviderOptions { ValidateScopes = true });
+    }
+
+    private static CollectorSchedulerBackgroundService CreateService(
+        IServiceProvider provider) => new(
+        provider.GetRequiredService<IServiceScopeFactory>(),
+        TimeProvider.System,
+        NullLogger<CollectorSchedulerBackgroundService>.Instance);
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (!condition())
+            await Task.Delay(1, timeout.Token);
+    }
+
+    private sealed class StubScheduler(StubSchedulerState state) : ICollectorScheduler
     {
         private readonly Guid _id = Guid.NewGuid();
 
@@ -86,14 +157,43 @@ public sealed class CollectorSchedulerBackgroundServiceTests
             CollectionMarket market,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
-        public Task<UnitResult<Error>> TickAsync(CancellationToken cancellationToken)
+        public Task<IReadOnlyCollection<CollectorSessionId>> GetActiveSessionIdsAsync(
+            CancellationToken cancellationToken)
         {
-            calls.Add(new TickCall(_id, cancellationToken));
-            if (exception is not null)
-                throw exception;
-            return Task.FromResult(UnitResult.Success<Error>());
+            if (state.DiscoveryException is not null)
+                return Task.FromException<IReadOnlyCollection<CollectorSessionId>>(
+                    state.DiscoveryException);
+
+            return Task.FromResult(state.SessionIds);
         }
+
+        public async Task<UnitResult<Error>> TickSessionAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken)
+        {
+            state.OperationCalls.Enqueue(new OperationCall(_id, sessionId));
+            var result = await state.OperationHandler(sessionId, cancellationToken);
+            Interlocked.Increment(ref state.CompletedOperations);
+            return result;
+        }
+
+        public Task<UnitResult<Error>> TickAsync(
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
-    private sealed record TickCall(Guid SchedulerId, CancellationToken CancellationToken);
+    private sealed class StubSchedulerState(
+        IReadOnlyCollection<CollectorSessionId> sessionIds)
+    {
+        public IReadOnlyCollection<CollectorSessionId> SessionIds { get; } = sessionIds;
+        public ConcurrentQueue<OperationCall> OperationCalls { get; } = new();
+        public Func<CollectorSessionId, CancellationToken, Task<UnitResult<Error>>>
+            OperationHandler { get; init; } = (_, _) =>
+                Task.FromResult(UnitResult.Success<Error>());
+        public Exception? DiscoveryException { get; init; }
+        public int CompletedOperations;
+    }
+
+    private sealed record OperationCall(
+        Guid SchedulerId,
+        CollectorSessionId SessionId);
 }

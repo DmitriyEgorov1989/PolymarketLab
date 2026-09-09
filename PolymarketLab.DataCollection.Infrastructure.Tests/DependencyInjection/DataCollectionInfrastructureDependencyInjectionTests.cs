@@ -67,6 +67,10 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
             descriptor.ServiceType == typeof(INormalizationSuitabilityReader)
             && descriptor.ImplementationType == typeof(NormalizationSuitabilityReader)
             && descriptor.Lifetime == ServiceLifetime.Scoped);
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(IOrderBookIntegrityReader)
+            && descriptor.ImplementationType == typeof(OrderBookIntegrityReader)
+            && descriptor.Lifetime == ServiceLifetime.Scoped);
 
         using var provider = services.BuildServiceProvider(new ServiceProviderOptions
         {
@@ -95,6 +99,7 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
         AssertScoped<INormalizationProcessor>(firstScope, secondScope);
         AssertScoped<INormalizationBacklogReader>(firstScope, secondScope);
         AssertScoped<INormalizationSuitabilityReader>(firstScope, secondScope);
+        AssertScoped<IOrderBookIntegrityReader>(firstScope, secondScope);
         AssertTransient<IOrderBookSnapshotSource>(firstScope);
         AssertTransient<IGammaTerminalResolutionSource>(firstScope);
         AssertTransient<IClobTerminalResolutionSource>(firstScope);
@@ -124,8 +129,8 @@ public sealed class DataCollectionInfrastructureDependencyInjectionTests
             .Equal(
                 typeof(CollectorSessionStartupReconciliationService),
                 typeof(RawMarketMessagePersistenceWorker),
-                typeof(CollectorRuntimeShutdownService),
                 typeof(CollectorSchedulerBackgroundService),
+                typeof(CollectorRuntimeShutdownService),
                 typeof(ResolutionConsensusBackgroundService),
                 typeof(NormalizationBackgroundService),
                 typeof(NormalizationMetricsBackgroundService));

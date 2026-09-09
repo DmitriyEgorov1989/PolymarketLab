@@ -259,6 +259,15 @@ Compatibility/administrative запуск принимает `marketId`; тел�
 не зависит от браузера. Уже начатая partial session после restart не возобновляется,
 а missed window завершается failure и cleanup.
 
+Production scheduler раз в секунду выполняет короткий discovery active session IDs.
+Для каждого ID он держит не более одной tracked операции в отдельном DI scope;
+поэтому медленный Gamma check, WebSocket connect или cleanup одной session не
+блокирует discovery и подготовку соседних рынков. Общий лимит параллелизма и
+admission queue намеренно не вводятся; CAS и per-session registry защищают гонки.
+При shutdown сначала `CollectorRuntimeShutdownService` разрывает transport operations,
+затем scheduler передаёт cancellation оставшимся tracked операциям и ожидает их
+завершения, не освобождая принадлежащие им DI scopes раньше времени.
+
 Snapshot identity и расписания неизменяем для одной session. Mismatch с актуальным
 schedule инвалидирует попытку; после cleanup явное повторное добавление market до
 `T` создаёт новую попытку с обновлённым snapshot. То же правило действует после
@@ -524,7 +533,7 @@ or
 -> Invalidating/Cleaning -> Failed on terminal normalization failure or timeout
 ```
 
-После `Stopping/AwaitingNormalization` тот же tick `ResolutionConsensusBackgroundService` маршрутизирует session в `CollectorNormalizationSuitabilityCoordinator`: один PostgreSQL statement доказывает, что каждому raw-сообщению соответствует ledger row snapshot-версии `CollectorSession.ProjectionVersion` со статусом `Processed`, а strict WS resolution observation указывает на обработанный normalized `market_resolved` item. Момент завершения durable raw drain сохраняется как `AwaitingNormalizationAt`; `Pending`/`Processing`/missing rows ожидаются максимум до `AwaitingNormalizationAt + 5m`. `Invalid`, `Unsupported`, terminal `Failed`, несовпадение runtime-версии, неверный provenance и timeout ведут в durable invalidation. Только успешный gate до deadline CAS-выполняет `Stopped/MarketClosed`; normalizer при этом продолжает работать через собственный hosted service, а producer уже остановлен raw completion.
+После `Stopping/AwaitingNormalization` тот же tick `ResolutionConsensusBackgroundService` маршрутизирует session в `CollectorNormalizationSuitabilityCoordinator`: один PostgreSQL statement доказывает, что каждому raw-сообщению соответствует ledger row snapshot-версии `CollectorSession.ProjectionVersion` со статусом `Processed`, а strict WS resolution observation указывает на обработанный normalized `market_resolved` item. Затем integrity gate читает committed typed order-book rows только этой session/version, упорядочивает их по `(raw_message_id, raw_item_index)` и воспроизводит в ephemeral `OrderBookState` каждого asset. Каждый token immutable session snapshot обязан иметь committed initial `book`. Его отсутствие, crossed book, несовпадение tick size/best bid/ask/spread или регрессия source timestamp ведут в `Invalidating/Cleaning` с `PersistenceFailure` и кодом `collector.order_book.integrity.issue`; состояния разных sessions не разделяются. Момент завершения durable raw drain сохраняется как `AwaitingNormalizationAt`; `Pending`/`Processing`/missing rows ожидаются максимум до `AwaitingNormalizationAt + 5m`. `Invalid`, `Unsupported`, terminal `Failed`, несовпадение runtime-версии, неверный provenance, integrity issue и timeout ведут в durable invalidation. Deadline повторно проверяется после integrity gate; только успешный gate строго до deadline CAS-выполняет `Stopped/MarketClosed`. Normalizer при этом продолжает работать через собственный hosted service, а producer уже остановлен raw completion. Market channel не даёт пригодного session sequence number, поэтому integrity gate не доказывает отсутствие каждого возможного пропуска внешнего сообщения.
 
 Ожидание хвоста и final checkpoint выполняет `ICollectorSessionProgressCompletion` поверх in-memory telemetry: после завершения `StopAsync` producer больше не увеличивает `received`/`enqueued`, поэтому снятая в начале граница `enqueued` стабильна. Точное равенство counters и авторитетного `count(raw_market_messages)` проверяет application coordinator одним PostgreSQL read; только после него session переходит к ожиданию нормализации.
 
@@ -935,10 +944,12 @@ stateDiagram-v2
 | `collector.runtime.endpoint.invalid` | Endpoint не является absolute `ws`/`wss` URI |
 | `collector.runtime.start.timeout` | Connect/subscription не уложились в timeout |
 | `collector.runtime.start.cancelled` | Startup отменён caller, stop или shutdown |
-| `collector.runtime.start.failed` | Transport или неожиданная startup ошибка |
+| `collector.runtime.start.failed` | Временная transport startup ошибка |
+| `collector.runtime.start.unexpected` | Неожиданная постоянная startup ошибка |
 | `collector.runtime.stop.failed` | Ошибка graceful close/cleanup |
 | `collector.runtime.stop.timeout` | Общий stop deadline исчерпан |
-| `collector.runtime.receive.failed` | Transport или неожиданная receive ошибка |
+| `collector.runtime.receive.failed` | Временная transport receive/heartbeat ошибка |
+| `collector.runtime.receive.unexpected` | Неожиданная постоянная receive/heartbeat ошибка |
 | `collector.runtime.receive.closed` | Remote endpoint закрыл connection |
 | `collector.runtime.receive.message_type.unsupported` | Получен не text message |
 | `collector.runtime.receive.message_too_large` | Logical message превысил byte limit |
@@ -947,6 +958,14 @@ stateDiagram-v2
 | `collector.runtime.session.invalidating` | Start вызван после необратимого fence этой session |
 
 Все перечисленные runtime errors имеют `ErrorType.Failure`.
+
+До readiness повторяются только connect timeout, transport start/receive failure,
+remote close и heartbeat timeout. Protocol/identity violations, oversized или
+binary message, закрытый ingestion и ошибки durable readiness немедленно запускают
+session invalidation. После readiness любая transport discontinuity считается
+неподтверждённым разрывом и также инвалидирует session. Ошибка сохранения самой
+invalidation не маскируется как `Invalidated`: autonomous fallback повторяет запись,
+а при невозможности останавливает host.
 
 ### Exception semantics
 
@@ -1150,6 +1169,7 @@ Singleton runtime/factory не должны напрямую зависеть о
 17. Ошибка одного persistence batch останавливает всю ingestion subsystem.
 18. Миграции не применяются автоматически при запуске приложения.
 19. Согласование при запуске безопасно только при одном экземпляре приложения: идентификатор владельца и аренда сессии отсутствуют.
+20. Market channel не содержит пригодного session sequence number: integrity gate обнаруживает только доказуемые нарушения состояния, а не каждый возможный внешний пропуск.
 
 ## Что делать дальше
 
@@ -1163,4 +1183,5 @@ stop command
   -> session завершается как Failed, successful dataset остаётся нетронутым
 ```
 
-Следующий этап — проектировать reconnect после readiness и multi-instance ownership.
+Следующий этап — проектировать reconnect после readiness с явным восстановлением
+непрерывности и multi-instance ownership.

@@ -1,6 +1,7 @@
 using CSharpFunctionalExtensions;
 using Microsoft.Extensions.Logging;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorOrderBookIntegrity;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
@@ -24,6 +25,7 @@ public sealed class CollectorNormalizationSuitabilityCoordinator(
     ICollectorSessionRepository sessionRepository,
     INormalizationSuitabilityReader suitabilityReader,
     IProjectionVersionProvider projectionVersionProvider,
+    ICollectorOrderBookIntegrityCoordinator orderBookIntegrityCoordinator,
     ICollectorSessionInvalidationCoordinator invalidationCoordinator,
     TimeProvider timeProvider,
     ILogger<CollectorNormalizationSuitabilityCoordinator> logger)
@@ -158,9 +160,31 @@ public sealed class CollectorNormalizationSuitabilityCoordinator(
                     cancellationToken);
             }
 
+            var integrity = await orderBookIntegrityCoordinator.EvaluateAsync(
+                sessionId,
+                snapshotVersion,
+                session.Tokens.Select(token => token.TokenId).ToArray(),
+                cancellationToken);
+            if (integrity.IsFailure)
+            {
+                return await InvalidateAndFailAsync(
+                    sessionId,
+                    integrity.Error,
+                    cancellationToken);
+            }
+
+            var completedAt = timeProvider.GetUtcNow();
+            if (completedAt >= deadline)
+            {
+                return await InvalidateAndFailAsync(
+                    sessionId,
+                    CollectorNormalizationSuitabilityErrors.Timeout(sessionId, deadline),
+                    cancellationToken);
+            }
+
             var completion = await StopAsMarketClosedAsync(
                 session,
-                timeProvider.GetUtcNow(),
+                completedAt,
                 cancellationToken);
             return completion.IsSuccess
                 ? UnitResult.Success<Error>()

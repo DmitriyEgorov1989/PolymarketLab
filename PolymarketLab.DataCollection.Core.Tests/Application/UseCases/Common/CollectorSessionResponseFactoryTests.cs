@@ -468,12 +468,12 @@ public sealed class CollectorSessionResponseFactoryTests
             case CollectorSessionPhase.AwaitingInitialBooks:
                 var initialBooks = CreateSession();
                 initialBooks.BeginPreparation(startedAt).IsSuccess.Should().BeTrue();
-                initialBooks.MarkAwaitingInitialBooks().IsSuccess.Should().BeTrue();
+                initialBooks.MarkNewConnectionEpoch().IsSuccess.Should().BeTrue();
                 return (initialBooks, EventStartsAt);
             case CollectorSessionPhase.AwaitingHeartbeat:
                 var heartbeat = CreateSession();
                 heartbeat.BeginPreparation(startedAt).IsSuccess.Should().BeTrue();
-                heartbeat.MarkAwaitingInitialBooks().IsSuccess.Should().BeTrue();
+                heartbeat.MarkNewConnectionEpoch().IsSuccess.Should().BeTrue();
                 heartbeat.MarkAwaitingHeartbeat().IsSuccess.Should().BeTrue();
                 return (heartbeat, EventStartsAt);
             case CollectorSessionPhase.ReadyBeforeWindow:

@@ -181,6 +181,7 @@ public static class DataCollectionInfrastructureDependencyInjection
         services.AddScoped<INormalizedMessageWriter, VersionedNormalizedWriter>();
         services.AddScoped<INormalizationBacklogReader, NormalizationBacklogReader>();
         services.AddScoped<INormalizationSuitabilityReader, NormalizationSuitabilityReader>();
+        services.AddScoped<IOrderBookIntegrityReader, OrderBookIntegrityReader>();
         services.AddScoped<NormalizationProcessor>(serviceProvider =>
         {
             var options = serviceProvider
@@ -248,8 +249,8 @@ public static class DataCollectionInfrastructureDependencyInjection
         services.AddHostedService<CollectorSessionStartupReconciliationService>();
         services.AddHostedService(serviceProvider =>
             serviceProvider.GetRequiredService<RawMarketMessagePersistenceWorker>());
-        services.AddHostedService<CollectorRuntimeShutdownService>();
         services.AddHostedService<CollectorSchedulerBackgroundService>();
+        services.AddHostedService<CollectorRuntimeShutdownService>();
         services.AddHostedService<ResolutionConsensusBackgroundService>();
         services.AddHostedService<NormalizationBackgroundService>();
         services.AddHostedService<NormalizationMetricsBackgroundService>();
