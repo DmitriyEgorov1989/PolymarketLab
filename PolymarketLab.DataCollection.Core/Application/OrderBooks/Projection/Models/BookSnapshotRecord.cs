@@ -17,6 +17,8 @@ public sealed record BookSnapshotRecord
     /// <param name="tickSize">Шаг цены или <see langword="null" />, если поле отсутствовало.</param>
     /// <param name="bids">Уровни стороны покупки в исходном порядке.</param>
     /// <param name="asks">Уровни стороны продажи в исходном порядке.</param>
+    /// <param name="connectionEpoch">Номер WebSocket connection epoch или <see langword="null" />, если provenance недоступен.</param>
+    /// <param name="receivedAt">Локальное UTC-время получения исходного сообщения или <see langword="null" />, если provenance недоступен.</param>
     public BookSnapshotRecord(
         long rawMessageId,
         int rawItemIndex,
@@ -27,7 +29,9 @@ public sealed record BookSnapshotRecord
         string hash,
         decimal? tickSize,
         IReadOnlyCollection<NormalizedBookLevelRecord> bids,
-        IReadOnlyCollection<NormalizedBookLevelRecord> asks)
+        IReadOnlyCollection<NormalizedBookLevelRecord> asks,
+        long? connectionEpoch = null,
+        DateTimeOffset? receivedAt = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(assetId);
         ArgumentException.ThrowIfNullOrWhiteSpace(marketConditionId);
@@ -50,6 +54,8 @@ public sealed record BookSnapshotRecord
         TickSize = tickSize;
         Bids = bids.ToArray();
         Asks = asks.ToArray();
+        ConnectionEpoch = connectionEpoch;
+        ReceivedAt = receivedAt;
     }
 
     /// <summary>Позиция события в нормализованном архиве.</summary>
@@ -78,4 +84,10 @@ public sealed record BookSnapshotRecord
 
     /// <summary>Уровни стороны продажи в исходном порядке.</summary>
     public IReadOnlyList<NormalizedBookLevelRecord> Asks { get; }
+
+    /// <summary>Номер WebSocket connection epoch или <see langword="null" />, если provenance недоступен.</summary>
+    public long? ConnectionEpoch { get; }
+
+    /// <summary>Локальное UTC-время получения исходного сообщения или <see langword="null" />, если provenance недоступен.</summary>
+    public DateTimeOffset? ReceivedAt { get; }
 }

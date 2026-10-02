@@ -57,6 +57,8 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
         fixture.Integrity.Calls.Should().ContainSingle(call =>
             call.SessionId == fixture.Session.Id
             && call.ProjectionVersion == 3
+            && call.EventStartsAt == fixture.Session.EventStartsAt
+            && call.EventEndsAt == fixture.Session.EventEndsAt
             && call.TokenIds.SequenceEqual(
                 fixture.Session.Tokens.Select(token => token.TokenId)));
         fixture.Sessions.ExpectedStatuses.Should().Equal(
@@ -507,7 +509,9 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
         public List<(
             CollectorSessionId SessionId,
             int ProjectionVersion,
-            IReadOnlyCollection<TokenId> TokenIds)> Calls { get; } = [];
+            IReadOnlyCollection<TokenId> TokenIds,
+            DateTimeOffset? EventStartsAt,
+            DateTimeOffset? EventEndsAt)> Calls { get; } = [];
         public UnitResult<Error> Result { get; set; } = UnitResult.Success<Error>();
         public Action? OnEvaluate { get; set; }
 
@@ -515,9 +519,11 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
             CollectorSessionId sessionId,
             int projectionVersion,
             IReadOnlyCollection<TokenId> tokenIds,
+            DateTimeOffset? eventStartsAt,
+            DateTimeOffset? eventEndsAt,
             CancellationToken cancellationToken)
         {
-            Calls.Add((sessionId, projectionVersion, tokenIds));
+            Calls.Add((sessionId, projectionVersion, tokenIds, eventStartsAt, eventEndsAt));
             calls.Add("integrity:evaluate");
             OnEvaluate?.Invoke();
             return Task.FromResult(Result);

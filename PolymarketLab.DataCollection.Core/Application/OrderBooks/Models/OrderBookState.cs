@@ -19,6 +19,10 @@ public sealed class OrderBookState
     private readonly object _syncRoot = new();
     private readonly TimeProvider _timeProvider;
     private long? _lastKnownSourceTimestamp;
+    private long? _lastBookSourceTimestamp;
+    private long? _lastPriceChangeSourceTimestamp;
+    private long? _lastTickSizeChangeSourceTimestamp;
+    private long? _lastBestBidAskSourceTimestamp;
     private long _version;
     private long _resynchronizationSequence;
     private long? _activeResynchronizationId;
@@ -104,7 +108,10 @@ public sealed class OrderBookState
 
         var bids = BuildLevels(book.Bids, nameof(book));
         var asks = BuildLevels(book.Asks, nameof(book));
-        if (!AcceptSourceTimestamp(book.SourceTimestamp, book.NormalizedEventId))
+        if (!AcceptSourceTimestamp(
+                book.SourceTimestamp,
+                _lastBookSourceTimestamp,
+                book.NormalizedEventId))
             return;
 
         ReplaceLevels(bids, asks);
@@ -113,7 +120,7 @@ public sealed class OrderBookState
         Hash = book.Hash;
         TickSize = book.TickSize;
         _hasFullSnapshot = true;
-        CommitEvent(book.Position, book.SourceTimestamp);
+        CommitEvent(book.Position, book.SourceTimestamp, ref _lastBookSourceTimestamp);
         RecalculateDerivedState(
             preserveIntegrityMismatch: false,
             preserveResynchronizing: false);
@@ -184,7 +191,10 @@ public sealed class OrderBookState
                 "Price change group contains duplicate item indexes.",
                 nameof(changes));
         }
-        if (!AcceptSourceTimestamp(first.SourceTimestamp, first.NormalizedEventId))
+        if (!AcceptSourceTimestamp(
+                first.SourceTimestamp,
+                _lastPriceChangeSourceTimestamp,
+                first.NormalizedEventId))
             return;
 
         var bids = new SortedDictionary<decimal, OrderBookLevel>(_bids);
@@ -208,7 +218,7 @@ public sealed class OrderBookState
 
         ReplaceLevels(bids, asks);
         Hash = orderedChanges.LastOrDefault(change => change.Hash is not null)?.Hash ?? Hash;
-        CommitEvent(first.Position, first.SourceTimestamp);
+        CommitEvent(first.Position, first.SourceTimestamp, ref _lastPriceChangeSourceTimestamp);
         RecalculateDerivedState();
     }
 
@@ -235,10 +245,13 @@ public sealed class OrderBookState
                 nameof(change));
         }
         EnsureIncreasingPosition(change.Position, nameof(change), "Tick size change");
-        if (!AcceptSourceTimestamp(change.SourceTimestamp, change.NormalizedEventId))
+        if (!AcceptSourceTimestamp(
+                change.SourceTimestamp,
+                _lastTickSizeChangeSourceTimestamp,
+                change.NormalizedEventId))
             return;
 
-        CommitEvent(change.Position, change.SourceTimestamp);
+        CommitEvent(change.Position, change.SourceTimestamp, ref _lastTickSizeChangeSourceTimestamp);
 
         if (TickSize.Value != change.OldTickSize)
         {
@@ -276,10 +289,13 @@ public sealed class OrderBookState
                 nameof(quote));
         }
         EnsureIncreasingPosition(quote.Position, nameof(quote), "Best bid and ask");
-        if (!AcceptSourceTimestamp(quote.SourceTimestamp, quote.NormalizedEventId))
+        if (!AcceptSourceTimestamp(
+                quote.SourceTimestamp,
+                _lastBestBidAskSourceTimestamp,
+                quote.NormalizedEventId))
             return;
 
-        CommitEvent(quote.Position, quote.SourceTimestamp);
+        CommitEvent(quote.Position, quote.SourceTimestamp, ref _lastBestBidAskSourceTimestamp);
 
         var issue = FindBestBidAskMismatch(quote);
         if (issue is null)
@@ -416,6 +432,7 @@ public sealed class OrderBookState
             TickSize = snapshot.TickSize;
             SourceTimestamp = snapshot.SourceTimestamp;
             _lastKnownSourceTimestamp = snapshot.SourceTimestamp;
+            _lastBookSourceTimestamp = snapshot.SourceTimestamp;
             _hasFullSnapshot = true;
             RecalculateDerivedState(
                 preserveIntegrityMismatch: false,
@@ -532,15 +549,18 @@ public sealed class OrderBookState
         }
     }
 
-    private bool AcceptSourceTimestamp(long? sourceTimestamp, long normalizedEventId)
+    private bool AcceptSourceTimestamp(
+        long? sourceTimestamp,
+        long? eventTypeTimestampWatermark,
+        long normalizedEventId)
     {
         if (sourceTimestamp.HasValue
-            && _lastKnownSourceTimestamp.HasValue
-            && sourceTimestamp.Value < _lastKnownSourceTimestamp.Value)
+            && eventTypeTimestampWatermark.HasValue
+            && sourceTimestamp.Value < eventTypeTimestampWatermark.Value)
         {
             IntegrityIssue = CreateIssue(
                 OrderBookIntegrityIssueType.EventOrderViolation,
-                $"Event source timestamp '{sourceTimestamp.Value}' is less than the last known timestamp '{_lastKnownSourceTimestamp.Value}'.",
+                $"Event source timestamp '{sourceTimestamp.Value}' is less than the last known timestamp '{eventTypeTimestampWatermark.Value}' for its event type.",
                 normalizedEventId);
             SetSuspectOrResynchronizingStatus();
             ++_version;
@@ -550,7 +570,10 @@ public sealed class OrderBookState
         return true;
     }
 
-    private void CommitEvent(OrderBookEventPosition position, long? sourceTimestamp)
+    private void CommitEvent(
+        OrderBookEventPosition position,
+        long? sourceTimestamp,
+        ref long? eventTypeTimestampWatermark)
     {
         EventPosition = position;
         SourceTimestamp = sourceTimestamp;
@@ -560,6 +583,12 @@ public sealed class OrderBookState
                 || sourceTimestamp.Value > _lastKnownSourceTimestamp.Value))
         {
             _lastKnownSourceTimestamp = sourceTimestamp.Value;
+        }
+        if (sourceTimestamp.HasValue
+            && (!eventTypeTimestampWatermark.HasValue
+                || sourceTimestamp.Value > eventTypeTimestampWatermark.Value))
+        {
+            eventTypeTimestampWatermark = sourceTimestamp.Value;
         }
         ++_version;
     }

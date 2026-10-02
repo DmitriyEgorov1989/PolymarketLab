@@ -11,11 +11,15 @@ public interface ICollectorOrderBookIntegrityCoordinator
     /// <param name="sessionId">Идентификатор проверяемой collector session.</param>
     /// <param name="projectionVersion">Положительная snapshot-версия нормализации.</param>
     /// <param name="tokenIds">Непустой immutable набор token IDs session snapshot.</param>
+    /// <param name="eventStartsAt">Начало предметного окна или <see langword="null" /> только для legacy session.</param>
+    /// <param name="eventEndsAt">Конец предметного окна или <see langword="null" /> только для legacy session.</param>
     /// <param name="cancellationToken">Токен отмены операции.</param>
     /// <returns>Успех при отсутствии проблем или безопасная ошибка целостности.</returns>
     Task<UnitResult<Error>> EvaluateAsync(
         CollectorSessionId sessionId,
         int projectionVersion,
         IReadOnlyCollection<TokenId> tokenIds,
+        DateTimeOffset? eventStartsAt,
+        DateTimeOffset? eventEndsAt,
         CancellationToken cancellationToken);
 }

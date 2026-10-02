@@ -18,6 +18,8 @@ public sealed record PriceChangeRecord
     /// <param name="bestBid">Лучшая цена покупки или <see langword="null" />.</param>
     /// <param name="bestAsk">Лучшая цена продажи или <see langword="null" />.</param>
     /// <param name="itemIndex">Позиция изменения внутри исходного события.</param>
+    /// <param name="connectionEpoch">Номер WebSocket connection epoch или <see langword="null" />, если provenance недоступен.</param>
+    /// <param name="receivedAt">Локальное UTC-время получения исходного сообщения или <see langword="null" />, если provenance недоступен.</param>
     public PriceChangeRecord(
         long rawMessageId,
         int rawItemIndex,
@@ -30,7 +32,9 @@ public sealed record PriceChangeRecord
         string? hash,
         decimal? bestBid,
         decimal? bestAsk,
-        int itemIndex)
+        int itemIndex,
+        long? connectionEpoch = null,
+        DateTimeOffset? receivedAt = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(assetId);
 
@@ -57,6 +61,8 @@ public sealed record PriceChangeRecord
         BestBid = bestBid;
         BestAsk = bestAsk;
         ItemIndex = itemIndex;
+        ConnectionEpoch = connectionEpoch;
+        ReceivedAt = receivedAt;
     }
 
     /// <summary>Позиция события в нормализованном архиве.</summary>
@@ -91,4 +97,10 @@ public sealed record PriceChangeRecord
 
     /// <summary>Позиция изменения внутри массива <c>price_changes</c>.</summary>
     public int ItemIndex { get; }
+
+    /// <summary>Номер WebSocket connection epoch или <see langword="null" />, если provenance недоступен.</summary>
+    public long? ConnectionEpoch { get; }
+
+    /// <summary>Локальное UTC-время получения исходного сообщения или <see langword="null" />, если provenance недоступен.</summary>
+    public DateTimeOffset? ReceivedAt { get; }
 }

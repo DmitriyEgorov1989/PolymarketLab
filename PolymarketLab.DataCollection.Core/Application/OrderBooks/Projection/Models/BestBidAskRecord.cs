@@ -12,6 +12,8 @@ public sealed record BestBidAskRecord
     /// <param name="bestBid">Лучшая цена покупки или <see langword="null" /> для пустой стороны.</param>
     /// <param name="bestAsk">Лучшая цена продажи или <see langword="null" /> для пустой стороны.</param>
     /// <param name="spread">Спред или <see langword="null" />, если одна из сторон пуста.</param>
+    /// <param name="connectionEpoch">Номер WebSocket connection epoch или <see langword="null" />, если provenance недоступен.</param>
+    /// <param name="receivedAt">Локальное UTC-время получения исходного сообщения или <see langword="null" />, если provenance недоступен.</param>
     public BestBidAskRecord(
         long rawMessageId,
         int rawItemIndex,
@@ -20,7 +22,9 @@ public sealed record BestBidAskRecord
         long? sourceTimestamp,
         decimal? bestBid,
         decimal? bestAsk,
-        decimal? spread)
+        decimal? spread,
+        long? connectionEpoch = null,
+        DateTimeOffset? receivedAt = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(assetId);
 
@@ -37,6 +41,8 @@ public sealed record BestBidAskRecord
         BestBid = bestBid;
         BestAsk = bestAsk;
         Spread = spread;
+        ConnectionEpoch = connectionEpoch;
+        ReceivedAt = receivedAt;
     }
 
     /// <summary>Позиция события в нормализованном архиве.</summary>
@@ -59,4 +65,10 @@ public sealed record BestBidAskRecord
 
     /// <summary>Спред из нормализованной проекции или <see langword="null" />.</summary>
     public decimal? Spread { get; }
+
+    /// <summary>Номер WebSocket connection epoch или <see langword="null" />, если provenance недоступен.</summary>
+    public long? ConnectionEpoch { get; }
+
+    /// <summary>Локальное UTC-время получения исходного сообщения или <see langword="null" />, если provenance недоступен.</summary>
+    public DateTimeOffset? ReceivedAt { get; }
 }

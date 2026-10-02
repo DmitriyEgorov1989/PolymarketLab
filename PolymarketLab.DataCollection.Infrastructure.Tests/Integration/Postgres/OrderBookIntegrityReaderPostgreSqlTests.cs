@@ -22,15 +22,17 @@ public sealed class OrderBookIntegrityReaderPostgreSqlTests(PostgreSqlFixture fi
         await using var database = await CreateMigratedDatabaseAsync();
         var sessionId = await InsertSessionAsync(database.ConnectionString);
         var otherSessionId = await InsertSessionAsync(database.ConnectionString);
-        var raw1 = await InsertRawAsync(database.ConnectionString, sessionId, ReceivedAt);
+        var raw1 = await InsertRawAsync(database.ConnectionString, sessionId, ReceivedAt, 1);
         var raw2 = await InsertRawAsync(
             database.ConnectionString,
             sessionId,
-            ReceivedAt.AddSeconds(1));
+            ReceivedAt.AddSeconds(1),
+            2);
         var otherRaw = await InsertRawAsync(
             database.ConnectionString,
             otherSessionId,
-            ReceivedAt);
+            ReceivedAt,
+            1);
 
         var book = await InsertEventAsync(
             database.ConnectionString, raw1, 2, 3, "book", sessionId,
@@ -97,6 +99,8 @@ public sealed class OrderBookIntegrityReaderPostgreSqlTests(PostgreSqlFixture fi
         var snapshot = events[0].Should().BeOfType<NormalizedOrderBookEvent.BookSnapshot>()
             .Subject.Record;
         snapshot.Position.Should().Be(new OrderBookEventPosition(raw1, 2, book));
+        snapshot.ConnectionEpoch.Should().Be(1);
+        snapshot.ReceivedAt.Should().Be(ReceivedAt);
         snapshot.Bids.Should().ContainSingle(level =>
             level.Side == OrderBookSide.Bid && level.Price == 0.40m && level.Size == 10m);
         snapshot.Asks.Should().ContainSingle(level =>
@@ -107,15 +111,21 @@ public sealed class OrderBookIntegrityReaderPostgreSqlTests(PostgreSqlFixture fi
         changes.Select(change => change.ItemIndex).Should().Equal(0, 1);
         changes.Should().OnlyContain(change =>
             change.Position == new OrderBookEventPosition(raw1, 3, priceChange));
+        changes.Should().OnlyContain(change =>
+            change.ConnectionEpoch == 1 && change.ReceivedAt == ReceivedAt);
 
         var tickRecord = events[2]
             .Should().BeOfType<NormalizedOrderBookEvent.TickSizeChange>().Subject.Record;
         tickRecord.Position.Should().Be(new OrderBookEventPosition(raw2, 0, tick));
+        tickRecord.ConnectionEpoch.Should().Be(2);
+        tickRecord.ReceivedAt.Should().Be(ReceivedAt.AddSeconds(1));
         tickRecord.NewTickSize.Should().Be(0.001m);
 
         var quoteRecord = events[3]
             .Should().BeOfType<NormalizedOrderBookEvent.BestBidAsk>().Subject.Record;
         quoteRecord.Position.Should().Be(new OrderBookEventPosition(raw2, 1, quote));
+        quoteRecord.ConnectionEpoch.Should().Be(2);
+        quoteRecord.ReceivedAt.Should().Be(ReceivedAt.AddSeconds(1));
         quoteRecord.Spread.Should().Be(0.21m);
     }
 
@@ -147,11 +157,13 @@ public sealed class OrderBookIntegrityReaderPostgreSqlTests(PostgreSqlFixture fi
     private static Task<long> InsertRawAsync(
         string connectionString,
         Guid sessionId,
-        DateTimeOffset receivedAt) =>
+        DateTimeOffset receivedAt,
+        long connectionEpoch) =>
         ExecuteScalarAsync<long>(
             connectionString,
-            "INSERT INTO data_collection.raw_market_messages (session_id, connection_epoch, received_at, payload) VALUES (@session, 1, @received, @payload) RETURNING id",
+            "INSERT INTO data_collection.raw_market_messages (session_id, connection_epoch, received_at, payload) VALUES (@session, @epoch, @received, @payload) RETURNING id",
             new NpgsqlParameter("session", sessionId),
+            new NpgsqlParameter("epoch", connectionEpoch),
             new NpgsqlParameter("received", receivedAt),
             new NpgsqlParameter("payload", new byte[] { 1 }));
 

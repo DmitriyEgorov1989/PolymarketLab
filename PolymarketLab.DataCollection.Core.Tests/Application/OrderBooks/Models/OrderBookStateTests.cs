@@ -655,6 +655,35 @@ public sealed class OrderBookStateTests
         state.Status.Should().Be(OrderBookSyncStatus.Synchronized);
     }
 
+    [Fact]
+    public void Apply_LowerSourceTimestampFromDifferentEventType_ShouldApplyInArchiveOrder()
+    {
+        var state = CreateSynchronizedState();
+        state.Apply(BestBidAsk(
+            2,
+            0.4m,
+            0.6m,
+            0.2m,
+            sourceTimestamp: 1790939661976));
+
+        state.Apply([
+            Change(
+                3,
+                NormalizationModels.TradeSide.Buy,
+                0.5m,
+                15m,
+                itemIndex: 0,
+                sourceTimestamp: 1790939661975)
+        ]);
+
+        state.BestBid.Should().Be(0.5m);
+        state.SourceTimestamp.Should().Be(1790939661975);
+        state.NormalizedEventId.Should().Be(3);
+        state.EventPosition.Should().Be(new ProjectionModels.OrderBookEventPosition(3, 0, 3));
+        state.Status.Should().Be(OrderBookSyncStatus.Synchronized);
+        state.IntegrityIssue.Should().BeNull();
+    }
+
     [Theory]
     [InlineData(PastEventType.Book)]
     [InlineData(PastEventType.PriceChange)]
@@ -664,17 +693,46 @@ public sealed class OrderBookStateTests
         PastEventType eventType)
     {
         var state = CreateSynchronizedState(timeProvider: new FixedTimeProvider(DetectedAt));
+        if (eventType != PastEventType.Book)
+        {
+            switch (eventType)
+            {
+                case PastEventType.PriceChange:
+                    state.Apply([
+                        Change(
+                            2,
+                            NormalizationModels.TradeSide.Buy,
+                            0.4m,
+                            10m,
+                            itemIndex: 0,
+                            sourceTimestamp: 1000)
+                    ]);
+                    break;
+                case PastEventType.TickSizeChange:
+                    state.Apply(TickSizeChange(2, 0.01m, 0.01m, sourceTimestamp: 1000));
+                    break;
+                case PastEventType.BestBidAsk:
+                    state.Apply(BestBidAsk(2, 0.4m, 0.6m, 0.2m, sourceTimestamp: 1000));
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(eventType));
+            }
+        }
+
+        var rejectedEventId = eventType == PastEventType.Book ? 2 : 3;
+        var previousPosition = state.EventPosition;
+        var previousNormalizedEventId = state.NormalizedEventId;
         Action action = eventType switch
         {
             PastEventType.Book => () => state.Apply(CreateSnapshot(
-                2,
+                rejectedEventId,
                 900,
                 0.001m,
                 [Level(NormalizationModels.OrderBookSide.Bid, 0, 0.5m, 30m)],
                 [])),
             PastEventType.PriceChange => () => state.Apply([
                 Change(
-                    2,
+                    rejectedEventId,
                     NormalizationModels.TradeSide.Buy,
                     0.5m,
                     30m,
@@ -682,9 +740,9 @@ public sealed class OrderBookStateTests
                     sourceTimestamp: 900)
             ]),
             PastEventType.TickSizeChange => () => state.Apply(
-                TickSizeChange(2, 0.01m, 0.001m, sourceTimestamp: 900)),
+                TickSizeChange(rejectedEventId, 0.01m, 0.001m, sourceTimestamp: 900)),
             PastEventType.BestBidAsk => () => state.Apply(
-                BestBidAsk(2, 0.5m, 0.6m, 0.1m, sourceTimestamp: 900)),
+                BestBidAsk(rejectedEventId, 0.5m, 0.6m, 0.1m, sourceTimestamp: 900)),
             _ => throw new ArgumentOutOfRangeException(nameof(eventType))
         };
 
@@ -694,7 +752,7 @@ public sealed class OrderBookStateTests
         state.IntegrityIssue.Should().NotBeNull();
         state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.EventOrderViolation);
         state.IntegrityIssue.Message.Should().NotBeNullOrWhiteSpace();
-        state.IntegrityIssue.NormalizedEventId.Should().Be(2);
+        state.IntegrityIssue.NormalizedEventId.Should().Be(rejectedEventId);
         state.IntegrityIssue.DetectedAt.Should().Be(DetectedAt);
         state.Bids.Should().ContainSingle()
             .Which.Value.Should().Be(new OrderBookLevel(0.4m, 10m));
@@ -702,34 +760,27 @@ public sealed class OrderBookStateTests
             .Which.Value.Should().Be(new OrderBookLevel(0.6m, 20m));
         state.TickSize.Should().Be(0.01m);
         state.SourceTimestamp.Should().Be(1000);
-        state.NormalizedEventId.Should().Be(1);
-        state.EventPosition.Should().Be(new ProjectionModels.OrderBookEventPosition(1, 0, 1));
+        state.NormalizedEventId.Should().Be(previousNormalizedEventId);
+        state.EventPosition.Should().Be(previousPosition!);
     }
 
     [Fact]
     public void Apply_NullTimestamp_ShouldNotResetTimestampWatermark()
     {
         var state = CreateSynchronizedState(timeProvider: new FixedTimeProvider(DetectedAt));
-        state.Apply([
-            Change(
-                2,
-                NormalizationModels.TradeSide.Buy,
-                0.5m,
-                15m,
-                itemIndex: 0,
-                sourceTimestamp: null)
-        ]);
+        state.Apply(TickSizeChange(2, 0.01m, 0.001m, sourceTimestamp: 1000));
+        state.Apply(TickSizeChange(3, 0.001m, 0.005m, sourceTimestamp: null));
 
-        state.Apply(TickSizeChange(3, 0.01m, 0.001m, sourceTimestamp: 900));
+        state.Apply(TickSizeChange(4, 0.005m, 0.01m, sourceTimestamp: 900));
 
-        state.BestBid.Should().Be(0.5m);
-        state.TickSize.Should().Be(0.01m);
+        state.BestBid.Should().Be(0.4m);
+        state.TickSize.Should().Be(0.005m);
         state.SourceTimestamp.Should().BeNull();
-        state.NormalizedEventId.Should().Be(2);
-        state.EventPosition.Should().Be(new ProjectionModels.OrderBookEventPosition(2, 0, 2));
+        state.NormalizedEventId.Should().Be(3);
+        state.EventPosition.Should().Be(new ProjectionModels.OrderBookEventPosition(3, 0, 3));
         state.Status.Should().Be(OrderBookSyncStatus.Suspect);
         state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.EventOrderViolation);
-        state.IntegrityIssue.NormalizedEventId.Should().Be(3);
+        state.IntegrityIssue.NormalizedEventId.Should().Be(4);
     }
 
     [Fact]

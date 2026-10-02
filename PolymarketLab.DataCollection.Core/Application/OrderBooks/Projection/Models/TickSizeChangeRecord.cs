@@ -11,6 +11,8 @@ public sealed record TickSizeChangeRecord
     /// <param name="sourceTimestamp">Epoch milliseconds из исходного события или <see langword="null" />.</param>
     /// <param name="oldTickSize">Предыдущий шаг цены.</param>
     /// <param name="newTickSize">Новый положительный шаг цены.</param>
+    /// <param name="connectionEpoch">Номер WebSocket connection epoch или <see langword="null" />, если provenance недоступен.</param>
+    /// <param name="receivedAt">Локальное UTC-время получения исходного сообщения или <see langword="null" />, если provenance недоступен.</param>
     public TickSizeChangeRecord(
         long rawMessageId,
         int rawItemIndex,
@@ -18,7 +20,9 @@ public sealed record TickSizeChangeRecord
         string assetId,
         long? sourceTimestamp,
         decimal oldTickSize,
-        decimal newTickSize)
+        decimal newTickSize,
+        long? connectionEpoch = null,
+        DateTimeOffset? receivedAt = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(assetId);
 
@@ -30,6 +34,8 @@ public sealed record TickSizeChangeRecord
         SourceTimestamp = sourceTimestamp;
         OldTickSize = oldTickSize;
         NewTickSize = newTickSize;
+        ConnectionEpoch = connectionEpoch;
+        ReceivedAt = receivedAt;
     }
 
     /// <summary>Позиция события в нормализованном архиве.</summary>
@@ -49,4 +55,10 @@ public sealed record TickSizeChangeRecord
 
     /// <summary>Новый положительный шаг цены.</summary>
     public decimal NewTickSize { get; }
+
+    /// <summary>Номер WebSocket connection epoch или <see langword="null" />, если provenance недоступен.</summary>
+    public long? ConnectionEpoch { get; }
+
+    /// <summary>Локальное UTC-время получения исходного сообщения или <see langword="null" />, если provenance недоступен.</summary>
+    public DateTimeOffset? ReceivedAt { get; }
 }

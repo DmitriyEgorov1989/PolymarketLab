@@ -132,9 +132,26 @@ public sealed partial class OrderBookProjectorTests
     public void Apply_OlderSourceTimestamp_ShouldIgnoreAndReturnIntegrityIssue()
     {
         var state = CreateSynchronizedState(sourceTimestamp: 2000);
+        state.Apply([
+            CreatePriceChange(
+                "asset",
+                NormalizationModels.TradeSide.Buy,
+                0.4m,
+                10m,
+                0,
+                sourceTimestamp: 2000,
+                normalizedEventId: 2)
+        ]);
         var initialPosition = state.EventPosition;
         var @event = new ProjectionModels.NormalizedOrderBookEvent.PriceChanges(
-            [CreatePriceChange("asset", NormalizationModels.TradeSide.Buy, 0.4m, 25m, 0, 1000)]);
+            [CreatePriceChange(
+                "asset",
+                NormalizationModels.TradeSide.Buy,
+                0.4m,
+                25m,
+                0,
+                sourceTimestamp: 1000,
+                normalizedEventId: 3)]);
 
         var result = _projector.Apply(state, @event);
 

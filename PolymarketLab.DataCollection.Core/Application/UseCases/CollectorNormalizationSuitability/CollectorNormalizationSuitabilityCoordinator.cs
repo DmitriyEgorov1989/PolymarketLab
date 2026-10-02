@@ -164,6 +164,8 @@ public sealed class CollectorNormalizationSuitabilityCoordinator(
                 sessionId,
                 snapshotVersion,
                 session.Tokens.Select(token => token.TokenId).ToArray(),
+                session.EventStartsAt,
+                session.EventEndsAt,
                 cancellationToken);
             if (integrity.IsFailure)
             {

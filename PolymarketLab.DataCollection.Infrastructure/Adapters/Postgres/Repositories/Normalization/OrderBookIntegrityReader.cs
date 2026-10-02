@@ -44,7 +44,9 @@ public sealed class OrderBookIntegrityReader(DataCollectionDbContext dbContext)
                     normalized.EventType,
                     normalized.SourceTimestamp,
                     normalized.MarketConditionId,
-                    normalized.AssetId))
+                    normalized.AssetId,
+                    raw.ConnectionEpoch,
+                    raw.ReceivedAt))
             .ToListAsync(cancellationToken);
 
         if (headers.Count == 0)
@@ -115,7 +117,9 @@ public sealed class OrderBookIntegrityReader(DataCollectionDbContext dbContext)
             snapshot.Hash,
             snapshot.TickSize,
             records.Where(level => level.Side == OrderBookSide.Bid).ToArray(),
-            records.Where(level => level.Side == OrderBookSide.Ask).ToArray()));
+            records.Where(level => level.Side == OrderBookSide.Ask).ToArray(),
+            header.ConnectionEpoch,
+            header.ReceivedAt));
     }
 
     private static NormalizedOrderBookEvent MapPriceChanges(
@@ -134,7 +138,9 @@ public sealed class OrderBookIntegrityReader(DataCollectionDbContext dbContext)
                 change.Hash,
                 change.BestBid,
                 change.BestAsk,
-                change.ItemIndex)).ToArray());
+                change.ItemIndex,
+                header.ConnectionEpoch,
+                header.ReceivedAt)).ToArray());
 
     private static NormalizedOrderBookEvent MapTickSizeChange(
         EventHeader header,
@@ -146,7 +152,9 @@ public sealed class OrderBookIntegrityReader(DataCollectionDbContext dbContext)
             Require(header.AssetId, "asset_id"),
             header.SourceTimestamp,
             change.OldTickSize,
-            change.NewTickSize));
+            change.NewTickSize,
+            header.ConnectionEpoch,
+            header.ReceivedAt));
 
     private static NormalizedOrderBookEvent MapBestBidAsk(
         EventHeader header,
@@ -159,7 +167,9 @@ public sealed class OrderBookIntegrityReader(DataCollectionDbContext dbContext)
             header.SourceTimestamp,
             quote.BestBid,
             quote.BestAsk,
-            quote.Spread));
+            quote.Spread,
+            header.ConnectionEpoch,
+            header.ReceivedAt));
 
     private static string Require(string? value, string field) =>
         !string.IsNullOrWhiteSpace(value)
@@ -174,5 +184,7 @@ public sealed class OrderBookIntegrityReader(DataCollectionDbContext dbContext)
         string EventType,
         long? SourceTimestamp,
         string? MarketConditionId,
-        string? AssetId);
+        string? AssetId,
+        long ConnectionEpoch,
+        DateTimeOffset ReceivedAt);
 }
