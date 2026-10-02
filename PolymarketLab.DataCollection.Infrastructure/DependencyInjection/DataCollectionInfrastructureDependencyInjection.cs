@@ -122,8 +122,14 @@ public static class DataCollectionInfrastructureDependencyInjection
                 options => options.ProjectionVersion > 0,
                 "Normalizer projection version must be positive.")
             .Validate(
-                options => options.BatchSize > 0,
-                "Normalizer batch size must be positive.")
+                options => options.BatchSize > 0
+                           && options.BatchSize <= NormalizationProcessor.MaximumClaimBatchSize,
+                "Normalizer batch size must be positive and not exceed the supported maximum.")
+            .Validate(
+                options => options.WriteBatchSize > 0
+                           && options.WriteBatchSize <= options.BatchSize
+                           && options.WriteBatchSize <= INormalizedMessageWriter.MaximumBatchSize,
+                "Normalizer write batch size must be positive and not exceed batch size or the supported maximum.")
             .Validate(
                 options => options.IdleDelay >= TimeSpan.Zero,
                 "Normalizer idle delay cannot be negative.")
@@ -194,6 +200,7 @@ public static class DataCollectionInfrastructureDependencyInjection
                 serviceProvider.GetRequiredService<INormalizedMessageWriter>(),
                 options.ProjectionVersion,
                 options.BatchSize,
+                options.WriteBatchSize,
                 options.ClaimTimeout);
         });
         services.AddScoped<INormalizationProcessor>(serviceProvider =>

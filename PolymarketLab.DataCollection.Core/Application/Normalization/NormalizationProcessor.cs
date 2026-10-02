@@ -2,13 +2,18 @@ using PolymarketLab.DataCollection.Core.Application.Normalization.Models;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
+using System.Diagnostics;
 
 namespace PolymarketLab.DataCollection.Core.Application.Normalization;
 
 /// <summary>Последовательно нормализует один захваченный пакет сообщений.</summary>
 public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNormalizationBatchProcessor
 {
+    /// <summary>Максимальное поддерживаемое количество сообщений в одном захваченном пакете.</summary>
+    public const int MaximumClaimBatchSize = 1_000;
+
     private const int MaximumLoggedEventTypeLength = 128;
+    private const int MaximumWriteBatchRowCount = 10_000;
     private static readonly NormalizationIssue ProcessingFailure = new(
         "normalization.processing.failed",
         "Normalization failed because of an unexpected technical error.");
@@ -19,9 +24,10 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
     private readonly INormalizedMessageWriter writer;
     private readonly int projectionVersion;
     private readonly int batchSize;
+    private readonly int writeBatchSize;
     private readonly TimeSpan claimTimeout;
 
-    /// <summary>Создаёт ручной пакетный обработчик с явными параметрами захвата.</summary>
+    /// <summary>Создаёт ручной обработчик с отдельными размерами захвата и записи.</summary>
     public NormalizationProcessor(
         IRawMessageNormalizationClaimRepository claimRepository,
         IRawMessageDecoder decoder,
@@ -29,6 +35,7 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
         INormalizedMessageWriter writer,
         int projectionVersion,
         int batchSize,
+        int writeBatchSize,
         TimeSpan claimTimeout)
     {
         this.claimRepository = claimRepository
@@ -38,11 +45,18 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
         this.writer = writer ?? throw new ArgumentNullException(nameof(writer));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(projectionVersion);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
+        if (batchSize > MaximumClaimBatchSize)
+            throw new ArgumentOutOfRangeException(nameof(batchSize));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(writeBatchSize);
+        if (writeBatchSize > batchSize
+            || writeBatchSize > INormalizedMessageWriter.MaximumBatchSize)
+            throw new ArgumentOutOfRangeException(nameof(writeBatchSize));
         if (claimTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(claimTimeout));
 
         this.projectionVersion = projectionVersion;
         this.batchSize = batchSize;
+        this.writeBatchSize = writeBatchSize;
         this.claimTimeout = claimTimeout;
     }
 
@@ -50,52 +64,90 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
     public async Task<NormalizationBatchResult> ProcessBatchAsync(
         CancellationToken cancellationToken)
     {
+        var startedAt = Stopwatch.GetTimestamp();
         var claims = await claimRepository.ClaimBatchAsync(
             projectionVersion,
             batchSize,
             claimTimeout,
             cancellationToken);
-        return await ProcessClaimsAsync(claims, cancellationToken);
+        return await ProcessClaimsAsync(
+            claims,
+            Stopwatch.GetElapsedTime(startedAt),
+            cancellationToken);
     }
 
-    public async Task<NormalizationBatchResult> ProcessClaimsAsync(
+    public Task<NormalizationBatchResult> ProcessClaimsAsync(
         IReadOnlyList<ClaimedRawMessage> claims,
+        CancellationToken cancellationToken) =>
+        ProcessClaimsAsync(claims, TimeSpan.Zero, cancellationToken);
+
+    private async Task<NormalizationBatchResult> ProcessClaimsAsync(
+        IReadOnlyList<ClaimedRawMessage> claims,
+        TimeSpan claimDuration,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(claims);
         if (claims.Count == 0)
-            return new NormalizationBatchResult(0, 0, 0, 0, 0, null, null);
+        {
+            return new NormalizationBatchResult(
+                0,
+                0,
+                0,
+                0,
+                0,
+                null,
+                null,
+                durations: new NormalizationPhaseDurations(
+                    claimDuration,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero));
+        }
 
         var processed = 0;
         var invalid = 0;
         var unsupported = 0;
         var failed = 0;
         var errors = new List<NormalizationMessageError>();
+        var buildDuration = TimeSpan.Zero;
+        var writeDuration = TimeSpan.Zero;
 
-        foreach (var claim in claims)
+        foreach (var claimChunk in claims.Chunk(writeBatchSize))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var result = await ProcessMessageAsync(claim, cancellationToken);
-            if (result.Error is not null)
-                errors.Add(result.Error);
-
-            switch (result.Status)
+            var buildStartedAt = Stopwatch.GetTimestamp();
+            var preparedMessages = claimChunk
+                .Select(claim => PrepareMessage(claim, cancellationToken))
+                .ToArray();
+            buildDuration += Stopwatch.GetElapsedTime(buildStartedAt);
+            foreach (var prepared in CreateWriteChunks(preparedMessages))
             {
-                case NormalizationStatus.Processed:
-                    processed++;
-                    break;
-                case NormalizationStatus.Invalid:
-                    invalid++;
-                    break;
-                case NormalizationStatus.Unsupported:
-                    unsupported++;
-                    break;
-                case NormalizationStatus.Failed:
-                    failed++;
-                    break;
-                default:
-                    throw new InvalidOperationException(
-                        $"Unexpected terminal status '{result.Status}'.");
+                cancellationToken.ThrowIfCancellationRequested();
+                var writeStartedAt = Stopwatch.GetTimestamp();
+                var results = await WritePreparedBatchAsync(prepared, cancellationToken);
+                writeDuration += Stopwatch.GetElapsedTime(writeStartedAt);
+                foreach (var result in results)
+                {
+                    if (result.Error is not null)
+                        errors.Add(result.Error);
+
+                    switch (result.Status)
+                    {
+                        case NormalizationStatus.Processed:
+                            processed++;
+                            break;
+                        case NormalizationStatus.Invalid:
+                            invalid++;
+                            break;
+                        case NormalizationStatus.Unsupported:
+                            unsupported++;
+                            break;
+                        case NormalizationStatus.Failed:
+                            failed++;
+                            break;
+                        default:
+                            throw new InvalidOperationException(
+                                $"Unexpected terminal status '{result.Status}'.");
+                    }
+                }
             }
         }
 
@@ -107,10 +159,39 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
             failed,
             claims.Min(claim => claim.Message.RawMessageId),
             claims.Max(claim => claim.Message.RawMessageId),
-            errors);
+            errors,
+            new NormalizationPhaseDurations(claimDuration, buildDuration, writeDuration));
     }
 
-    private async Task<MessageProcessingResult> ProcessMessageAsync(
+    private IEnumerable<IReadOnlyList<PreparedMessage>> CreateWriteChunks(
+        IReadOnlyList<PreparedMessage> preparedMessages)
+    {
+        var chunk = new List<PreparedMessage>(writeBatchSize);
+        var rowCount = 0;
+        foreach (var prepared in preparedMessages)
+        {
+            var messageRowCount = CountWrittenRows(prepared.Completion);
+            if (chunk.Count > 0
+                && (chunk.Count >= writeBatchSize
+                    || rowCount + messageRowCount > MaximumWriteBatchRowCount))
+            {
+                yield return chunk.ToArray();
+                chunk.Clear();
+                rowCount = 0;
+            }
+
+            chunk.Add(prepared);
+            rowCount += messageRowCount;
+        }
+
+        if (chunk.Count > 0)
+            yield return chunk.ToArray();
+    }
+
+    private static int CountWrittenRows(NormalizationCompletion completion) =>
+        1 + completion.Events.Sum(normalizedEvent => 1 + normalizedEvent.Records.Count);
+
+    private PreparedMessage PrepareMessage(
         ClaimedRawMessage claim,
         CancellationToken cancellationToken)
     {
@@ -118,16 +199,7 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
         {
             var build = CreateCompletion(claim, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            var writeStatus = await writer.WriteAsync(claim, build.Completion, cancellationToken);
-            if (writeStatus == NormalizationWriteStatus.Written)
-                return new MessageProcessingResult(build.Completion.Status, build.Error);
-
-            var errorCode = writeStatus == NormalizationWriteStatus.ClaimLost
-                ? "normalization.write.claim_lost"
-                : "normalization.write.already_completed";
-            return new MessageProcessingResult(
-                NormalizationStatus.Failed,
-                CreateError(claim, null, null, null, NormalizationStatus.Failed, errorCode));
+            return new PreparedMessage(claim, build.Completion, build.Error);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -135,12 +207,9 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
         }
         catch (Exception exception)
         {
-            var completionException = await TryCompleteFailedAsync(claim, cancellationToken);
-            var diagnosticException = completionException is null
-                ? exception
-                : new AggregateException(exception, completionException);
-            return new MessageProcessingResult(
-                NormalizationStatus.Failed,
+            return new PreparedMessage(
+                claim,
+                NormalizationCompletion.Failed(ProcessingFailure),
                 CreateError(
                     claim,
                     null,
@@ -148,8 +217,98 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
                     null,
                     NormalizationStatus.Failed,
                     ProcessingFailure.Code,
+                    exception: exception));
+        }
+    }
+
+    private async Task<IReadOnlyList<MessageProcessingResult>> WritePreparedBatchAsync(
+        IReadOnlyList<PreparedMessage> prepared,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var statuses = await writer.WriteBatchAsync(
+                prepared
+                    .Select(item => new NormalizationWriteRequest(item.Claim, item.Completion))
+                    .ToArray(),
+                cancellationToken);
+            if (statuses.Count != prepared.Count)
+                throw new InvalidOperationException("Batch writer returned an unexpected status count.");
+
+            return prepared
+                .Select((item, index) => ToProcessingResult(item, statuses[index]))
+                .ToArray();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            var results = new List<MessageProcessingResult>(prepared.Count);
+            foreach (var item in prepared)
+                results.Add(await WritePreparedIndividuallyAsync(item, cancellationToken));
+
+            return results;
+        }
+    }
+
+    private async Task<MessageProcessingResult> WritePreparedIndividuallyAsync(
+        PreparedMessage prepared,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var status = await writer.WriteAsync(
+                prepared.Claim,
+                prepared.Completion,
+                cancellationToken);
+            return ToProcessingResult(prepared, status);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            var completionException = await TryCompleteFailedAsync(
+                prepared.Claim,
+                cancellationToken);
+            var diagnosticException = completionException is null
+                ? exception
+                : new AggregateException(exception, completionException);
+            return new MessageProcessingResult(
+                NormalizationStatus.Failed,
+                CreateError(
+                    prepared.Claim,
+                    null,
+                    null,
+                    null,
+                    NormalizationStatus.Failed,
+                    ProcessingFailure.Code,
                     exception: diagnosticException));
         }
+    }
+
+    private static MessageProcessingResult ToProcessingResult(
+        PreparedMessage prepared,
+        NormalizationWriteStatus writeStatus)
+    {
+        if (writeStatus == NormalizationWriteStatus.Written)
+            return new MessageProcessingResult(prepared.Completion.Status, prepared.Error);
+
+        var errorCode = writeStatus == NormalizationWriteStatus.ClaimLost
+            ? "normalization.write.claim_lost"
+            : "normalization.write.already_completed";
+        return new MessageProcessingResult(
+            NormalizationStatus.Failed,
+            CreateError(
+                prepared.Claim,
+                null,
+                null,
+                null,
+                NormalizationStatus.Failed,
+                errorCode));
     }
 
     private CompletionBuild CreateCompletion(
@@ -314,6 +473,11 @@ public sealed class NormalizationProcessor : INormalizationProcessor, IClaimedNo
     }
 
     private sealed record CompletionBuild(
+        NormalizationCompletion Completion,
+        NormalizationMessageError? Error);
+
+    private sealed record PreparedMessage(
+        ClaimedRawMessage Claim,
         NormalizationCompletion Completion,
         NormalizationMessageError? Error);
 

@@ -38,7 +38,14 @@ public sealed class NormalizationProcessorPostgreSqlTests(PostgreSqlFixture fixt
         var result = await ProcessAsync(database.ConnectionString, 1, fixtures.Length);
 
         result.Should().BeEquivalentTo(new NormalizationBatchResult(
-            7, 7, 0, 0, 0, result.FirstRawMessageId, result.LastRawMessageId));
+            7,
+            7,
+            0,
+            0,
+            0,
+            result.FirstRawMessageId,
+            result.LastRawMessageId,
+            durations: result.Durations));
         result.FirstRawMessageId.Should().BePositive();
         result.LastRawMessageId.Should().Be(result.FirstRawMessageId + 6);
         (await QueryIntsAsync(
@@ -83,7 +90,15 @@ public sealed class NormalizationProcessorPostgreSqlTests(PostgreSqlFixture fixt
         var secondVersion = await ProcessAsync(database.ConnectionString, 2, 10);
 
         first.Processed.Should().Be(1);
-        repeated.Should().BeEquivalentTo(new NormalizationBatchResult(0, 0, 0, 0, 0, null, null));
+        repeated.Should().BeEquivalentTo(new NormalizationBatchResult(
+            0,
+            0,
+            0,
+            0,
+            0,
+            null,
+            null,
+            durations: repeated.Durations));
         secondVersion.Processed.Should().Be(1);
         (await QueryIntsAsync(
             database.ConnectionString,
@@ -184,7 +199,8 @@ public sealed class NormalizationProcessorPostgreSqlTests(PostgreSqlFixture fixt
             1,
             result.FirstRawMessageId,
             result.LastRawMessageId,
-            result.Errors));
+            result.Errors,
+            result.Durations));
         (await QueryIntsAsync(
             database.ConnectionString,
             "SELECT status FROM data_collection.raw_message_normalizations ORDER BY raw_message_id"))
@@ -299,6 +315,7 @@ public sealed class NormalizationProcessorPostgreSqlTests(PostgreSqlFixture fixt
             ]),
             new VersionedNormalizedWriter(context, TimeProvider.System),
             projectionVersion,
+            batchSize,
             batchSize,
             ClaimTimeout);
 

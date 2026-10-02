@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using PolymarketLab.DataCollection.Core.Application.Normalization.Models;
@@ -18,42 +19,69 @@ internal sealed class VersionedNormalizedWriter(
     private const int MaximumErrorMessageLength = 2000;
     private const int MaximumErrorFieldLength = 500;
 
-    public async Task<NormalizationWriteStatus> WriteAsync(
-        ClaimedRawMessage claim,
-        NormalizationCompletion completion,
+    public async Task<IReadOnlyList<NormalizationWriteStatus>> WriteBatchAsync(
+        IReadOnlyList<NormalizationWriteRequest> requests,
         CancellationToken cancellationToken)
     {
-        Validate(claim, completion);
+        ArgumentNullException.ThrowIfNull(requests);
+        if (requests.Count == 0)
+            return [];
+        if (requests.Count > INormalizedMessageWriter.MaximumBatchSize)
+            throw new ArgumentOutOfRangeException(nameof(requests));
+
+        foreach (var request in requests)
+            Validate(request.Claim, request.Completion);
+
+        var duplicate = requests
+            .GroupBy(request => (
+                request.Claim.Message.RawMessageId,
+                request.Claim.ProjectionVersion))
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicate is not null)
+            throw new ArgumentException("A normalization write batch cannot contain duplicate claims.", nameof(requests));
 
         await using var transaction = await dbContext.Database.BeginTransactionAsync(
             cancellationToken);
         try
         {
+            var statuses = new NormalizationWriteStatus[requests.Count];
             var fencedSessions = await CollectorSessionWriteFence.LockAsync(
                 dbContext,
                 transaction,
-                [claim.Message.SessionId],
+                requests.Select(request => request.Claim.Message.SessionId),
                 cancellationToken);
-            if (fencedSessions.Contains(claim.Message.SessionId))
+            var writable = new List<(int Index, NormalizationWriteRequest Request)>();
+            var ledgers = await LockLedgersAsync(requests, transaction, cancellationToken);
+            foreach (var item in requests
+                         .Select((request, index) => (Index: index, Request: request))
+                         .OrderBy(item => item.Request.Claim.Message.RawMessageId)
+                         .ThenBy(item => item.Request.Claim.ProjectionVersion))
             {
-                await transaction.RollbackAsync(cancellationToken);
-                return NormalizationWriteStatus.ClaimLost;
-            }
+                if (fencedSessions.Contains(item.Request.Claim.Message.SessionId))
+                {
+                    statuses[item.Index] = NormalizationWriteStatus.ClaimLost;
+                    continue;
+                }
 
-            var ledger = await LockLedgerAsync(claim, transaction, cancellationToken);
-            if (ledger is null
-                || ledger.Value.Status != NormalizationStatus.Processing
-                || ledger.Value.AttemptCount != claim.AttemptCount)
-            {
-                var result = ledger is not null && IsTerminal(ledger.Value.Status)
-                    ? NormalizationWriteStatus.AlreadyCompleted
-                    : NormalizationWriteStatus.ClaimLost;
-                await transaction.RollbackAsync(cancellationToken);
-                return result;
+                var ledgerFound = ledgers.TryGetValue(
+                    (item.Request.Claim.Message.RawMessageId, item.Request.Claim.ProjectionVersion),
+                    out var ledger);
+                if (!ledgerFound
+                    || ledger.Status != NormalizationStatus.Processing
+                    || ledger.AttemptCount != item.Request.Claim.AttemptCount)
+                {
+                    statuses[item.Index] = ledgerFound && IsTerminal(ledger.Status)
+                        ? NormalizationWriteStatus.AlreadyCompleted
+                        : NormalizationWriteStatus.ClaimLost;
+                    continue;
+                }
+
+                writable.Add(item);
             }
 
             var normalizedAt = timeProvider.GetUtcNow();
-            var events = completion.Events
+            var events = writable
+                .SelectMany(item => item.Request.Completion.Events)
                 .Select(normalizedEvent => new EventWrite(
                     normalizedEvent,
                     new NormalizedEventRecord(normalizedEvent, normalizedAt)))
@@ -65,16 +93,19 @@ internal sealed class VersionedNormalizedWriter(
                 AddTypedRows(item.Event, item.Entity.Id);
 
             await dbContext.SaveChangesAsync(cancellationToken);
-            var affected = await CompleteLedgerAsync(claim, completion, cancellationToken);
-            if (affected != 1)
+            var completed = await CompleteLedgersAsync(writable, transaction, cancellationToken);
+            if (completed.Count != writable.Count)
             {
-                await transaction.RollbackAsync(cancellationToken);
-                dbContext.ChangeTracker.Clear();
-                return NormalizationWriteStatus.ClaimLost;
+                throw new InvalidOperationException(
+                    "A normalization claim changed while its batch was being written.");
             }
 
+            foreach (var item in writable)
+                statuses[item.Index] = NormalizationWriteStatus.Written;
+
             await transaction.CommitAsync(cancellationToken);
-            return NormalizationWriteStatus.Written;
+            dbContext.ChangeTracker.Clear();
+            return statuses;
         }
         catch
         {
@@ -84,8 +115,20 @@ internal sealed class VersionedNormalizedWriter(
         }
     }
 
-    private async Task<LedgerState?> LockLedgerAsync(
+    public async Task<NormalizationWriteStatus> WriteAsync(
         ClaimedRawMessage claim,
+        NormalizationCompletion completion,
+        CancellationToken cancellationToken)
+    {
+        var statuses = await WriteBatchAsync(
+            [new NormalizationWriteRequest(claim, completion)],
+            cancellationToken);
+        return statuses[0];
+    }
+
+    private async Task<IReadOnlyDictionary<(long RawMessageId, int ProjectionVersion), LedgerState>>
+        LockLedgersAsync(
+        IReadOnlyList<NormalizationWriteRequest> requests,
         IDbContextTransaction transaction,
         CancellationToken cancellationToken)
     {
@@ -93,42 +136,114 @@ internal sealed class VersionedNormalizedWriter(
         command.Transaction = transaction.GetDbTransaction();
         command.CommandText =
             """
-            SELECT status, attempt_count
-            FROM data_collection.raw_message_normalizations
-            WHERE raw_message_id = @raw_message_id
-              AND projection_version = @projection_version
-            FOR UPDATE
+            SELECT normalization.raw_message_id,
+                   normalization.projection_version,
+                   normalization.status,
+                   normalization.attempt_count
+            FROM data_collection.raw_message_normalizations AS normalization
+            INNER JOIN unnest(@raw_message_ids::bigint[], @projection_versions::integer[])
+                AS requested(raw_message_id, projection_version)
+              ON requested.raw_message_id = normalization.raw_message_id
+             AND requested.projection_version = normalization.projection_version
+            ORDER BY normalization.raw_message_id, normalization.projection_version
+            FOR UPDATE OF normalization
             """;
-        AddParameter(command, "raw_message_id", claim.Message.RawMessageId);
-        AddParameter(command, "projection_version", claim.ProjectionVersion);
+        AddParameter(
+            command,
+            "raw_message_ids",
+            requests.Select(request => request.Claim.Message.RawMessageId).ToArray());
+        AddParameter(
+            command,
+            "projection_versions",
+            requests.Select(request => request.Claim.ProjectionVersion).ToArray());
+        var ledgers = new Dictionary<(long, int), LedgerState>(requests.Count);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-            return null;
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            ledgers.Add(
+                (reader.GetInt64(0), reader.GetInt32(1)),
+                new LedgerState(
+                    (NormalizationStatus)reader.GetInt32(2),
+                    reader.GetInt32(3)));
+        }
 
-        return new LedgerState(
-            (NormalizationStatus)reader.GetInt32(0),
-            reader.GetInt32(1));
+        return ledgers;
     }
 
-    private Task<int> CompleteLedgerAsync(
-        ClaimedRawMessage claim,
-        NormalizationCompletion completion,
+    private async Task<IReadOnlySet<(long RawMessageId, int ProjectionVersion)>> CompleteLedgersAsync(
+        IReadOnlyList<(int Index, NormalizationWriteRequest Request)> writable,
+        IDbContextTransaction transaction,
         CancellationToken cancellationToken)
     {
-        return dbContext.Database.ExecuteSqlInterpolatedAsync(
-            $"""
-            UPDATE data_collection.raw_message_normalizations
-            SET status = {(int)completion.Status},
+        if (writable.Count == 0)
+            return new HashSet<(long, int)>();
+
+        await using var command = dbContext.Database.GetDbConnection().CreateCommand();
+        command.Transaction = transaction.GetDbTransaction();
+        var values = new StringBuilder();
+        for (var index = 0; index < writable.Count; index++)
+        {
+            if (index > 0)
+                values.AppendLine(",");
+
+            values.Append($"""
+                (CAST(@raw_message_id_{index} AS bigint),
+                 CAST(@projection_version_{index} AS integer),
+                 CAST(@status_{index} AS integer),
+                 CAST(@attempt_count_{index} AS integer),
+                 CAST(@error_code_{index} AS text),
+                 CAST(@error_message_{index} AS text),
+                 CAST(@error_field_{index} AS text))
+                """);
+            var request = writable[index].Request;
+            AddParameter(command, $"raw_message_id_{index}", request.Claim.Message.RawMessageId);
+            AddParameter(command, $"projection_version_{index}", request.Claim.ProjectionVersion);
+            AddParameter(command, $"status_{index}", (int)request.Completion.Status);
+            AddParameter(command, $"attempt_count_{index}", request.Claim.AttemptCount);
+            AddParameter(
+                command,
+                $"error_code_{index}",
+                (object?)request.Completion.Issue?.Code ?? DBNull.Value);
+            AddParameter(
+                command,
+                $"error_message_{index}",
+                (object?)request.Completion.Issue?.Message ?? DBNull.Value);
+            AddParameter(
+                command,
+                $"error_field_{index}",
+                (object?)request.Completion.Issue?.Field ?? DBNull.Value);
+        }
+
+        command.CommandText = $"""
+            UPDATE data_collection.raw_message_normalizations AS normalization
+            SET status = completion.status,
                 completed_at = CURRENT_TIMESTAMP,
-                error_code = {(completion.Issue == null ? null : completion.Issue.Code)},
-                error_message = {(completion.Issue == null ? null : completion.Issue.Message)},
-                error_field = {(completion.Issue == null ? null : completion.Issue.Field)}
-            WHERE raw_message_id = {claim.Message.RawMessageId}
-              AND projection_version = {claim.ProjectionVersion}
-              AND status = {(int)NormalizationStatus.Processing}
-              AND attempt_count = {claim.AttemptCount}
-            """,
-            cancellationToken);
+                error_code = completion.error_code,
+                error_message = completion.error_message,
+                error_field = completion.error_field
+            FROM (VALUES
+            {values}
+            ) AS completion(
+                raw_message_id,
+                projection_version,
+                status,
+                attempt_count,
+                error_code,
+                error_message,
+                error_field)
+            WHERE normalization.raw_message_id = completion.raw_message_id
+              AND normalization.projection_version = completion.projection_version
+              AND normalization.status = {(int)NormalizationStatus.Processing}
+              AND normalization.attempt_count = completion.attempt_count
+            RETURNING normalization.raw_message_id, normalization.projection_version
+            """;
+
+        var completed = new HashSet<(long, int)>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            completed.Add((reader.GetInt64(0), reader.GetInt32(1)));
+
+        return completed;
     }
 
     private void AddTypedRows(NormalizedEvent normalizedEvent, long eventId)

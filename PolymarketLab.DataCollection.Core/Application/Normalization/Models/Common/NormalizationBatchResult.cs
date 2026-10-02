@@ -12,7 +12,8 @@ public sealed record NormalizationBatchResult
         int failed,
         long? firstRawMessageId,
         long? lastRawMessageId,
-        IReadOnlyCollection<NormalizationMessageError>? errors = null)
+        IReadOnlyCollection<NormalizationMessageError>? errors = null,
+        NormalizationPhaseDurations? durations = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(total);
         ArgumentOutOfRangeException.ThrowIfNegative(processed);
@@ -43,6 +44,7 @@ public sealed record NormalizationBatchResult
         FirstRawMessageId = firstRawMessageId;
         LastRawMessageId = lastRawMessageId;
         Errors = errors?.ToArray() ?? [];
+        Durations = durations;
     }
 
     /// <summary>Количество захваченных сообщений.</summary>
@@ -68,4 +70,7 @@ public sealed record NormalizationBatchResult
 
     /// <summary>Безопасная диагностика неуспешных сообщений без исходного payload.</summary>
     public IReadOnlyList<NormalizationMessageError> Errors { get; }
+
+    /// <summary>Длительности фаз; <see langword="null"/> означает, что источник их не измерял.</summary>
+    public NormalizationPhaseDurations? Durations { get; }
 }

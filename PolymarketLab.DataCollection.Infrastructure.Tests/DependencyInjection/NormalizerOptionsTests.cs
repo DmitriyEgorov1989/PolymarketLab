@@ -28,6 +28,7 @@ public sealed class NormalizerOptionsTests
         options.Enabled.Should().BeTrue();
         options.ProjectionVersion.Should().Be(1);
         options.BatchSize.Should().Be(500);
+        options.WriteBatchSize.Should().Be(100);
         options.IdleDelay.Should().Be(TimeSpan.FromMilliseconds(250));
         options.ClaimTimeout.Should().Be(TimeSpan.FromMinutes(5));
         options.ShutdownTimeout.Should().Be(TimeSpan.FromSeconds(30));
@@ -41,6 +42,7 @@ public sealed class NormalizerOptionsTests
             [$"{NormalizerOptions.SectionName}:Enabled"] = "false",
             [$"{NormalizerOptions.SectionName}:ProjectionVersion"] = "2",
             [$"{NormalizerOptions.SectionName}:BatchSize"] = "25",
+            [$"{NormalizerOptions.SectionName}:WriteBatchSize"] = "10",
             [$"{NormalizerOptions.SectionName}:IdleDelay"] = "00:00:00",
             [$"{NormalizerOptions.SectionName}:ClaimTimeout"] = "00:10:00",
             [$"{NormalizerOptions.SectionName}:ShutdownTimeout"] = "00:00:45"
@@ -51,6 +53,7 @@ public sealed class NormalizerOptionsTests
         options.Enabled.Should().BeFalse();
         options.ProjectionVersion.Should().Be(2);
         options.BatchSize.Should().Be(25);
+        options.WriteBatchSize.Should().Be(10);
         options.IdleDelay.Should().Be(TimeSpan.Zero);
         options.ClaimTimeout.Should().Be(TimeSpan.FromMinutes(10));
         options.ShutdownTimeout.Should().Be(TimeSpan.FromSeconds(45));
@@ -75,6 +78,9 @@ public sealed class NormalizerOptionsTests
     [InlineData("ProjectionVersion", "-1")]
     [InlineData("BatchSize", "0")]
     [InlineData("BatchSize", "-1")]
+    [InlineData("BatchSize", "1001")]
+    [InlineData("WriteBatchSize", "0")]
+    [InlineData("WriteBatchSize", "501")]
     [InlineData("IdleDelay", "-00:00:00.001")]
     [InlineData("ClaimTimeout", "00:00:00")]
     [InlineData("ClaimTimeout", "-00:00:01")]
@@ -95,12 +101,27 @@ public sealed class NormalizerOptionsTests
     }
 
     [Fact]
+    public void AddDataCollectionInfrastructure_WriteBatchAboveSupportedMaximum_ShouldFailAtStartup()
+    {
+        using var provider = CreateProvider(new Dictionary<string, string?>
+        {
+            [$"{NormalizerOptions.SectionName}:BatchSize"] = "1000",
+            [$"{NormalizerOptions.SectionName}:WriteBatchSize"] = "1001"
+        });
+
+        var action = () => provider.GetRequiredService<IStartupValidator>().Validate();
+
+        action.Should().Throw<OptionsValidationException>();
+    }
+
+    [Fact]
     public async Task NormalizationProcessor_ShouldUseConfiguredClaimParameters()
     {
         var settings = new Dictionary<string, string?>
         {
             [$"{NormalizerOptions.SectionName}:ProjectionVersion"] = "3",
             [$"{NormalizerOptions.SectionName}:BatchSize"] = "42",
+            [$"{NormalizerOptions.SectionName}:WriteBatchSize"] = "21",
             [$"{NormalizerOptions.SectionName}:ClaimTimeout"] = "00:07:00"
         };
         var configuration = CreateConfiguration(settings);

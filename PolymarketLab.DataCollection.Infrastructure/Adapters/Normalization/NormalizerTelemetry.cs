@@ -15,6 +15,7 @@ internal sealed class NormalizerTelemetry : IDisposable
     private readonly Counter<long> failed;
     private readonly Counter<long> batches;
     private readonly Histogram<double> batchDuration;
+    private readonly Histogram<double> phaseDuration;
     private NormalizationBacklogSnapshot? backlog;
 
     public NormalizerTelemetry()
@@ -25,6 +26,7 @@ internal sealed class NormalizerTelemetry : IDisposable
         failed = meter.CreateCounter<long>("normalizer_messages_failed");
         batches = meter.CreateCounter<long>("normalizer_batches");
         batchDuration = meter.CreateHistogram<double>("normalizer_batch_duration_ms");
+        phaseDuration = meter.CreateHistogram<double>("normalizer_phase_duration_ms");
         meter.CreateObservableGauge<long>(
             "normalizer_pending_messages",
             ObservePendingMessages);
@@ -38,6 +40,16 @@ internal sealed class NormalizerTelemetry : IDisposable
         NormalizationBatchResult result,
         TimeSpan duration)
     {
+        if (result.Durations is not null)
+        {
+            RecordPhase(projectionVersion, "claim", result.Durations.Claim);
+            if (result.Total > 0)
+            {
+                RecordPhase(projectionVersion, "build", result.Durations.Build);
+                RecordPhase(projectionVersion, "write", result.Durations.Write);
+            }
+        }
+
         if (result.Total == 0)
             return;
 
@@ -61,6 +73,16 @@ internal sealed class NormalizerTelemetry : IDisposable
     }
 
     public void Dispose() => meter.Dispose();
+
+    private void RecordPhase(int projectionVersion, string phase, TimeSpan duration)
+    {
+        var tags = new TagList
+        {
+            { "projection_version", projectionVersion },
+            { "phase", phase }
+        };
+        phaseDuration.Record(duration.TotalMilliseconds, tags);
+    }
 
     private IEnumerable<Measurement<long>> ObservePendingMessages()
     {

@@ -22,6 +22,7 @@ internal sealed class AcceptanceWebApplicationFactory(
         builder.UseSetting("Normalizer:Enabled", "true");
         builder.UseSetting("Normalizer:ProjectionVersion", "1");
         builder.UseSetting("Normalizer:BatchSize", "32");
+        builder.UseSetting("Normalizer:WriteBatchSize", "16");
         builder.UseSetting("Normalizer:IdleDelay", "00:00:00.050");
 
         builder.ConfigureTestServices(services =>

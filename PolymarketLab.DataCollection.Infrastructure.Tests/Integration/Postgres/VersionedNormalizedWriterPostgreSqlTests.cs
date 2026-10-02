@@ -1,12 +1,15 @@
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using PolymarketLab.DataCollection.Core.Application.Normalization.Models;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
+using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.Normalization;
 using Xunit;
+using System.Data.Common;
 
 namespace PolymarketLab.DataCollection.Infrastructure.Tests.Integration.Postgres;
 
@@ -74,14 +77,13 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
                 new MarketResolvedAssetRecord(1, "asset-no"))
         };
 
-        var statuses = new List<NormalizationWriteStatus>();
-        for (var index = 0; index < claims.Count; index++)
-        {
-            statuses.Add(await WriteAsync(
-                database.ConnectionString,
-                claims[index],
-                NormalizationCompletion.Processed([events[index]])));
-        }
+        var statuses = await WriteBatchAsync(
+            database.ConnectionString,
+            claims
+                .Select((claim, index) => new NormalizationWriteRequest(
+                    claim,
+                    NormalizationCompletion.Processed([events[index]])))
+                .ToArray());
 
         statuses.Should().OnlyContain(status => status == NormalizationWriteStatus.Written);
         (await CountAsync(database.ConnectionString, "normalized_events")).Should().Be(7);
@@ -229,6 +231,76 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
     }
 
     [Fact]
+    public async Task WriteBatch_DatabaseErrorShouldRollbackWholeFastPath()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        await SeedRawMessagesAsync(database.ConnectionString, 2);
+        var claims = await ClaimAsync(database.ConnectionString, 1, 2);
+        var requests = new[]
+        {
+            new NormalizationWriteRequest(
+                claims[0],
+                NormalizationCompletion.Processed(
+                [
+                    CreateEvent(
+                        claims[0],
+                        "last_trade_price",
+                        new LastTradeRecord(0.4m, 1m, TradeSide.Buy, null, null))
+                ])),
+            new NormalizationWriteRequest(
+                claims[1],
+                NormalizationCompletion.Processed(
+                [
+                    CreateEvent(
+                        claims[1],
+                        "price_change",
+                        new PriceChangeRecord(
+                            0,
+                            "asset-a",
+                            0.5m,
+                            decimal.MaxValue,
+                            TradeSide.Buy,
+                            null,
+                            null,
+                            null))
+                ]))
+        };
+
+        var write = async () => await WriteBatchAsync(database.ConnectionString, requests);
+
+        await write.Should().ThrowAsync<DbUpdateException>();
+        (await CountAsync(database.ConnectionString, "normalized_events")).Should().Be(0);
+        var ledger = await ReadLedgerAsync(database.ConnectionString);
+        ledger.Values.Should().OnlyContain(item =>
+            item.Status == (int)NormalizationStatus.Processing);
+    }
+
+    [Fact]
+    public async Task WriteBatch_TerminalOutcomes_ShouldUseConstantCommandCount()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        await SeedRawMessagesAcrossSessionsAsync(database.ConnectionString, 25);
+        var claims = await ClaimAsync(database.ConnectionString, 1, 25);
+        var requests = claims
+            .Select(claim => new NormalizationWriteRequest(
+                claim,
+                NormalizationCompletion.Invalid(new NormalizationIssue(
+                    "json.invalid",
+                    "Malformed JSON."))))
+            .ToArray();
+        var counter = new CommandCounterInterceptor();
+        await using var context = CreateContext(database.ConnectionString, counter);
+        INormalizedMessageWriter writer = new VersionedNormalizedWriter(
+            context,
+            TimeProvider.System);
+
+        var statuses = await writer.WriteBatchAsync(requests, default);
+
+        statuses.Should().OnlyContain(status => status == NormalizationWriteStatus.Written);
+        counter.CommandCount.Should().BeLessThanOrEqualTo(4);
+    }
+
+    [Fact]
     public async Task WriteProcessed_StaleAttemptShouldNotCompleteReclaimedRow()
     {
         await using var database = await CreateMigratedDatabaseAsync();
@@ -297,6 +369,17 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
             .WriteAsync(claim, completion, default);
     }
 
+    private static async Task<IReadOnlyList<NormalizationWriteStatus>> WriteBatchAsync(
+        string connectionString,
+        IReadOnlyList<NormalizationWriteRequest> requests)
+    {
+        await using var context = CreateContext(connectionString);
+        INormalizedMessageWriter writer = new VersionedNormalizedWriter(
+            context,
+            TimeProvider.System);
+        return await writer.WriteBatchAsync(requests, default);
+    }
+
     private static NormalizedEvent CreateEvent(
         ClaimedRawMessage claim,
         string eventType,
@@ -343,12 +426,54 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
                 "Event description"),
             new NewMarketFeeSchedule(1m, 2m, 3m, false));
 
-    private static DataCollectionDbContext CreateContext(string connectionString)
+    private static DataCollectionDbContext CreateContext(
+        string connectionString,
+        IInterceptor? interceptor = null)
     {
-        var options = new DbContextOptionsBuilder<DataCollectionDbContext>()
-            .UseNpgsql(connectionString)
-            .Options;
+        var builder = new DbContextOptionsBuilder<DataCollectionDbContext>()
+            .UseNpgsql(connectionString);
+        if (interceptor is not null)
+            builder.AddInterceptors(interceptor);
+
+        var options = builder.Options;
         return new DataCollectionDbContext(options);
+    }
+
+    private sealed class CommandCounterInterceptor : DbCommandInterceptor
+    {
+        private int commandCount;
+
+        public int CommandCount => Volatile.Read(ref commandCount);
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref commandCount);
+            return ValueTask.FromResult(result);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref commandCount);
+            return ValueTask.FromResult(result);
+        }
+
+        public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<object> result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref commandCount);
+            return ValueTask.FromResult(result);
+        }
     }
 
     private static async Task<IReadOnlyList<byte[]>> SeedRawMessagesAsync(
@@ -386,6 +511,35 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
         }
 
         return payloads;
+    }
+
+    private static async Task SeedRawMessagesAcrossSessionsAsync(
+        string connectionString,
+        int count)
+    {
+        var receivedAt = DateTimeOffset.Parse("2026-08-14T10:00:00Z");
+        for (var index = 0; index < count; index++)
+        {
+            await ExecuteAsync(
+                connectionString,
+                """
+                WITH inserted_session AS (
+                    INSERT INTO data_collection.collector_sessions
+                        (id, market_id, status, created_at)
+                    VALUES (@session_id, @market_id, 4, @created_at)
+                    RETURNING id
+                )
+                INSERT INTO data_collection.raw_market_messages
+                    (session_id, connection_epoch, received_at, payload)
+                SELECT id, 1, @received_at, @payload
+                FROM inserted_session
+                """,
+                new NpgsqlParameter("session_id", Guid.NewGuid()),
+                new NpgsqlParameter("market_id", Guid.NewGuid()),
+                new NpgsqlParameter("created_at", receivedAt.AddMinutes(-1)),
+                new NpgsqlParameter("received_at", receivedAt.AddSeconds(index)),
+                new NpgsqlParameter("payload", new byte[] { (byte)index }));
+        }
     }
 
     private static async Task<Dictionary<long, Ledger>> ReadLedgerAsync(string connectionString)

@@ -34,7 +34,7 @@ public sealed class NormalizationProcessorTests
         var result = await processor.ProcessBatchAsync(default);
 
         result.Should().BeEquivalentTo(new NormalizationBatchResult(
-            3, 2, 1, 0, 0, 100, 102, result.Errors));
+            3, 2, 1, 0, 0, 100, 102, result.Errors, result.Durations));
         result.Errors.Should().ContainSingle().Which.Should().BeEquivalentTo(
             new NormalizationMessageError(
                 101,
@@ -69,7 +69,7 @@ public sealed class NormalizationProcessorTests
         var result = await processor.ProcessBatchAsync(default);
 
         result.Should().BeEquivalentTo(new NormalizationBatchResult(
-            1, 0, 0, 1, 0, 1, 1, result.Errors));
+            1, 0, 0, 1, 0, 1, 1, result.Errors, result.Durations));
         result.Errors.Should().ContainSingle().Which.Should().Match<NormalizationMessageError>(error =>
             error.RawItemIndex == 0
             && error.EventType == "last_trade_price"
@@ -143,7 +143,7 @@ public sealed class NormalizationProcessorTests
         var result = await processor.ProcessBatchAsync(default);
 
         result.Should().BeEquivalentTo(new NormalizationBatchResult(
-            1, 0, 1, 0, 0, 1, 1, result.Errors));
+            1, 0, 1, 0, 0, 1, 1, result.Errors, result.Durations));
         result.Errors.Should().ContainSingle().Which.RawItemIndex.Should().Be(1);
         writer.Calls.Should().ContainSingle();
         writer.Calls[0].Completion.Status.Should().Be(NormalizationStatus.Invalid);
@@ -166,7 +166,7 @@ public sealed class NormalizationProcessorTests
         var result = await processor.ProcessBatchAsync(default);
 
         result.Should().BeEquivalentTo(new NormalizationBatchResult(
-            2, 1, 0, 0, 1, 1, 2, result.Errors));
+            2, 1, 0, 0, 1, 1, 2, result.Errors, result.Durations));
         result.Errors.Should().ContainSingle().Which.ErrorCode.Should()
             .Be("normalization.processing.failed");
         result.Errors.Single().Exception.Should().BeOfType<InvalidOperationException>()
@@ -189,13 +189,13 @@ public sealed class NormalizationProcessorTests
         var result = await processor.ProcessBatchAsync(default);
 
         result.Should().BeEquivalentTo(new NormalizationBatchResult(
-            1, 0, 0, 0, 1, 1, 1, result.Errors));
+            1, 0, 0, 0, 1, 1, 1, result.Errors, result.Durations));
         result.Errors.Should().ContainSingle().Which.ErrorCode.Should()
             .Be("normalization.write.claim_lost");
     }
 
     [Fact]
-    public async Task ProcessBatch_WriteError_ShouldMarkFailedAndContinue()
+    public async Task ProcessBatch_TransientBatchWriteError_ShouldRetryAndContinue()
     {
         var failedOnce = false;
         var writer = new StubWriter((claim, completion) =>
@@ -219,12 +219,43 @@ public sealed class NormalizationProcessorTests
         var result = await processor.ProcessBatchAsync(default);
 
         result.Should().BeEquivalentTo(new NormalizationBatchResult(
-            2, 1, 0, 0, 1, 1, 2, result.Errors));
+            2, 2, 0, 0, 0, 1, 2, result.Errors, result.Durations));
+        result.Errors.Should().BeEmpty();
+        writer.Calls.Select(call => call.Completion.Status).Should().Equal(
+            NormalizationStatus.Processed,
+            NormalizationStatus.Processed,
+            NormalizationStatus.Processed);
+    }
+
+    [Fact]
+    public async Task ProcessBatch_PersistentWriteError_ShouldMarkOnlyFailedMessage()
+    {
+        var writer = new StubWriter((claim, completion) =>
+        {
+            if (claim.Message.RawMessageId == 1
+                && completion.Status == NormalizationStatus.Processed)
+            {
+                throw new InvalidOperationException("Database failure.");
+            }
+
+            return Task.FromResult(NormalizationWriteStatus.Written);
+        });
+        var processor = CreateProcessor(
+            new StubClaimRepository([CreateClaim(1), CreateClaim(2)]),
+            new StubDecoder(_ => DecodedObject(0)),
+            new StubDispatcher(rawEvent => NormalizationResult.Processed(CreateEvent(rawEvent))),
+            writer);
+
+        var result = await processor.ProcessBatchAsync(default);
+
+        result.Should().BeEquivalentTo(new NormalizationBatchResult(
+            2, 1, 0, 0, 1, 1, 2, result.Errors, result.Durations));
         result.Errors.Should().ContainSingle().Which.ErrorCode.Should()
             .Be("normalization.processing.failed");
         result.Errors.Single().Exception.Should().BeOfType<InvalidOperationException>()
             .Which.Message.Should().Be("Database failure.");
         writer.Calls.Select(call => call.Completion.Status).Should().Equal(
+            NormalizationStatus.Processed,
             NormalizationStatus.Processed,
             NormalizationStatus.Failed,
             NormalizationStatus.Processed);
@@ -262,15 +293,65 @@ public sealed class NormalizationProcessorTests
 
         var result = await processor.ProcessBatchAsync(default);
 
-        result.Should().BeEquivalentTo(new NormalizationBatchResult(0, 0, 0, 0, 0, null, null));
+        result.Should().BeEquivalentTo(new NormalizationBatchResult(
+            0,
+            0,
+            0,
+            0,
+            0,
+            null,
+            null,
+            durations: result.Durations));
+    }
+
+    [Fact]
+    public async Task ProcessBatch_Claims_ShouldWriteConfiguredChunks()
+    {
+        var writer = new StubWriter();
+        var processor = CreateProcessor(
+            new StubClaimRepository(
+            [
+                CreateClaim(1),
+                CreateClaim(2),
+                CreateClaim(3),
+                CreateClaim(4),
+                CreateClaim(5)
+            ]),
+            new StubDecoder(_ => DecodedObject(0)),
+            new StubDispatcher(rawEvent => NormalizationResult.Processed(CreateEvent(rawEvent))),
+            writer,
+            writeBatchSize: 2);
+
+        var result = await processor.ProcessBatchAsync(default);
+
+        result.Processed.Should().Be(5);
+        writer.BatchSizes.Should().Equal(2, 2, 1);
+    }
+
+    [Fact]
+    public async Task ProcessBatch_LargeCompletions_ShouldSplitWriteChunksByRowCount()
+    {
+        var writer = new StubWriter();
+        var processor = CreateProcessor(
+            new StubClaimRepository([CreateClaim(1), CreateClaim(2)]),
+            new StubDecoder(_ => DecodedObject(0)),
+            new StubDispatcher(CreateLargePriceChangeResult),
+            writer,
+            writeBatchSize: 2);
+
+        var result = await processor.ProcessBatchAsync(default);
+
+        result.Processed.Should().Be(2);
+        writer.BatchSizes.Should().Equal(1, 1);
     }
 
     private static NormalizationProcessor CreateProcessor(
         IRawMessageNormalizationClaimRepository claimRepository,
         IRawMessageDecoder decoder,
         INormalizationDispatcher dispatcher,
-        INormalizedMessageWriter writer) =>
-        new(claimRepository, decoder, dispatcher, writer, 1, 100, ClaimTimeout);
+        INormalizedMessageWriter writer,
+        int writeBatchSize = 100) =>
+        new(claimRepository, decoder, dispatcher, writer, 1, 100, writeBatchSize, ClaimTimeout);
 
     private static ClaimedRawMessage CreateClaim(long rawMessageId) =>
         new(
@@ -304,6 +385,33 @@ public sealed class NormalizationProcessorTests
             marketConditionId: null,
             assetId: "asset-1",
             records: [new LastTradeRecord(0.5m, null, TradeSide.Buy, null, null)]);
+
+    private static NormalizationResult CreateLargePriceChangeResult(LogicalRawEvent rawEvent)
+    {
+        var records = Enumerable.Range(0, 6_000)
+            .Select(index => (NormalizedRecord)new PriceChangeRecord(
+                index,
+                "asset-1",
+                0.5m,
+                1m,
+                TradeSide.Buy,
+                null,
+                null,
+                null))
+            .ToArray();
+        return NormalizationResult.Processed(new NormalizedEvent(
+            rawEvent.RawMessageId,
+            rawEvent.RawItemIndex,
+            rawEvent.ProjectionVersion,
+            normalizerVersion: 1,
+            eventType: "price_change",
+            rawEvent.SessionId,
+            rawEvent.ReceivedAt,
+            sourceTimestamp: null,
+            marketConditionId: null,
+            assetId: null,
+            records));
+    }
 
     private sealed class StubClaimRepository(IReadOnlyList<ClaimedRawMessage> claims)
         : IRawMessageNormalizationClaimRepository
@@ -345,6 +453,24 @@ public sealed class NormalizationProcessorTests
         : INormalizedMessageWriter
     {
         public List<WriteCall> Calls { get; } = [];
+        public List<int> BatchSizes { get; } = [];
+
+        public async Task<IReadOnlyList<NormalizationWriteStatus>> WriteBatchAsync(
+            IReadOnlyList<NormalizationWriteRequest> requests,
+            CancellationToken cancellationToken)
+        {
+            BatchSizes.Add(requests.Count);
+            var statuses = new List<NormalizationWriteStatus>(requests.Count);
+            foreach (var request in requests)
+            {
+                statuses.Add(await WriteAsync(
+                    request.Claim,
+                    request.Completion,
+                    cancellationToken));
+            }
+
+            return statuses;
+        }
 
         public async Task<NormalizationWriteStatus> WriteAsync(
             ClaimedRawMessage claim,

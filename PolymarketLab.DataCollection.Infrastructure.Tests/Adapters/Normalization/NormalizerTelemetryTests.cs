@@ -60,6 +60,38 @@ public sealed class NormalizerTelemetryTests
     }
 
     [Fact]
+    public void RecordBatch_WithPhaseDurations_ShouldPublishBoundedPhaseMetrics()
+    {
+        var measurements = new ConcurrentBag<MetricMeasurement>();
+        using var listener = CreateListener(measurements);
+        using var telemetry = new NormalizerTelemetry();
+
+        telemetry.RecordBatch(
+            3,
+            new NormalizationBatchResult(
+                2,
+                2,
+                0,
+                0,
+                0,
+                1,
+                2,
+                durations: new NormalizationPhaseDurations(
+                    TimeSpan.FromMilliseconds(1),
+                    TimeSpan.FromMilliseconds(2),
+                    TimeSpan.FromMilliseconds(3))),
+            TimeSpan.FromMilliseconds(6));
+
+        measurements.Where(item => item.Name == "normalizer_phase_duration_ms")
+            .Should().BeEquivalentTo(
+            [
+                new MetricMeasurement("normalizer_phase_duration_ms", 1, PhaseTags(3, "claim")),
+                new MetricMeasurement("normalizer_phase_duration_ms", 2, PhaseTags(3, "build")),
+                new MetricMeasurement("normalizer_phase_duration_ms", 3, PhaseTags(3, "write"))
+            ]);
+    }
+
+    [Fact]
     public void RecordBatch_EmptyPollingResult_ShouldNotPublishBatchMetrics()
     {
         var measurements = new ConcurrentBag<MetricMeasurement>();
@@ -72,6 +104,36 @@ public sealed class NormalizerTelemetryTests
             TimeSpan.FromMilliseconds(1));
 
         measurements.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RecordBatch_EmptyMeasuredPollingResult_ShouldPublishOnlyClaimPhase()
+    {
+        var measurements = new ConcurrentBag<MetricMeasurement>();
+        using var listener = CreateListener(measurements);
+        using var telemetry = new NormalizerTelemetry();
+
+        telemetry.RecordBatch(
+            1,
+            new NormalizationBatchResult(
+                0,
+                0,
+                0,
+                0,
+                0,
+                null,
+                null,
+                durations: new NormalizationPhaseDurations(
+                    TimeSpan.FromMilliseconds(1),
+                    TimeSpan.Zero,
+                    TimeSpan.Zero)),
+            TimeSpan.FromMilliseconds(1));
+
+        measurements.Should().ContainSingle().Which.Should().BeEquivalentTo(
+            new MetricMeasurement(
+                "normalizer_phase_duration_ms",
+                1,
+                PhaseTags(1, "claim")));
     }
 
     private static MeterListener CreateListener(ConcurrentBag<MetricMeasurement> measurements)
@@ -100,6 +162,15 @@ public sealed class NormalizerTelemetryTests
 
     private static IReadOnlyDictionary<string, object?> Tags(int projectionVersion) =>
         new Dictionary<string, object?> { ["projection_version"] = projectionVersion };
+
+    private static IReadOnlyDictionary<string, object?> PhaseTags(
+        int projectionVersion,
+        string phase) =>
+        new Dictionary<string, object?>
+        {
+            ["projection_version"] = projectionVersion,
+            ["phase"] = phase
+        };
 
     private sealed record MetricMeasurement(
         string Name,
