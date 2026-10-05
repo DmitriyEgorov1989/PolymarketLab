@@ -1,5 +1,6 @@
 using CSharpFunctionalExtensions;
 using PolymarketLab.DataCollection.Core.Application.Errors;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorFailedDatasetFinalization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
@@ -11,7 +12,7 @@ namespace PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessio
 public sealed class CollectorSessionStartupReconciler(
     ICollectorSessionRepository sessionRepository,
     ICollectorSessionInvalidationCoordinator invalidationCoordinator,
-    ICollectorDatasetCleanup datasetCleanup,
+    ICollectorFailedDatasetFinalizer failedDatasetFinalizer,
     TimeProvider timeProvider)
     : ICollectorSessionStartupReconciler
 {
@@ -34,14 +35,26 @@ public sealed class CollectorSessionStartupReconciler(
                 cancellationToken);
             if (result.IsFailure)
                 return UnitResult.Failure(result.Error);
-            if (result.Value is null || result.Value.Status != CollectorSessionStatus.Invalidating)
+            if (result.Value is null)
                 continue;
 
-            var cleanup = await datasetCleanup.CleanupAsync(
+            var finalization = await failedDatasetFinalizer.FinalizeAsync(
                 result.Value,
                 cancellationToken);
-            if (cleanup.IsFailure)
-                return UnitResult.Failure(cleanup.Error);
+            if (finalization.IsFailure)
+                return finalization;
+        }
+
+        var expiredSessions = await sessionRepository.GetExpiredRetainedAsync(
+            now,
+            cancellationToken);
+        foreach (var session in expiredSessions)
+        {
+            var finalization = await failedDatasetFinalizer.FinalizeAsync(
+                session,
+                cancellationToken);
+            if (finalization.IsFailure)
+                return finalization;
         }
 
         return UnitResult.Success<Error>();

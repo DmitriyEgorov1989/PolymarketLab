@@ -29,7 +29,9 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
         DateTimeOffset eventEndsAt,
         int projectionVersion,
         IReadOnlyCollection<CollectorSessionTokenDefinition> tokens,
-        DateTimeOffset createdAt) : base(id)
+        DateTimeOffset createdAt,
+        CollectorFailurePolicy failurePolicy,
+        TimeSpan? failureRetentionDuration) : base(id)
     {
         MarketId = marketId;
         ExternalEventId = externalEventId;
@@ -41,6 +43,8 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
         EventEndsAt = eventEndsAt;
         ProjectionVersion = projectionVersion;
         CreatedAt = createdAt;
+        FailurePolicy = failurePolicy;
+        FailureRetentionDuration = failureRetentionDuration;
         Status = CollectorSessionStatus.Scheduled;
         Phase = CollectorSessionPhase.WaitingForPreparation;
         _tokens.AddRange(tokens
@@ -87,6 +91,33 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
 
     /// <summary>Дата и время создания сессии.</summary>
     public DateTimeOffset CreatedAt { get; private set; }
+
+    /// <summary>Неизменяемая политика обработки набора данных после отказа.</summary>
+    public CollectorFailurePolicy FailurePolicy { get; private set; }
+
+    /// <summary>
+    /// Срок диагностического хранения после отказа;
+    /// <see langword="null" /> для политики немедленного удаления.
+    /// </summary>
+    public TimeSpan? FailureRetentionDuration { get; private set; }
+
+    /// <summary>
+    /// Подтверждённая судьба failed dataset;
+    /// <see langword="null" />, пока отказ не финализирован или сессия не завершилась с ошибкой.
+    /// </summary>
+    public CollectorDatasetDisposition? DatasetDisposition { get; private set; }
+
+    /// <summary>
+    /// Момент начала диагностического хранения;
+    /// <see langword="null" />, если набор данных не удерживался.
+    /// </summary>
+    public DateTimeOffset? RetainedAt { get; private set; }
+
+    /// <summary>
+    /// Момент окончания диагностического хранения;
+    /// <see langword="null" />, если набор данных не удерживался.
+    /// </summary>
+    public DateTimeOffset? RetainUntil { get; private set; }
 
     /// <summary>Начало preparation; <see langword="null" />, если preparation не начиналась.</summary>
     public DateTimeOffset? StartedAt { get; private set; }
@@ -147,7 +178,9 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
         DateTimeOffset eventEndsAt,
         int projectionVersion,
         IReadOnlyCollection<CollectorSessionTokenDefinition> tokens,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        CollectorFailurePolicy failurePolicy = CollectorFailurePolicy.DeleteOnFailure,
+        TimeSpan? failureRetentionDuration = null)
     {
         if (createdAt == default)
             return CollectorSessionErrors.InvalidCreatedAt;
@@ -165,6 +198,15 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
             return CollectorSessionErrors.InvalidWindow;
         if (projectionVersion <= 0)
             return CollectorSessionErrors.InvalidProjectionVersion;
+        if (!Enum.IsDefined(failurePolicy))
+            return CollectorSessionErrors.InvalidFailurePolicy;
+        if ((failurePolicy == CollectorFailurePolicy.RetainOnFailure
+                && (failureRetentionDuration is null || failureRetentionDuration <= TimeSpan.Zero))
+            || (failurePolicy == CollectorFailurePolicy.DeleteOnFailure
+                && failureRetentionDuration is not null))
+        {
+            return CollectorSessionErrors.InvalidFailureRetentionDuration;
+        }
         if (tokens is null || tokens.Count < 2)
             return CollectorSessionErrors.TokensRequired;
 
@@ -200,7 +242,9 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
             eventEndsAt,
             projectionVersion,
             tokens.ToArray(),
-            createdAt);
+            createdAt,
+            failurePolicy,
+            failureRetentionDuration);
     }
 
     /// <summary>Начинает preparation запланированной session.</summary>
@@ -425,6 +469,28 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
         Status = CollectorSessionStatus.Failed;
         Phase = null;
         StoppedAt = completedAt;
+        FinalizeFailedDataset(completedAt);
+        return UnitResult.Success<Error>();
+    }
+
+    /// <summary>Подтверждает удаление диагностического набора данных после окончания срока хранения.</summary>
+    /// <param name="completedAt">Момент подтверждённого удаления набора данных.</param>
+    /// <returns>Успех либо ошибка состояния или преждевременного удаления.</returns>
+    public UnitResult<Error> CompleteRetentionExpiry(DateTimeOffset completedAt)
+    {
+        if (Status != CollectorSessionStatus.Failed
+            || DatasetDisposition is not CollectorDatasetDisposition.Retained
+                and not CollectorDatasetDisposition.Deleted
+            || RetainUntil is null)
+        {
+            return UnitResult.Failure(CollectorSessionErrors.NotActive);
+        }
+        if (DatasetDisposition == CollectorDatasetDisposition.Deleted)
+            return UnitResult.Success<Error>();
+        if (completedAt < RetainUntil)
+            return UnitResult.Failure(CollectorSessionErrors.InvalidRetentionExpiryAt);
+
+        DatasetDisposition = CollectorDatasetDisposition.Deleted;
         return UnitResult.Success<Error>();
     }
 
@@ -479,6 +545,19 @@ public sealed class CollectorSession : Aggregate<CollectorSessionId>
         FailureCode = failureCode;
         FailureMessage = failureMessage;
         return UnitResult.Success<Error>();
+    }
+
+    private void FinalizeFailedDataset(DateTimeOffset completedAt)
+    {
+        if (FailurePolicy == CollectorFailurePolicy.DeleteOnFailure)
+        {
+            DatasetDisposition = CollectorDatasetDisposition.Deleted;
+            return;
+        }
+
+        DatasetDisposition = CollectorDatasetDisposition.Retained;
+        RetainedAt = completedAt;
+        RetainUntil = completedAt.Add(FailureRetentionDuration!.Value);
     }
 
     private UnitResult<Error> ChangePhase(

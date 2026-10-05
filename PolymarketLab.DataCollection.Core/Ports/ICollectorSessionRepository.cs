@@ -56,6 +56,15 @@ public interface ICollectorSessionRepository
     Task<IReadOnlyCollection<CollectorSession>> GetActiveAsync(
         CancellationToken cancellationToken);
 
+    /// <summary>Получает failed-сессии с истёкшим сроком хранения диагностического набора.</summary>
+    /// <param name="now">Текущий момент, относительно которого проверяется срок хранения.</param>
+    /// <param name="cancellationToken">Токен отмены операции.</param>
+    /// <returns>Снимок сессий со сроком хранения не позднее <paramref name="now" />.</returns>
+    Task<IReadOnlyCollection<CollectorSession>> GetExpiredRetainedAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyCollection<CollectorSession>>([]);
+
     /// <summary>Пытается добавить новую сессию с учётом уникальности активного рынка.</summary>
     /// <param name="session">Добавляемая сессия.</param>
     /// <param name="cancellationToken">Токен отмены операции.</param>

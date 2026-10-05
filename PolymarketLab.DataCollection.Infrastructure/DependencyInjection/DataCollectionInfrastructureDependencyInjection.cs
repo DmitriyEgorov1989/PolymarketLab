@@ -7,6 +7,7 @@ using PolymarketLab.Markets.Contracts;
 using PolymarketLab.Core.Options;
 using PolymarketLab.DataCollection.Core.Application.Normalization;
 using PolymarketLab.DataCollection.Core.Ports;
+using PolymarketLab.DataCollection.Infrastructure.Adapters;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.ClobResolution;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime.WebSockets;
@@ -116,6 +117,16 @@ public static class DataCollectionInfrastructureDependencyInjection
                 "Collector lifecycle shutdown timeout must not be shorter than the WebSocket stop timeout.")
             .ValidateOnStart();
 
+        services.AddOptions<FailedDatasetRetentionOptions>()
+            .Bind(configuration.GetSection(FailedDatasetRetentionOptions.SectionName))
+            .Validate(
+                options => options.RetentionPeriod > TimeSpan.Zero,
+                "Failed dataset retention period must be positive.")
+            .Validate(
+                options => options.MaximumRetainedSessions > 0,
+                "Maximum retained diagnostic sessions must be positive.")
+            .ValidateOnStart();
+
         services.AddOptions<NormalizerOptions>()
             .Bind(configuration.GetSection(NormalizerOptions.SectionName))
             .Validate(
@@ -164,6 +175,9 @@ public static class DataCollectionInfrastructureDependencyInjection
             IWebSocketResolutionCandidateSource,
             WebSocketResolutionCandidateSource>();
         services.AddSingleton<IProjectionVersionProvider, ProjectionVersionProvider>();
+        services.AddSingleton<
+            IFailedDatasetRetentionPolicyProvider,
+            FailedDatasetRetentionPolicyProvider>();
         services.AddScoped<
             ICollectorSessionProgressRepository,
             CollectorSessionProgressRepository>();

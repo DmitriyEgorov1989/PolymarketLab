@@ -9,7 +9,9 @@ internal static class CollectorSessionTestFactory
     public static CollectorSession CreateScheduled(
         CollectorSessionId? sessionId = null,
         MarketId? marketId = null,
-        DateTimeOffset? createdAt = null)
+        DateTimeOffset? createdAt = null,
+        CollectorFailurePolicy failurePolicy = CollectorFailurePolicy.DeleteOnFailure,
+        TimeSpan? failureRetentionDuration = null)
     {
         var actualCreatedAt = createdAt ?? DateTimeOffset.Parse("2026-08-27T11:57:00Z");
         return CollectorSession.Create(
@@ -33,7 +35,9 @@ internal static class CollectorSessionTestFactory
                     "No",
                     1)
             ],
-            actualCreatedAt).Value;
+            actualCreatedAt,
+            failurePolicy,
+            failureRetentionDuration).Value;
     }
 
     public static CollectorSession CreateStarting(

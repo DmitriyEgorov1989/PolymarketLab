@@ -1,5 +1,6 @@
 using CSharpFunctionalExtensions;
 using PolymarketLab.DataCollection.Core.Application.Errors;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorFailedDatasetFinalization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
@@ -16,7 +17,7 @@ public sealed class CollectorScheduler(
     ICollectorSessionRepository sessionRepository,
     ICollectorRuntime runtime,
     ICollectorSessionInvalidationCoordinator invalidationCoordinator,
-    ICollectorDatasetCleanup datasetCleanup,
+    ICollectorFailedDatasetFinalizer failedDatasetFinalizer,
     CollectorBoundaryCheckRegistry boundaryChecks,
     TimeProvider timeProvider) : ICollectorScheduler
 {
@@ -91,7 +92,14 @@ public sealed class CollectorScheduler(
 
     public async Task<UnitResult<Error>> TickAsync(CancellationToken cancellationToken)
     {
-        var sessions = await sessionRepository.GetActiveAsync(cancellationToken);
+        var now = timeProvider.GetUtcNow();
+        var activeSessions = await sessionRepository.GetActiveAsync(cancellationToken);
+        var expiredSessions = await sessionRepository.GetExpiredRetainedAsync(
+            now,
+            cancellationToken);
+        var sessions = activeSessions
+            .Concat(expiredSessions)
+            .DistinctBy(session => session.Id);
         Error? firstError = null;
         foreach (var session in sessions)
         {
@@ -109,8 +117,15 @@ public sealed class CollectorScheduler(
     public async Task<IReadOnlyCollection<CollectorSessionId>> GetActiveSessionIdsAsync(
         CancellationToken cancellationToken)
     {
-        var sessions = await sessionRepository.GetActiveAsync(cancellationToken);
-        return sessions.Select(session => session.Id).ToArray();
+        var activeSessions = await sessionRepository.GetActiveAsync(cancellationToken);
+        var expiredSessions = await sessionRepository.GetExpiredRetainedAsync(
+            timeProvider.GetUtcNow(),
+            cancellationToken);
+        return activeSessions
+            .Concat(expiredSessions)
+            .Select(session => session.Id)
+            .Distinct()
+            .ToArray();
     }
 
     /// <inheritdoc />
@@ -138,10 +153,13 @@ public sealed class CollectorScheduler(
             if (stop.IsFailure)
                 return stop;
 
-            var cleanup = await datasetCleanup.CleanupAsync(session, cancellationToken);
-            return cleanup.IsFailure
-                ? UnitResult.Failure(cleanup.Error)
-                : UnitResult.Success<Error>();
+            return await failedDatasetFinalizer.FinalizeAsync(session, cancellationToken);
+        }
+
+        if (session.Status == CollectorSessionStatus.Failed
+            && session.DatasetDisposition == CollectorDatasetDisposition.Retained)
+        {
+            return await failedDatasetFinalizer.FinalizeAsync(session, cancellationToken);
         }
 
         if (session.Status is CollectorSessionStatus.Starting

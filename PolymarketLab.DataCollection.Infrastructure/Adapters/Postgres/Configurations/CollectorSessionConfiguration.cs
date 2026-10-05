@@ -1,6 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
+using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.CollectorSession;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 
@@ -59,6 +60,24 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Configur
                 .HasColumnName("created_at")
                 .IsRequired();
 
+            builder.Property(x => x.FailurePolicy)
+                .HasColumnName("failure_policy")
+                .HasConversion<int>()
+                .IsRequired();
+
+            builder.Property(x => x.FailureRetentionDuration)
+                .HasColumnName("failure_retention_duration");
+
+            builder.Property(x => x.DatasetDisposition)
+                .HasColumnName("dataset_disposition")
+                .HasConversion<int?>();
+
+            builder.Property(x => x.RetainedAt)
+                .HasColumnName("retained_at");
+
+            builder.Property(x => x.RetainUntil)
+                .HasColumnName("retain_until");
+
             builder.Property(x => x.StartedAt)
                 .HasColumnName("started_at");
 
@@ -107,6 +126,13 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Configur
                 .IsUnique()
                 .HasFilter(CollectorSessionDatabaseConstraints.ActiveStatusFilter)
                 .HasDatabaseName(CollectorSessionDatabaseConstraints.ActiveMarket);
+
+            builder.HasIndex(session => session.RetainUntil)
+                .HasFilter(
+                    $"\"status\" = {(int)CollectorSessionStatus.Failed} " +
+                    $"AND \"dataset_disposition\" = {(int)CollectorDatasetDisposition.Retained} " +
+                    "AND \"retain_until\" IS NOT NULL")
+                .HasDatabaseName("ix_collector_sessions_retained_expiry");
 
             builder.HasMany(x => x.Tokens)
                 .WithOne()

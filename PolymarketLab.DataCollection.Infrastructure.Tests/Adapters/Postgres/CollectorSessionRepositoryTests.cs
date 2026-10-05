@@ -266,6 +266,41 @@ public sealed class CollectorSessionRepositoryTests
         current.Should().BeNull();
     }
 
+    [Fact]
+    public async Task GetExpiredRetainedAsync_ShouldReturnOnlyExpiredFailedRetainedSessions()
+    {
+        var options = CreateOptions(new InMemoryDatabaseRoot());
+        var expired = CreateDiagnosticSession();
+        expired.BeginInvalidation(
+            Now,
+            CollectorStopReason.StartupFailure,
+            "collector.start.failed",
+            "Start failed.");
+        expired.CompleteInvalidation(Now);
+        var future = CreateDiagnosticSession();
+        future.BeginInvalidation(
+            Now.AddMinutes(30),
+            CollectorStopReason.StartupFailure,
+            "collector.start.failed",
+            "Start failed.");
+        future.CompleteInvalidation(Now.AddMinutes(30));
+        var deleted = CreateSession();
+        deleted.BeginInvalidation(
+            Now,
+            CollectorStopReason.StartupFailure,
+            "collector.start.failed",
+            "Start failed.");
+        deleted.CompleteInvalidation(Now);
+        await using var context = new DataCollectionDbContext(options);
+        context.CollectorSessions.AddRange(expired, future, deleted);
+        await context.SaveChangesAsync();
+
+        var sessions = await new CollectorSessionRepository(context)
+            .GetExpiredRetainedAsync(Now.AddHours(1), CancellationToken.None);
+
+        sessions.Select(session => session.Id).Should().Equal(expired.Id);
+    }
+
     private static DbContextOptions<DataCollectionDbContext> CreateOptions(
         InMemoryDatabaseRoot databaseRoot)
     {
@@ -295,6 +330,26 @@ public sealed class CollectorSessionRepositoryTests
             ],
             createdAt ?? Now).Value;
     }
+
+    private static CollectorSessionAggregate CreateDiagnosticSession() =>
+        CollectorSessionAggregate.Create(
+            CollectorSessionId.Create(Guid.NewGuid()).Value,
+            MarketId.Create(Guid.NewGuid()).Value,
+            "event-123",
+            "btc-updown-5m-1200",
+            "market-123",
+            "btc-updown-5m-1200",
+            "0xabc",
+            Now.AddMinutes(3),
+            Now.AddMinutes(8),
+            3,
+            [
+                new CollectorSessionTokenDefinition(TokenId.Create("1001").Value, "Yes", 0),
+                new CollectorSessionTokenDefinition(TokenId.Create("1002").Value, "No", 1)
+            ],
+            Now,
+            CollectorFailurePolicy.RetainOnFailure,
+            TimeSpan.FromHours(1)).Value;
 
     private static void MarkRunning(
         CollectorSessionAggregate session,

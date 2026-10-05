@@ -7,5 +7,8 @@ public enum CollectorSessionInsertStatus
     Inserted = 1,
 
     /// <summary>Для рынка уже существует другая нетерминальная сессия.</summary>
-    ActiveMarketConflict = 2
+    ActiveMarketConflict = 2,
+
+    /// <summary>Достигнут лимит одновременно хранимых диагностических сессий.</summary>
+    DiagnosticQuotaExceeded = 3
 }

@@ -12,6 +12,7 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartColle
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StopCollector;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.ReplayNormalization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorFailedDatasetFinalization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRawDatasetCompletion;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorNormalizationSuitability;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorOrderBookIntegrity;
@@ -96,6 +97,10 @@ public sealed class DataCollectionApplicationDependencyInjectionTests
         services.Should().Contain(descriptor =>
             descriptor.ServiceType == typeof(ICollectorScheduler)
             && descriptor.ImplementationType == typeof(CollectorScheduler)
+            && descriptor.Lifetime == ServiceLifetime.Scoped);
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(ICollectorFailedDatasetFinalizer)
+            && descriptor.ImplementationType == typeof(CollectorFailedDatasetFinalizer)
             && descriptor.Lifetime == ServiceLifetime.Scoped);
         services.Should().ContainSingle(descriptor =>
             descriptor.ServiceType == typeof(CollectorBoundaryCheckRegistry)

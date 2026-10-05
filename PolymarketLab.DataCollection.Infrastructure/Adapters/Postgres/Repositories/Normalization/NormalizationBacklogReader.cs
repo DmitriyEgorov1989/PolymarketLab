@@ -53,6 +53,9 @@ internal sealed class NormalizationBacklogReader(DataCollectionDbContext dbConte
                 LEFT JOIN data_collection.raw_message_normalizations AS normalization
                   ON normalization.raw_message_id = raw.id
                  AND normalization.projection_version = @projection_version
+                JOIN data_collection.collector_sessions AS session
+                  ON session.id = raw.session_id
+                 AND session.invalidating_at IS NULL
                 """;
             AddParameter(command, "projection_version", projectionVersion);
             AddParameter(command, "pending_status", (int)NormalizationStatus.Pending);

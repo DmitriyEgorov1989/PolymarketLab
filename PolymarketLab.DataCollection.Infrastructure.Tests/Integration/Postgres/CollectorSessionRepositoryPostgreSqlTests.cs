@@ -1,5 +1,7 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using PolymarketLab.Core.Options;
 using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Domain.Models.Resolution;
@@ -205,6 +207,141 @@ public sealed class CollectorSessionRepositoryPostgreSqlTests(PostgreSqlFixture 
             .Should().Equal("1001", "1002");
     }
 
+    [Fact]
+    public async Task ConcurrentDiagnosticInserts_ShouldAdmitAtMostConfiguredQuota()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var sessions = Enumerable.Range(0, 6)
+            .Select(_ => CreateSession(
+                MarketId.Create(Guid.NewGuid()).Value,
+                CollectorFailurePolicy.RetainOnFailure))
+            .ToArray();
+
+        var results = await Task.WhenAll(sessions.Select(session =>
+            InsertAsync(database.ConnectionString, session, maximumRetainedSessions: 5)));
+
+        results.Count(result => result == CollectorSessionInsertStatus.Inserted)
+            .Should().Be(5);
+        results.Should().ContainSingle(result =>
+            result == CollectorSessionInsertStatus.DiagnosticQuotaExceeded);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TerminalDiagnosticSession_ShouldReleaseQuota(bool failedAndDeleted)
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var sessions = Enumerable.Range(0, 5)
+            .Select(_ => CreateSession(
+                MarketId.Create(Guid.NewGuid()).Value,
+                CollectorFailurePolicy.RetainOnFailure))
+            .ToArray();
+        foreach (var session in sessions)
+        {
+            (await InsertAsync(database.ConnectionString, session, 5)).Should()
+                .Be(CollectorSessionInsertStatus.Inserted);
+        }
+
+        await using (var context = CreateContext(database.ConnectionString))
+        {
+            var repository = CreateRepository(context, 5);
+            var released = await repository.GetByIdAsync(
+                sessions[0].Id,
+                CancellationToken.None);
+            if (failedAndDeleted)
+            {
+                released!.BeginInvalidation(
+                    CreatedAt.AddMinutes(1),
+                    CollectorStopReason.StartupFailure,
+                    "collector.start.failed",
+                    "Start failed.").IsSuccess.Should().BeTrue();
+                released.CompleteInvalidation(CreatedAt.AddMinutes(1))
+                    .IsSuccess.Should().BeTrue();
+                released.CompleteRetentionExpiry(CreatedAt.AddHours(13))
+                    .IsSuccess.Should().BeTrue();
+            }
+            else
+            {
+                released!.Stop(
+                    CreatedAt.AddMinutes(1),
+                    CollectorStopReason.Requested).IsSuccess.Should().BeTrue();
+            }
+
+            (await repository.TryUpdateAsync(
+                released,
+                CollectorSessionStatus.Scheduled,
+                CancellationToken.None)).Value.Should().Be(
+                    CollectorSessionUpdateStatus.Updated);
+        }
+
+        var replacement = CreateSession(
+            MarketId.Create(Guid.NewGuid()).Value,
+            CollectorFailurePolicy.RetainOnFailure);
+        (await InsertAsync(database.ConnectionString, replacement, 5)).Should()
+            .Be(CollectorSessionInsertStatus.Inserted);
+    }
+
+    [Fact]
+    public async Task StandardInsert_WhenDiagnosticQuotaIsFull_ShouldStillBeInserted()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        for (var index = 0; index < 5; index++)
+        {
+            var diagnostic = CreateSession(
+                MarketId.Create(Guid.NewGuid()).Value,
+                CollectorFailurePolicy.RetainOnFailure);
+            (await InsertAsync(database.ConnectionString, diagnostic, 5)).Should()
+                .Be(CollectorSessionInsertStatus.Inserted);
+        }
+
+        var standard = CreateSession(MarketId.Create(Guid.NewGuid()).Value);
+
+        (await InsertAsync(database.ConnectionString, standard, 5)).Should()
+            .Be(CollectorSessionInsertStatus.Inserted);
+    }
+
+    [Fact]
+    public async Task GetExpiredRetainedAsync_ShouldReturnOnlyExpiredFailedRetainedSessions()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var expired = CreateSession(
+            MarketId.Create(Guid.NewGuid()).Value,
+            CollectorFailurePolicy.RetainOnFailure);
+        var future = CreateSession(
+            MarketId.Create(Guid.NewGuid()).Value,
+            CollectorFailurePolicy.RetainOnFailure);
+        var deleted = CreateSession(MarketId.Create(Guid.NewGuid()).Value);
+        expired.BeginInvalidation(
+            CreatedAt.AddMinutes(1),
+            CollectorStopReason.StartupFailure,
+            "collector.start.failed",
+            "Start failed.");
+        expired.CompleteInvalidation(CreatedAt.AddMinutes(1));
+        future.BeginInvalidation(
+            CreatedAt.AddHours(2),
+            CollectorStopReason.StartupFailure,
+            "collector.start.failed",
+            "Start failed.");
+        future.CompleteInvalidation(CreatedAt.AddHours(2));
+        deleted.Fail(
+            CreatedAt.AddMinutes(1),
+            CollectorStopReason.StartupFailure,
+            "collector.start.failed",
+            "Start failed.");
+        await using (var context = CreateContext(database.ConnectionString))
+        {
+            context.CollectorSessions.AddRange(expired, future, deleted);
+            await context.SaveChangesAsync();
+        }
+
+        await using var readContext = CreateContext(database.ConnectionString);
+        var sessions = await CreateRepository(readContext, 5)
+            .GetExpiredRetainedAsync(CreatedAt.AddHours(13), CancellationToken.None);
+
+        sessions.Select(session => session.Id).Should().Equal(expired.Id);
+    }
+
     private async Task<PostgreSqlTestDatabase> CreateMigratedDatabaseAsync()
     {
         var database = await fixture.CreateDatabaseAsync();
@@ -215,10 +352,14 @@ public sealed class CollectorSessionRepositoryPostgreSqlTests(PostgreSqlFixture 
 
     private static async Task<CollectorSessionInsertStatus> InsertAsync(
         string connectionString,
-        CollectorSessionAggregate session)
+        CollectorSessionAggregate session,
+        int? maximumRetainedSessions = null)
     {
         await using var context = CreateContext(connectionString);
-        var result = await new CollectorSessionRepository(context)
+        var repository = maximumRetainedSessions is null
+            ? new CollectorSessionRepository(context)
+            : CreateRepository(context, maximumRetainedSessions.Value);
+        var result = await repository
             .TryAddAsync(session, CancellationToken.None);
         result.IsSuccess.Should().BeTrue();
         return result.Value;
@@ -232,7 +373,19 @@ public sealed class CollectorSessionRepositoryPostgreSqlTests(PostgreSqlFixture 
         return new DataCollectionDbContext(options);
     }
 
-    private static CollectorSessionAggregate CreateSession(MarketId marketId) =>
+    private static CollectorSessionRepository CreateRepository(
+        DataCollectionDbContext context,
+        int maximumRetainedSessions) =>
+        new(
+            context,
+            Options.Create(new FailedDatasetRetentionOptions
+            {
+                MaximumRetainedSessions = maximumRetainedSessions
+            }));
+
+    private static CollectorSessionAggregate CreateSession(
+        MarketId marketId,
+        CollectorFailurePolicy failurePolicy = CollectorFailurePolicy.DeleteOnFailure) =>
         CollectorSessionAggregate.Create(
             CollectorSessionId.Create(Guid.NewGuid()).Value,
             marketId,
@@ -248,5 +401,9 @@ public sealed class CollectorSessionRepositoryPostgreSqlTests(PostgreSqlFixture 
                 new CollectorSessionTokenDefinition(TokenId.Create("1001").Value, "Yes", 0),
                 new CollectorSessionTokenDefinition(TokenId.Create("1002").Value, "No", 1)
             ],
-            CreatedAt).Value;
+            CreatedAt,
+            failurePolicy,
+            failurePolicy == CollectorFailurePolicy.RetainOnFailure
+                ? TimeSpan.FromHours(12)
+                : null).Value;
 }

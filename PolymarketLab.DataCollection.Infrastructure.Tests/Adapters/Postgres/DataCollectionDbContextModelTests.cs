@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using PolymarketLab.DataCollection.Core.Application.Normalization.Models;
 using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
+using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Models;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
@@ -43,6 +44,23 @@ public sealed class DataCollectionDbContextModelTests
         invalidatingAt.GetColumnType().Should().Be("timestamp with time zone");
         invalidatingAt.IsNullable.Should().BeTrue();
 
+        AssertConverter<CollectorFailurePolicy, int>(
+            session,
+            nameof(CollectorSessionAggregate.FailurePolicy));
+        session.FindProperty(nameof(CollectorSessionAggregate.FailurePolicy))!
+            .GetColumnName().Should().Be("failure_policy");
+        session.FindProperty(nameof(CollectorSessionAggregate.FailureRetentionDuration))!
+            .GetColumnName().Should().Be("failure_retention_duration");
+        AssertConverter<CollectorDatasetDisposition, int>(
+            session,
+            nameof(CollectorSessionAggregate.DatasetDisposition));
+        session.FindProperty(nameof(CollectorSessionAggregate.DatasetDisposition))!
+            .IsNullable.Should().BeTrue();
+        session.FindProperty(nameof(CollectorSessionAggregate.RetainedAt))!
+            .GetColumnName().Should().Be("retained_at");
+        session.FindProperty(nameof(CollectorSessionAggregate.RetainUntil))!
+            .GetColumnName().Should().Be("retain_until");
+
         var activeIndex = session.GetIndexes().Single(index =>
             index.GetDatabaseName() == "ux_collector_sessions_active_market");
 
@@ -52,6 +70,16 @@ public sealed class DataCollectionDbContextModelTests
             .Select(property => property.Name)
             .Should()
             .Equal(nameof(CollectorSessionAggregate.MarketId));
+
+        var retainedExpiryIndex = session.GetIndexes().Single(index =>
+            index.GetDatabaseName() == "ix_collector_sessions_retained_expiry");
+        retainedExpiryIndex.IsUnique.Should().BeFalse();
+        retainedExpiryIndex.GetFilter().Should().Be(
+            "\"status\" = 4 AND \"dataset_disposition\" = 0 AND \"retain_until\" IS NOT NULL");
+        retainedExpiryIndex.Properties
+            .Select(property => property.Name)
+            .Should()
+            .Equal(nameof(CollectorSessionAggregate.RetainUntil));
 
         var token = _model.FindEntityType(typeof(CollectorSessionToken));
         token.Should().NotBeNull();

@@ -128,6 +128,151 @@ public sealed class CollectorDatasetCleanupPostgreSqlTests(PostgreSqlFixture fix
         target.Status.Should().Be(CollectorSessionStatus.Invalidating);
     }
 
+    [Fact]
+    public async Task CleanupAsync_WhenRetentionExpired_ShouldDeleteOnlyTargetDatasetAndBeIdempotent()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var unrelated = await InsertSessionAsync(database.ConnectionString, terminal: true);
+        var target = await InsertRetainedSessionAsync(database.ConnectionString);
+        await SeedDatasetAsync(database.ConnectionString, unrelated.Id);
+        await SeedDatasetAsync(database.ConnectionString, target.Id);
+        await using var staleContext = CreateContext(database.ConnectionString);
+        var staleTarget = await new CollectorSessionRepository(staleContext)
+            .GetByIdAsync(target.Id, CancellationToken.None);
+        var cleanupAt = target.RetainUntil!.Value;
+        await using var context = CreateContext(database.ConnectionString);
+        var cleanup = new CollectorDatasetCleanup(context, new FixedTimeProvider(cleanupAt));
+
+        var result = await cleanup.CleanupAsync(target, CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().BeEquivalentTo(new
+        {
+            SessionId = target.Id,
+            CompletedAt = cleanupAt,
+            DeletedRawMessageCount = 1L,
+            DeletedNormalizationCount = 2L,
+            DeletedNormalizedEventCount = 14L
+        });
+        target.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Deleted);
+        (await ReadCountAsync(database.ConnectionString, "raw_market_messages", target.Id))
+            .Should().Be(0);
+        (await ReadCountAsync(database.ConnectionString, "raw_market_messages", unrelated.Id))
+            .Should().Be(1);
+        (await ReadOwnedByRawCountAsync(
+            database.ConnectionString,
+            "raw_message_normalizations",
+            unrelated.Id)).Should().Be(2);
+        (await ReadCountAsync(database.ConnectionString, "normalized_events", unrelated.Id))
+            .Should().Be(14);
+        foreach (var table in TypedTables)
+        {
+            (await ReadTotalCountAsync(database.ConnectionString, table))
+                .Should().Be(2, $"typed table {table} must retain only the unrelated session");
+        }
+
+        await using var retryContext = CreateContext(database.ConnectionString);
+        var retry = await new CollectorDatasetCleanup(
+                retryContext,
+                new FixedTimeProvider(cleanupAt.AddMinutes(1)))
+            .CleanupAsync(staleTarget!, CancellationToken.None);
+
+        retry.IsSuccess.Should().BeTrue();
+        retry.Value.Should().Be(result.Value);
+        staleTarget!.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Deleted);
+        (await ReadCountAsync(
+            database.ConnectionString,
+            "collector_dataset_cleanup_audits",
+            target.Id)).Should().Be(1);
+        await using var verificationContext = CreateContext(database.ConnectionString);
+        var persisted = await new CollectorSessionRepository(verificationContext)
+            .GetByIdAsync(target.Id, CancellationToken.None);
+        persisted!.Status.Should().Be(CollectorSessionStatus.Failed);
+        persisted.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Deleted);
+        persisted.StoppedAt.Should().Be(target.StoppedAt);
+        persisted.StopReason.Should().Be(target.StopReason);
+        persisted.FailureCode.Should().Be(target.FailureCode);
+        persisted.FailureMessage.Should().Be(target.FailureMessage);
+    }
+
+    [Fact]
+    public async Task CleanupAsync_WhenRetentionUnexpired_ShouldNotDeleteDataset()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var target = await InsertRetainedSessionAsync(database.ConnectionString);
+        await SeedDatasetAsync(database.ConnectionString, target.Id);
+        await using var context = CreateContext(database.ConnectionString);
+        var cleanup = new CollectorDatasetCleanup(
+            context,
+            new FixedTimeProvider(target.RetainUntil!.Value.AddTicks(-1)));
+
+        var result = await cleanup.CleanupAsync(target, CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        (await ReadCountAsync(database.ConnectionString, "raw_market_messages", target.Id))
+            .Should().Be(1);
+        (await ReadCountAsync(
+            database.ConnectionString,
+            "collector_dataset_cleanup_audits",
+            target.Id)).Should().Be(0);
+        target.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Retained);
+    }
+
+    [Fact]
+    public async Task CleanupAsync_WhenExpiredRetentionTransactionFails_ShouldRollbackAsRetained()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var target = await InsertRetainedSessionAsync(database.ConnectionString);
+        await SeedDatasetAsync(database.ConnectionString, target.Id);
+        await CreateDeleteGuardAsync(database.ConnectionString, target.Id);
+        await using var context = CreateContext(database.ConnectionString);
+        var cleanup = new CollectorDatasetCleanup(
+            context,
+            new FixedTimeProvider(target.RetainUntil!.Value));
+
+        var action = () => cleanup.CleanupAsync(target, CancellationToken.None);
+
+        await action.Should().ThrowAsync<PostgresException>();
+        (await ReadCountAsync(database.ConnectionString, "raw_market_messages", target.Id))
+            .Should().Be(1);
+        (await ReadCountAsync(database.ConnectionString, "normalized_events", target.Id))
+            .Should().Be(14);
+        (await ReadCountAsync(
+            database.ConnectionString,
+            "collector_dataset_cleanup_audits",
+            target.Id)).Should().Be(0);
+        target.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Retained);
+        await using var verificationContext = CreateContext(database.ConnectionString);
+        var persisted = await new CollectorSessionRepository(verificationContext)
+            .GetByIdAsync(target.Id, CancellationToken.None);
+        persisted!.Status.Should().Be(CollectorSessionStatus.Failed);
+        persisted.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Retained);
+    }
+
+    [Fact]
+    public async Task CleanupAsync_WhenRetainPolicyIsInvalidating_ShouldNotDeleteDataset()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var target = await InsertSessionAsync(
+            database.ConnectionString,
+            terminal: false,
+            CollectorFailurePolicy.RetainOnFailure);
+        await SeedDatasetAsync(database.ConnectionString, target.Id);
+        await using var context = CreateContext(database.ConnectionString);
+        var cleanup = new CollectorDatasetCleanup(context, new FixedTimeProvider(CompletedAt));
+
+        var result = await cleanup.CleanupAsync(target, CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        (await ReadCountAsync(database.ConnectionString, "raw_market_messages", target.Id))
+            .Should().Be(1);
+        (await ReadCountAsync(
+            database.ConnectionString,
+            "collector_dataset_cleanup_audits",
+            target.Id)).Should().Be(0);
+        target.Status.Should().Be(CollectorSessionStatus.Invalidating);
+    }
+
     private static readonly string[] TypedTables =
     [
         "last_trade_price",
@@ -152,7 +297,8 @@ public sealed class CollectorDatasetCleanupPostgreSqlTests(PostgreSqlFixture fix
 
     private static async Task<CollectorSessionAggregate> InsertSessionAsync(
         string connectionString,
-        bool terminal)
+        bool terminal,
+        CollectorFailurePolicy failurePolicy = CollectorFailurePolicy.DeleteOnFailure)
     {
         var session = CollectorSessionAggregate.Create(
             CollectorSessionId.Create(Guid.NewGuid()).Value,
@@ -169,7 +315,11 @@ public sealed class CollectorDatasetCleanupPostgreSqlTests(PostgreSqlFixture fix
                 new CollectorSessionTokenDefinition(TokenId.Create("1001").Value, "Yes", 0),
                 new CollectorSessionTokenDefinition(TokenId.Create("1002").Value, "No", 1)
             ],
-            CreatedAt).Value;
+            CreatedAt,
+            failurePolicy,
+            failurePolicy == CollectorFailurePolicy.RetainOnFailure
+                ? TimeSpan.FromHours(1)
+                : null).Value;
         await using var context = CreateContext(connectionString);
         var repository = new CollectorSessionRepository(context);
         (await repository.TryAddAsync(session, CancellationToken.None)).Value
@@ -187,6 +337,23 @@ public sealed class CollectorDatasetCleanupPostgreSqlTests(PostgreSqlFixture fix
         (await repository.TryUpdateAsync(
             session,
             CollectorSessionStatus.Scheduled,
+            CancellationToken.None)).Value.Should().Be(CollectorSessionUpdateStatus.Updated);
+        return session;
+    }
+
+    private static async Task<CollectorSessionAggregate> InsertRetainedSessionAsync(
+        string connectionString)
+    {
+        var session = await InsertSessionAsync(
+            connectionString,
+            terminal: false,
+            CollectorFailurePolicy.RetainOnFailure);
+        session.CompleteInvalidation(CompletedAt).IsSuccess.Should().BeTrue();
+        await using var context = CreateContext(connectionString);
+        var repository = new CollectorSessionRepository(context);
+        (await repository.TryUpdateAsync(
+            session,
+            CollectorSessionStatus.Invalidating,
             CancellationToken.None)).Value.Should().Be(CollectorSessionUpdateStatus.Updated);
         return session;
     }

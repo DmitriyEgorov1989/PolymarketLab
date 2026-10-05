@@ -8,6 +8,7 @@ using PolymarketLab.DataCollection.Core.Application.Resolution;
 using PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection;
 using PolymarketLab.DataCollection.Core.Application.OrderBooks.Resynchronization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeFailure;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorFailedDatasetFinalization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRuntimeReadiness;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
@@ -62,6 +63,9 @@ public static class DataCollectionApplicationDependencyInjection
             ICollectorSessionResponseFactory,
             CollectorSessionResponseFactory>();
         services.AddScoped<ICollectorScheduler, CollectorScheduler>();
+        services.AddScoped<
+            ICollectorFailedDatasetFinalizer,
+            CollectorFailedDatasetFinalizer>();
         services.AddScoped<
             IResolutionConsensusCoordinator,
             ResolutionConsensusCoordinator>();

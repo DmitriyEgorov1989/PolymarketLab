@@ -15,6 +15,7 @@ using PolymarketLab.DataCollection.Core.Application.Normalization;
 using PolymarketLab.DataCollection.Core.Application.Normalization.Models;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
 using PolymarketLab.DataCollection.Core.Application.UseCases.ResolutionConsensus;
+using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
@@ -23,6 +24,7 @@ using PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime.WebS
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Resolution;
+using PolymarketLab.SharedKernel.DomainModels.Ids;
 using Xunit;
 
 namespace PolymarketLab.Acceptance.Tests;
@@ -846,6 +848,143 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
         (await context.BookSnapshots.CountAsync()).Should().Be(0);
     }
 
+    [Fact]
+    public async Task DiagnosticFailure_ShouldRetainCompleteDatasetAndReleaseMarketSlot()
+    {
+        var eventStartsAt = DateTimeOffset.Parse("2026-09-05T12:00:00Z");
+        var clock = new FakeTimeProvider(eventStartsAt.AddSeconds(-60));
+        var scenario = new AcceptanceScenario(eventStartsAt, "retained-slot");
+        var failedSocket = new ControllableWebSocketConnection();
+        var replacementSocket = new ControllableWebSocketConnection();
+        var socketFactory = new ControllableWebSocketFactory(failedSocket, replacementSocket);
+        var normalizationGate = new NormalizationGate();
+        normalizationGate.Release();
+        await using var database = await fixture.CreateDatabaseAsync();
+        await database.ApplyMigrationsAsync();
+        await using var factory = new AcceptanceWebApplicationFactory(
+            database.ConnectionString,
+            clock,
+            services => ConfigureDeterministicScenarios(
+                services,
+                [scenario],
+                socketFactory,
+                normalizationGate),
+            FailedDatasetRetentionSettings);
+        using var client = factory.CreateClient();
+
+        var marketId = await RegisterMarketAsync(client, scenario);
+        var failedSessionId = await GetSessionIdByMarketAsync(client, marketId);
+        var retainedCounts = await FailAndRetainAsync(
+            client,
+            factory.Services,
+            database,
+            clock,
+            scenario,
+            failedSocket,
+            failedSessionId);
+
+        var retained = await ReadSessionAsync(database, failedSessionId);
+        retained.FailurePolicy.Should().Be(CollectorFailurePolicy.RetainOnFailure);
+        retained.FailureRetentionDuration.Should().Be(TimeSpan.FromHours(12));
+        retained.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Retained);
+        retained.RetainedAt.Should().Be(retained.StoppedAt);
+        retained.RetainUntil.Should().Be(retained.RetainedAt!.Value.AddHours(12));
+        retainedCounts.Raw.Should().BeGreaterThanOrEqualTo(2);
+        retainedCounts.Ledger.Should().BeGreaterThanOrEqualTo(2);
+        retainedCounts.NormalizedEvents.Should().BeGreaterThanOrEqualTo(2);
+        retainedCounts.BookSnapshots.Should().BeGreaterThanOrEqualTo(2);
+
+        (await RegisterMarketAsync(client, scenario)).Should().Be(marketId);
+        var replacementSessionId = await GetSessionIdByMarketAsync(client, marketId);
+        replacementSessionId.Should().NotBe(failedSessionId);
+        AssertState(
+            await GetSessionAsync(client, replacementSessionId),
+            "Starting",
+            "AwaitingInitialBooks");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await replacementSocket.WaitForSubscriptionAsync(timeout.Token);
+    }
+
+    [Fact]
+    public async Task RestartAtRetentionExpiry_ShouldDeleteOnlyExpiredDataset()
+    {
+        var firstEventStartsAt = DateTimeOffset.Parse("2026-09-05T12:00:00Z");
+        var secondEventStartsAt = firstEventStartsAt.AddHours(11);
+        var clock = new FakeTimeProvider(firstEventStartsAt.AddSeconds(-60));
+        var expiredScenario = new AcceptanceScenario(firstEventStartsAt, "expired-retained");
+        var neighborScenario = new AcceptanceScenario(secondEventStartsAt, "unexpired-retained");
+        var expiredSocket = new ControllableWebSocketConnection();
+        var neighborSocket = new ControllableWebSocketConnection();
+        var socketFactory = new ControllableWebSocketFactory(expiredSocket, neighborSocket);
+        var normalizationGate = new NormalizationGate();
+        normalizationGate.Release();
+        await using var database = await fixture.CreateDatabaseAsync();
+        await database.ApplyMigrationsAsync();
+
+        Guid expiredSessionId;
+        Guid neighborSessionId;
+        DatasetCounts neighborCounts;
+        DateTimeOffset expiresAt;
+        await using (var factory = new AcceptanceWebApplicationFactory(
+            database.ConnectionString,
+            clock,
+            services => ConfigureDeterministicScenarios(
+                services,
+                [expiredScenario, neighborScenario],
+                socketFactory,
+                normalizationGate),
+            FailedDatasetRetentionSettings))
+        {
+            using var client = factory.CreateClient();
+            var expiredMarketId = await RegisterMarketAsync(client, expiredScenario);
+            var neighborMarketId = await RegisterMarketAsync(client, neighborScenario);
+            expiredSessionId = await GetSessionIdByMarketAsync(client, expiredMarketId);
+            neighborSessionId = await GetSessionIdByMarketAsync(client, neighborMarketId);
+
+            await FailAndRetainAsync(
+                client,
+                factory.Services,
+                database,
+                clock,
+                expiredScenario,
+                expiredSocket,
+                expiredSessionId);
+            expiresAt = (await ReadSessionAsync(database, expiredSessionId)).RetainUntil!.Value;
+
+            AdvanceTo(clock, secondEventStartsAt.AddSeconds(-60));
+            await TickSchedulerAsync(factory.Services);
+            neighborCounts = await FailAndRetainAsync(
+                client,
+                factory.Services,
+                database,
+                clock,
+                neighborScenario,
+                neighborSocket,
+                neighborSessionId);
+        }
+
+        AdvanceTo(clock, expiresAt);
+        await using var restartedFactory = new AcceptanceWebApplicationFactory(
+            database.ConnectionString,
+            clock,
+            services => ConfigureDeterministicScenarios(
+                services,
+                [expiredScenario, neighborScenario],
+                new ControllableWebSocketFactory(),
+                new NormalizationGate()),
+            FailedDatasetRetentionSettings);
+        using var restartedClient = restartedFactory.CreateClient();
+
+        var expired = await ReadSessionAsync(database, expiredSessionId);
+        expired.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Deleted);
+        (await ReadDatasetCountsAsync(database, expiredSessionId)).Should().Be(DatasetCounts.Empty);
+
+        var neighbor = await ReadSessionAsync(database, neighborSessionId);
+        neighbor.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Retained);
+        neighbor.RetainUntil.Should().BeAfter(clock.GetUtcNow());
+        (await ReadDatasetCountsAsync(database, neighborSessionId)).Should().Be(neighborCounts);
+    }
+
     private static void ConfigureScenario(
         IServiceCollection services,
         AcceptanceScenario scenario,
@@ -875,6 +1014,18 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
                 normalizationGate));
     }
 
+    private static void ConfigureDeterministicScenarios(
+        IServiceCollection services,
+        IReadOnlyCollection<AcceptanceScenario> scenarios,
+        ControllableWebSocketFactory socketFactory,
+        NormalizationGate normalizationGate)
+    {
+        ConfigureScenarios(services, scenarios, socketFactory, normalizationGate);
+        services.Remove(services.Single(descriptor =>
+            descriptor.ServiceType == typeof(IHostedService)
+            && descriptor.ImplementationType == typeof(CollectorSchedulerBackgroundService)));
+    }
+
     private static async Task TickResolutionAsync(IServiceProvider services)
     {
         await using var scope = services.CreateAsyncScope();
@@ -890,6 +1041,102 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
         var result = await scope.ServiceProvider.GetRequiredService<ICollectorScheduler>()
             .TickAsync(CancellationToken.None);
         result.IsSuccess.Should().BeTrue();
+    }
+
+    private static async Task<DatasetCounts> FailAndRetainAsync(
+        HttpClient client,
+        IServiceProvider services,
+        AcceptanceDatabase database,
+        FakeTimeProvider clock,
+        AcceptanceScenario scenario,
+        ControllableWebSocketConnection socket,
+        Guid sessionId)
+    {
+        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+            await socket.WaitForSubscriptionAsync(timeout.Token);
+        socket.Emit(BookMessage(scenario, scenario.YesTokenId));
+        socket.Emit(BookMessage(scenario, scenario.NoTokenId));
+        await WaitForStateAsync(
+            client,
+            clock,
+            sessionId,
+            "Running",
+            "ReadyBeforeWindow",
+            advanceClock: false);
+        await WaitForRawCountAsync(client, sessionId, minimumCount: 2);
+        await using (var scope = services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<INormalizationProcessor>()
+                .ProcessBatchAsync(CancellationToken.None);
+        }
+        var counts = await WaitForDatasetAsync(database, sessionId, minimumCount: 2);
+
+        using var stopResponse = await client.PostAsync($"/api/Collector/{sessionId}/stop", null);
+        stopResponse.EnsureSuccessStatusCode();
+        var invalidating = await GetSessionAsync(client, sessionId);
+        AssertState(invalidating, "Invalidating", "Cleaning");
+        invalidating["cleanup"].Should().BeNull();
+
+        await TickSchedulerAsync(services);
+        var failed = await GetSessionAsync(client, sessionId);
+        AssertState(failed, "Failed", null);
+        failed["cleanup"].Should().BeNull();
+        return counts;
+    }
+
+    private static async Task<DatasetCounts> WaitForDatasetAsync(
+        AcceptanceDatabase database,
+        Guid sessionId,
+        long minimumCount)
+    {
+        DatasetCounts latest = DatasetCounts.Empty;
+        for (var attempt = 0; attempt < 60; attempt++)
+        {
+            latest = await ReadDatasetCountsAsync(database, sessionId);
+            if (latest.Raw >= minimumCount
+                && latest.Ledger >= minimumCount
+                && latest.NormalizedEvents >= minimumCount
+                && latest.BookSnapshots >= minimumCount)
+            {
+                return latest;
+            }
+
+            await Task.Delay(20);
+        }
+
+        throw new Xunit.Sdk.XunitException(
+            $"Session dataset did not reach {minimumCount} rows per layer. Last counts: {latest}.");
+    }
+
+    private static async Task<DatasetCounts> ReadDatasetCountsAsync(
+        AcceptanceDatabase database,
+        Guid sessionId)
+    {
+        var id = CollectorSessionId.Create(sessionId).Value;
+        await using var context = database.CreateDataCollectionContext();
+        var rawIds = context.RawMarketMessages
+            .Where(message => message.SessionId == id)
+            .Select(message => message.Id);
+        var normalizedEventIds = context.NormalizedEvents
+            .Where(@event => @event.SessionId == id)
+            .Select(@event => @event.Id);
+        return new DatasetCounts(
+            await rawIds.LongCountAsync(),
+            await context.RawMessageNormalizations
+                .LongCountAsync(normalization => rawIds.Contains(normalization.RawMessageId)),
+            await normalizedEventIds.LongCountAsync(),
+            await context.BookSnapshots
+                .LongCountAsync(snapshot => normalizedEventIds.Contains(snapshot.EventId)));
+    }
+
+    private static async Task<PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.CollectorSession>
+        ReadSessionAsync(AcceptanceDatabase database, Guid sessionId)
+    {
+        var id = CollectorSessionId.Create(sessionId).Value;
+        await using var context = database.CreateDataCollectionContext();
+        return await context.CollectorSessions
+            .AsNoTracking()
+            .SingleAsync(session => session.Id == id);
     }
 
     private static async Task<Guid> RegisterMarketAsync(
@@ -1067,5 +1314,22 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
         }
         """;
 
+    private static readonly IReadOnlyDictionary<string, string> FailedDatasetRetentionSettings =
+        new Dictionary<string, string>
+        {
+            ["FailedDatasetRetention:Enabled"] = "true",
+            ["FailedDatasetRetention:RetentionPeriod"] = "12:00:00",
+            ["FailedDatasetRetention:MaximumRetainedSessions"] = "5"
+        };
+
     private sealed record MarketRegistrationResult(Guid MarketId, bool Created);
+
+    private sealed record DatasetCounts(
+        long Raw,
+        long Ledger,
+        long NormalizedEvents,
+        long BookSnapshots)
+    {
+        public static DatasetCounts Empty { get; } = new(0, 0, 0, 0);
+    }
 }

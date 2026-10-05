@@ -9,7 +9,8 @@ namespace PolymarketLab.Acceptance.Tests.Host;
 internal sealed class AcceptanceWebApplicationFactory(
     string connectionString,
     TimeProvider timeProvider,
-    Action<IServiceCollection>? configureTestServices = null)
+    Action<IServiceCollection>? configureTestServices = null,
+    IReadOnlyDictionary<string, string>? settings = null)
     : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -24,6 +25,11 @@ internal sealed class AcceptanceWebApplicationFactory(
         builder.UseSetting("Normalizer:BatchSize", "32");
         builder.UseSetting("Normalizer:WriteBatchSize", "16");
         builder.UseSetting("Normalizer:IdleDelay", "00:00:00.050");
+        if (settings is not null)
+        {
+            foreach (var setting in settings)
+                builder.UseSetting(setting.Key, setting.Value);
+        }
 
         builder.ConfigureTestServices(services =>
         {

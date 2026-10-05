@@ -5,13 +5,16 @@ using CollectorSessionAggregate = PolymarketLab.DataCollection.Core.Domain.Model
 
 namespace PolymarketLab.DataCollection.Core.Ports;
 
-/// <summary>Атомарно удаляет перестраиваемые данные аннулируемой сессии и завершает её как ошибочную.</summary>
+/// <summary>Атомарно удаляет перестраиваемые данные failed-сессии и подтверждает их удаление.</summary>
 public interface ICollectorDatasetCleanup
 {
     /// <summary>
-    /// Удаляет dataset сессии, сохраняет audit и выполняет переход <c>Invalidating -&gt; Failed</c>.
+    /// Удаляет dataset, сохраняет audit и завершает invalidation либо истёкшее диагностическое хранение.
     /// </summary>
-    /// <param name="session">Аннулируемая сессия; после успеха имеет статус <c>Failed</c>.</param>
+    /// <param name="session">
+    /// Сессия в состоянии <c>Invalidating</c> либо <c>Failed/Retained</c> с истёкшим сроком;
+    /// после успеха имеет disposition <c>Deleted</c>.
+    /// </param>
     /// <param name="cancellationToken">Токен отмены операции.</param>
     /// <returns>Сохранённый audit либо ожидаемая ошибка состояния.</returns>
     Task<Result<CollectorDatasetCleanupAudit, Error>> CleanupAsync(

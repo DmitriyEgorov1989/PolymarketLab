@@ -1023,6 +1023,28 @@ Validation:
 нормализатора и дополнительного запаса. Даже если общий токен уже отменён,
 каждая подсистема всё равно ограничивает себя собственным сроком.
 
+### FailedDatasetRetention
+
+| Option | Default | Назначение |
+|---|---:|---|
+| `Enabled` | `false` | Сохранять failed dataset новых sessions для диагностики |
+| `RetentionPeriod` | 12 h | Неизменяемый срок, записываемый в snapshot новой session |
+| `MaximumRetainedSessions` | 5 | Hard quota active diagnostic reservations и `Failed/Retained` sessions |
+
+При `Enabled = false` invalidation сохраняет прежнее поведение: после подтверждённой
+остановки producer dataset атомарно удаляется, cleanup audit записывается, а session
+становится `Failed/Deleted`. При `Enabled = true` новая session получает immutable
+policy `RetainOnFailure`; после write fence и остановки она становится
+`Failed/Retained`, освобождает per-market slot и сохраняет raw messages, normalization
+ledger и projections до `RetainUntil`. Шестая diagnostic reservation отклоняется,
+если quota `5` уже занята; существующие retained datasets автоматически не вытесняются.
+
+Startup reconciliation и scheduler удаляют просроченный dataset тем же атомарным
+session-scoped cleanup. Ошибка удаления оставляет `Retained` для следующей попытки.
+Ненулевой `InvalidatingAt` исключает retained rows из новых writes, normalization
+claims и replay; backlog metrics также учитывают только sessions без write fence.
+Публичный HTTP DTO не раскрывает policy/disposition на этом этапе.
+
 Секции отсутствуют в текущих `appsettings`, поэтому используются defaults.
 
 Options читаются через обычный `IOptions<T>`. Hot reload уже созданных workers не реализован.
@@ -1056,8 +1078,8 @@ Options читаются через обычный `IOptions<T>`. Hot reload у�
 |---|---|
 | `RawMarketMessagePersistenceWorker` | Channel consumer и batch persistence |
 | `CollectorRuntimeShutdownService` | Остановка collectors до ingestion shutdown |
-| `CollectorSessionStartupReconciliationService` | До остальных hosted services сохраняет future `Scheduled`, очищает dataset active partial sessions предыдущего процесса и отклоняет startup при ошибке recovery |
-| `CollectorSchedulerBackgroundService` | Идемпотентная обработка preparation и readiness boundaries |
+| `CollectorSessionStartupReconciliationService` | До остальных hosted services сохраняет future `Scheduled`, финализирует active partial и просроченные retained sessions и отклоняет startup при ошибке recovery |
+| `CollectorSchedulerBackgroundService` | Идемпотентная обработка lifecycle boundaries и просроченных retained datasets |
 
 Singleton runtime/factory не должны напрямую зависеть от scoped repository или DbContext.
 

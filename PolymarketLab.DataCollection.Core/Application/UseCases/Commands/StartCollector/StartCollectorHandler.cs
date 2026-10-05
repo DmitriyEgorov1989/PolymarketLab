@@ -3,6 +3,7 @@ using MediatR;
 using PolymarketLab.DataCollection.Core.Application.Errors;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
 using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
+using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
@@ -17,6 +18,7 @@ public sealed class StartCollectorHandler(
     IMarketCollectionSource marketSource,
     ICollectorSessionRepository sessionRepository,
     IProjectionVersionProvider projectionVersionProvider,
+    IFailedDatasetRetentionPolicyProvider retentionPolicyProvider,
     ICollectorScheduler scheduler,
     TimeProvider timeProvider)
     : IRequestHandler<StartCollectorCommand, Result<StartCollectorResponse, ErrorList>>
@@ -67,6 +69,8 @@ public sealed class StartCollectorHandler(
                 token.Outcome,
                 token.OutcomeIndex))
             .ToArray();
+        var retentionPolicy = retentionPolicyProvider.Policy;
+        var retainOnFailure = retentionPolicy.Enabled;
         var sessionResult = CollectorSessionAggregate.Create(
             sessionIdResult.Value,
             marketId,
@@ -79,7 +83,11 @@ public sealed class StartCollectorHandler(
             market.EventEndsAt,
             projectionVersionProvider.ProjectionVersion,
             tokenDefinitions,
-            verifiedAt);
+            verifiedAt,
+            retainOnFailure
+                ? CollectorFailurePolicy.RetainOnFailure
+                : CollectorFailurePolicy.DeleteOnFailure,
+            retainOnFailure ? retentionPolicy.RetentionPeriod : null);
         if (sessionResult.IsFailure)
             return Failure(sessionResult.Error);
 
@@ -97,6 +105,15 @@ public sealed class StartCollectorHandler(
             return schedulingResult.IsFailure
                 ? Failure(schedulingResult.Error)
                 : Response(schedulingResult.Value);
+        }
+        if (insertResult.Value == CollectorSessionInsertStatus.DiagnosticQuotaExceeded)
+        {
+            activeMarketSession = await sessionRepository.GetActiveByMarketIdAsync(
+                marketId,
+                cancellationToken);
+            return activeMarketSession is null
+                ? Failure(StartCollectorErrors.DiagnosticQuotaExceeded)
+                : Response(activeMarketSession);
         }
         if (insertResult.Value != CollectorSessionInsertStatus.ActiveMarketConflict)
             return Failure(StartCollectorErrors.RaceUnresolved);

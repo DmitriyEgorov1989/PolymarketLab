@@ -1,6 +1,7 @@
 using CSharpFunctionalExtensions;
 using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorFailedDatasetFinalization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
@@ -86,6 +87,52 @@ public sealed class CollectorSchedulerTests
         result.Error.Should().Be(error);
         fixture.Cleanup.Calls.Should().Equal(fixture.Session.Id);
         fixture.Session.Status.Should().Be(CollectorSessionStatus.Invalidating);
+    }
+
+    [Fact]
+    public async Task TickAsync_WhenDiagnosticSessionIsInvalidating_ShouldStopAndRetainWithoutCleanup()
+    {
+        var fixture = new Fixture(
+            CreatedAt.AddMinutes(2),
+            failurePolicy: CollectorFailurePolicy.RetainOnFailure);
+        fixture.Session.BeginInvalidation(
+            CreatedAt.AddMinutes(1), CollectorStopReason.Requested,
+            "collector.stop.requested", "Stop requested.");
+
+        var result = await fixture.Scheduler.TickAsync(CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        fixture.Runtime.FencedSessions.Should().Equal(fixture.Session.Id);
+        fixture.Runtime.StoppedSessions.Should().Equal(fixture.Session.Id);
+        fixture.Cleanup.Calls.Should().BeEmpty();
+        fixture.Session.Status.Should().Be(CollectorSessionStatus.Failed);
+        fixture.Session.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Retained);
+    }
+
+    [Fact]
+    public async Task TickAsync_WhenRetainedSessionExpired_ShouldCleanWithoutRuntimeStop()
+    {
+        var fixture = new Fixture(CreatedAt.AddMinutes(3));
+        var expired = CollectorSessionTestFactory.CreateScheduled(
+            createdAt: CreatedAt,
+            failurePolicy: CollectorFailurePolicy.RetainOnFailure,
+            failureRetentionDuration: TimeSpan.FromMinutes(1));
+        expired.BeginInvalidation(
+            CreatedAt.AddMinutes(1), CollectorStopReason.StartupFailure,
+            "collector.failed", "Collector failed.");
+        expired.CompleteInvalidation(CreatedAt.AddMinutes(2));
+        fixture.Repository.ExpiredSessions.Add(expired);
+        fixture.Repository.ActiveSessions.Clear();
+
+        var ids = await fixture.Scheduler.GetActiveSessionIdsAsync(CancellationToken.None);
+        var result = await fixture.Scheduler.TickAsync(CancellationToken.None);
+
+        ids.Should().Equal(expired.Id);
+        result.IsSuccess.Should().BeTrue();
+        fixture.Cleanup.Calls.Should().Equal(expired.Id);
+        fixture.Runtime.FencedSessions.Should().BeEmpty();
+        fixture.Runtime.StoppedSessions.Should().BeEmpty();
+        expired.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Deleted);
     }
 
     [Fact]
@@ -469,9 +516,15 @@ public sealed class CollectorSchedulerTests
             Error? sourceError = null,
             Error? runtimeError = null,
             bool runtimeThrowsCancellation = false,
-            Error? cleanupError = null)
+            Error? cleanupError = null,
+            CollectorFailurePolicy failurePolicy = CollectorFailurePolicy.DeleteOnFailure)
         {
-            Session = CollectorSessionTestFactory.CreateScheduled(createdAt: CreatedAt);
+            Session = CollectorSessionTestFactory.CreateScheduled(
+                createdAt: CreatedAt,
+                failurePolicy: failurePolicy,
+                failureRetentionDuration: failurePolicy == CollectorFailurePolicy.RetainOnFailure
+                    ? TimeSpan.FromHours(1)
+                    : null);
             Market = CreateMarket(Session);
             Source = new StubMarketSource(Market, sourceError);
             Repository = new StubRepository(Session);
@@ -482,7 +535,7 @@ public sealed class CollectorSchedulerTests
                 Repository,
                 Runtime,
                 new CollectorSessionInvalidationCoordinator(Repository, Runtime),
-                Cleanup,
+                new CollectorFailedDatasetFinalizer(Repository, Cleanup, new FixedTimeProvider(now)),
                 BoundaryChecks,
                 new FixedTimeProvider(now));
         }
@@ -546,6 +599,7 @@ public sealed class CollectorSchedulerTests
         public Queue<Result<CollectorSessionUpdateStatus, Error>> UpdateResults { get; } = [];
         public Queue<CollectorSessionAggregate> ReloadedSessions { get; } = [];
         public List<CollectorSessionAggregate> ActiveSessions { get; } = [session];
+        public List<CollectorSessionAggregate> ExpiredSessions { get; } = [];
         public List<UpdateCall> UpdateCalls { get; } = [];
         public CollectorSessionAggregate? ReloadedSession { get; set; }
 
@@ -581,6 +635,11 @@ public sealed class CollectorSchedulerTests
         public Task<IReadOnlyCollection<CollectorSessionAggregate>> GetActiveAsync(
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyCollection<CollectorSessionAggregate>>(ActiveSessions);
+
+        public Task<IReadOnlyCollection<CollectorSessionAggregate>> GetExpiredRetainedAsync(
+            DateTimeOffset now,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<CollectorSessionAggregate>>(ExpiredSessions);
 
         public Task<Result<CollectorSessionInsertStatus, Error>> TryAddAsync(
             CollectorSessionAggregate session,

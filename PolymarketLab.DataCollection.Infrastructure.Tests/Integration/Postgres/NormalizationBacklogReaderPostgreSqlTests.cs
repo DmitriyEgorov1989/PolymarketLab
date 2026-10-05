@@ -46,6 +46,23 @@ public sealed class NormalizationBacklogReaderPostgreSqlTests(PostgreSqlFixture 
     }
 
     [Fact]
+    public async Task Read_ShouldExcludeMessagesFromInvalidatingSessions()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        await SeedRawMessagesAsync(database.ConnectionString, 2);
+        await SeedRawMessagesAsync(
+            database.ConnectionString,
+            3,
+            DateTimeOffset.Parse("2026-08-14T10:01:00Z"));
+        await using var context = CreateContext(database.ConnectionString);
+        var reader = new NormalizationBacklogReader(context);
+
+        var snapshot = await reader.ReadAsync(1, ClaimTimeout, default);
+
+        snapshot.Should().Be(new NormalizationBacklogSnapshot(1, 2, 2));
+    }
+
+    [Fact]
     public async Task Read_CancelledOperation_ShouldPropagateCancellation()
     {
         await using var database = await CreateMigratedDatabaseAsync();
@@ -77,7 +94,8 @@ public sealed class NormalizationBacklogReaderPostgreSqlTests(PostgreSqlFixture 
 
     private static async Task<IReadOnlyList<long>> SeedRawMessagesAsync(
         string connectionString,
-        int count)
+        int count,
+        DateTimeOffset? invalidatingAt = null)
     {
         var sessionId = Guid.NewGuid();
         var receivedAt = DateTimeOffset.Parse("2026-08-14T10:00:00Z");
@@ -85,12 +103,15 @@ public sealed class NormalizationBacklogReaderPostgreSqlTests(PostgreSqlFixture 
             connectionString,
             """
             INSERT INTO data_collection.collector_sessions
-                (id, market_id, status, created_at)
-            VALUES (@session_id, @market_id, 4, @created_at)
+                (id, market_id, status, created_at, invalidating_at, failure_policy)
+            VALUES (@session_id, @market_id, 4, @created_at, @invalidating_at, 0)
             """,
             new NpgsqlParameter("session_id", sessionId),
             new NpgsqlParameter("market_id", Guid.NewGuid()),
-            new NpgsqlParameter("created_at", receivedAt.AddMinutes(-1)));
+            new NpgsqlParameter("created_at", receivedAt.AddMinutes(-1)),
+            new NpgsqlParameter(
+                "invalidating_at",
+                (object?)invalidatingAt ?? DBNull.Value));
 
         var ids = new List<long>(count);
         for (var index = 0; index < count; index++)

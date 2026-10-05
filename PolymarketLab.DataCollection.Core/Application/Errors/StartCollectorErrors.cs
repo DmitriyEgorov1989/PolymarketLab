@@ -57,6 +57,11 @@ public static class StartCollectorErrors
         "An active collector session conflict occurred, but the session could not be found.",
         ErrorType.Conflict);
 
+    public static Error DiagnosticQuotaExceeded => new(
+        "collector.start.diagnostic_quota_exceeded",
+        "The maximum number of retained diagnostic sessions has been reached.",
+        ErrorType.Conflict);
+
     public static Error StateTransitionConflict => new(
         "collector.start.session.state_changed",
         "Collector session state changed concurrently during startup.",

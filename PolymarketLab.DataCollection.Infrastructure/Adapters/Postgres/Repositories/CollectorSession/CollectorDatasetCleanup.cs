@@ -25,14 +25,17 @@ internal sealed class CollectorDatasetCleanup(
             .BeginTransactionAsync(cancellationToken);
         try
         {
-            var persistedStatus = await LockSessionAsync(sessionId, cancellationToken);
-            if (persistedStatus is null)
+            var persisted = await LockSessionAsync(sessionId, cancellationToken);
+            if (persisted is null)
             {
                 await transaction.RollbackAsync(cancellationToken);
                 return CollectorDatasetCleanupErrors.SessionNotFound(sessionId);
             }
 
-            if (persistedStatus == CollectorSessionStatus.Failed)
+            var persistedStatus = (CollectorSessionStatus)persisted.Status;
+            var persistedDisposition = (CollectorDatasetDisposition?)persisted.DatasetDisposition;
+            if (persistedStatus == CollectorSessionStatus.Failed
+                && persistedDisposition == CollectorDatasetDisposition.Deleted)
             {
                 var existingAudit = await dbContext.CollectorDatasetCleanupAudits
                     .AsNoTracking()
@@ -40,28 +43,36 @@ internal sealed class CollectorDatasetCleanup(
                         audit => audit.SessionId == sessionId,
                         cancellationToken);
                 await transaction.RollbackAsync(cancellationToken);
-                if (existingAudit is not null
-                    && session.Status == CollectorSessionStatus.Invalidating)
+                if (existingAudit is null)
                 {
-                    session.CompleteInvalidation(existingAudit.CompletedAt);
+                    return CollectorDatasetCleanupErrors.InvalidStatus(
+                        sessionId,
+                        persistedStatus);
                 }
 
-                return existingAudit is null
-                    ? CollectorDatasetCleanupErrors.InvalidStatus(
-                        sessionId,
-                        persistedStatus.Value)
-                    : existingAudit.ToAudit();
+                ReflectCommittedCleanup(session, persisted.StoppedAt, existingAudit.ToAudit());
+                return existingAudit.ToAudit();
             }
 
-            if (persistedStatus != CollectorSessionStatus.Invalidating)
+            var now = timeProvider.GetUtcNow();
+            var canCleanInvalidating = persistedStatus == CollectorSessionStatus.Invalidating
+                && (CollectorFailurePolicy)persisted.FailurePolicy
+                    == CollectorFailurePolicy.DeleteOnFailure;
+            var canCleanExpiredRetention = persistedStatus == CollectorSessionStatus.Failed
+                && persistedDisposition == CollectorDatasetDisposition.Retained
+                && persisted.RetainUntil is not null
+                && persisted.RetainUntil <= now;
+            if (!canCleanInvalidating && !canCleanExpiredRetention)
             {
                 await transaction.RollbackAsync(cancellationToken);
-                return CollectorDatasetCleanupErrors.InvalidStatus(
-                    sessionId,
-                    persistedStatus.Value);
+                return CollectorDatasetCleanupErrors.InvalidStatus(sessionId, persistedStatus);
             }
 
-            if (session.Status != CollectorSessionStatus.Invalidating)
+            if ((canCleanInvalidating
+                    && session.Status != CollectorSessionStatus.Invalidating)
+                || (canCleanExpiredRetention
+                    && (session.Status != CollectorSessionStatus.Failed
+                        || session.DatasetDisposition != CollectorDatasetDisposition.Retained)))
             {
                 await transaction.RollbackAsync(cancellationToken);
                 return CollectorDatasetCleanupErrors.StateTransitionConflict(sessionId);
@@ -94,10 +105,10 @@ internal sealed class CollectorDatasetCleanup(
                 """,
                 cancellationToken);
 
-            var now = timeProvider.GetUtcNow();
-            var completedAt = session.InvalidatingAt is not null
-                && now < session.InvalidatingAt.Value
-                    ? session.InvalidatingAt.Value
+            var completedAt = canCleanInvalidating
+                && persisted.InvalidatingAt is not null
+                && now < persisted.InvalidatingAt.Value
+                    ? persisted.InvalidatingAt.Value
                     : now;
             var audit = new CollectorDatasetCleanupAudit(
                 sessionId,
@@ -109,16 +120,29 @@ internal sealed class CollectorDatasetCleanup(
                 new CollectorDatasetCleanupAuditRecord(audit));
             await dbContext.SaveChangesAsync(cancellationToken);
 
-            var transitioned = await dbContext.Database.ExecuteSqlInterpolatedAsync(
-                $"""
-                UPDATE data_collection.collector_sessions
-                SET status = {(int)CollectorSessionStatus.Failed},
-                    phase = NULL,
-                    stopped_at = {completedAt}
-                WHERE id = {sessionId.Value}
-                  AND status = {(int)CollectorSessionStatus.Invalidating}
-                """,
-                cancellationToken);
+            var transitioned = canCleanInvalidating
+                ? await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                    $"""
+                    UPDATE data_collection.collector_sessions
+                    SET status = {(int)CollectorSessionStatus.Failed},
+                        phase = NULL,
+                        stopped_at = {completedAt},
+                        dataset_disposition = {(int)CollectorDatasetDisposition.Deleted}
+                    WHERE id = {sessionId.Value}
+                      AND status = {(int)CollectorSessionStatus.Invalidating}
+                      AND failure_policy = {(int)CollectorFailurePolicy.DeleteOnFailure}
+                    """,
+                    cancellationToken)
+                : await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                    $"""
+                    UPDATE data_collection.collector_sessions
+                    SET dataset_disposition = {(int)CollectorDatasetDisposition.Deleted}
+                    WHERE id = {sessionId.Value}
+                      AND status = {(int)CollectorSessionStatus.Failed}
+                      AND dataset_disposition = {(int)CollectorDatasetDisposition.Retained}
+                      AND retain_until <= {now}
+                    """,
+                    cancellationToken);
             if (transitioned != 1)
             {
                 await transaction.RollbackAsync(CancellationToken.None);
@@ -136,29 +160,76 @@ internal sealed class CollectorDatasetCleanup(
             throw;
         }
 
-        var completion = session.CompleteInvalidation(committedAudit.CompletedAt);
-        if (completion.IsFailure)
-        {
-            throw new InvalidOperationException(
-                $"Collector session '{sessionId.Value}' could not reflect committed dataset cleanup: {completion.Error.Code}.");
-        }
+        ReflectCommittedCleanup(session, session.StoppedAt, committedAudit);
 
         return committedAudit;
     }
 
-    private async Task<CollectorSessionStatus?> LockSessionAsync(
+    private async Task<LockedSessionState?> LockSessionAsync(
         CollectorSessionId sessionId,
         CancellationToken cancellationToken)
     {
-        var statuses = await dbContext.Database.SqlQueryRaw<int>(
+        var sessions = await dbContext.Database.SqlQueryRaw<LockedSessionState>(
                 """
-                SELECT status AS "Value"
+                SELECT status AS "Status",
+                       failure_policy AS "FailurePolicy",
+                       dataset_disposition AS "DatasetDisposition",
+                       invalidating_at AS "InvalidatingAt",
+                       stopped_at AS "StoppedAt",
+                       retain_until AS "RetainUntil"
                 FROM data_collection.collector_sessions
                 WHERE id = {0}
                 FOR UPDATE
                 """,
                 sessionId.Value)
             .ToArrayAsync(cancellationToken);
-        return statuses.Length == 0 ? null : (CollectorSessionStatus)statuses[0];
+        return sessions.Length == 0 ? null : sessions[0];
+    }
+
+    private static void ReflectCommittedCleanup(
+        CollectorSessionAggregate session,
+        DateTimeOffset? stoppedAt,
+        CollectorDatasetCleanupAudit audit)
+    {
+        if (session.Status == CollectorSessionStatus.Invalidating)
+        {
+            var completion = session.CompleteInvalidation(stoppedAt ?? audit.CompletedAt);
+            ThrowIfReflectionFailed(session.Id, completion);
+        }
+
+        if (session.Status == CollectorSessionStatus.Failed
+            && session.DatasetDisposition == CollectorDatasetDisposition.Retained)
+        {
+            var completion = session.CompleteRetentionExpiry(audit.CompletedAt);
+            ThrowIfReflectionFailed(session.Id, completion);
+        }
+
+        if (session.Status != CollectorSessionStatus.Failed
+            || session.DatasetDisposition != CollectorDatasetDisposition.Deleted)
+        {
+            throw new InvalidOperationException(
+                $"Collector session '{session.Id.Value}' could not reflect committed dataset cleanup.");
+        }
+    }
+
+    private static void ThrowIfReflectionFailed(
+        CollectorSessionId sessionId,
+        UnitResult<Error> completion)
+    {
+        if (completion.IsFailure)
+        {
+            throw new InvalidOperationException(
+                $"Collector session '{sessionId.Value}' could not reflect committed dataset cleanup: {completion.Error.Code}.");
+        }
+    }
+
+    private sealed class LockedSessionState
+    {
+        public int Status { get; init; }
+        public int FailurePolicy { get; init; }
+        public int? DatasetDisposition { get; init; }
+        public DateTimeOffset? InvalidatingAt { get; init; }
+        public DateTimeOffset? StoppedAt { get; init; }
+        public DateTimeOffset? RetainUntil { get; init; }
     }
 }

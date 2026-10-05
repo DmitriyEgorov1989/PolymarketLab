@@ -40,6 +40,35 @@ public sealed class CollectorSessionTests
             .Equal(("1001", "Yes", 0), ("1002", "No", 1));
         session.StartedAt.Should().BeNull();
         session.SubscriptionReadyAt.Should().BeNull();
+        session.FailurePolicy.Should().Be(CollectorFailurePolicy.DeleteOnFailure);
+        session.FailureRetentionDuration.Should().BeNull();
+        session.DatasetDisposition.Should().BeNull();
+        session.RetainedAt.Should().BeNull();
+        session.RetainUntil.Should().BeNull();
+    }
+
+    [Fact]
+    public void Create_WithDiagnosticPolicy_ShouldSnapshotRetentionDuration()
+    {
+        var retentionDuration = TimeSpan.FromHours(12);
+
+        var result = CreateSessionResult(
+            failurePolicy: CollectorFailurePolicy.RetainOnFailure,
+            failureRetentionDuration: retentionDuration);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.FailurePolicy.Should().Be(CollectorFailurePolicy.RetainOnFailure);
+        result.Value.FailureRetentionDuration.Should().Be(retentionDuration);
+        result.Value.DatasetDisposition.Should().BeNull();
+    }
+
+    [Fact]
+    public void Create_WithUnknownFailurePolicy_ShouldReturnError()
+    {
+        var result = CreateSessionResult(failurePolicy: (CollectorFailurePolicy)42);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be("collector.session.failure_policy.invalid");
     }
 
     [Fact]
@@ -250,7 +279,7 @@ public sealed class CollectorSessionTests
     }
 
     [Fact]
-    public void CompleteInvalidation_ShouldPreserveFailureAndSetFailed()
+    public void CompleteInvalidation_WithStandardPolicy_ShouldSetFailedAndDeleted()
     {
         var session = CreateRunningSession();
         var invalidatingAt = CreatedAt.AddMinutes(2).AddSeconds(30);
@@ -271,6 +300,78 @@ public sealed class CollectorSessionTests
         session.StopReason.Should().Be(CollectorStopReason.FatalWebSocketError);
         session.FailureCode.Should().Be("collector.runtime.receive.failed");
         session.FailureMessage.Should().Be("WebSocket receive failed.");
+        session.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Deleted);
+        session.RetainedAt.Should().BeNull();
+        session.RetainUntil.Should().BeNull();
+    }
+
+    [Fact]
+    public void CompleteInvalidation_WithDiagnosticPolicy_ShouldSetFailedAndRetained()
+    {
+        var retentionDuration = TimeSpan.FromHours(12);
+        var session = CreateSession(
+            CollectorFailurePolicy.RetainOnFailure,
+            retentionDuration);
+        var invalidatingAt = CreatedAt.AddMinutes(2).AddSeconds(30);
+        var completedAt = invalidatingAt.AddSeconds(1);
+        session.BeginInvalidation(
+            invalidatingAt,
+            CollectorStopReason.FatalWebSocketError,
+            "collector.runtime.receive.failed",
+            "WebSocket receive failed.");
+
+        var result = session.CompleteInvalidation(completedAt);
+
+        result.IsSuccess.Should().BeTrue();
+        session.Status.Should().Be(CollectorSessionStatus.Failed);
+        session.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Retained);
+        session.RetainedAt.Should().Be(completedAt);
+        session.RetainUntil.Should().Be(completedAt.Add(retentionDuration));
+    }
+
+    [Fact]
+    public void CompleteRetentionExpiry_ShouldSetDeletedAndPreserveFailureFinalization()
+    {
+        var retentionDuration = TimeSpan.FromHours(12);
+        var session = CreateSession(
+            CollectorFailurePolicy.RetainOnFailure,
+            retentionDuration);
+        var invalidatingAt = CreatedAt.AddMinutes(2).AddSeconds(30);
+        var completedAt = invalidatingAt.AddSeconds(1);
+        session.BeginInvalidation(
+            invalidatingAt,
+            CollectorStopReason.FatalWebSocketError,
+            "collector.runtime.receive.failed",
+            "WebSocket receive failed.");
+        session.CompleteInvalidation(completedAt);
+
+        var result = session.CompleteRetentionExpiry(completedAt.Add(retentionDuration));
+
+        result.IsSuccess.Should().BeTrue();
+        session.Status.Should().Be(CollectorSessionStatus.Failed);
+        session.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Deleted);
+        session.StoppedAt.Should().Be(completedAt);
+        session.StopReason.Should().Be(CollectorStopReason.FatalWebSocketError);
+        session.FailureCode.Should().Be("collector.runtime.receive.failed");
+        session.FailureMessage.Should().Be("WebSocket receive failed.");
+        session.RetainedAt.Should().Be(completedAt);
+        session.RetainUntil.Should().Be(completedAt.Add(retentionDuration));
+    }
+
+    [Fact]
+    public void Fail_WithoutDatasetFinalization_ShouldLeaveDispositionUnknown()
+    {
+        var session = CreateRunningSession();
+
+        var result = session.Fail(
+            CreatedAt.AddMinutes(2).AddSeconds(30),
+            CollectorStopReason.FatalWebSocketError,
+            "collector.runtime.receive.failed",
+            "WebSocket receive failed.");
+
+        result.IsSuccess.Should().BeTrue();
+        session.Status.Should().Be(CollectorSessionStatus.Failed);
+        session.DatasetDisposition.Should().BeNull();
     }
 
     [Fact]
@@ -351,14 +452,20 @@ public sealed class CollectorSessionTests
         return session;
     }
 
-    private static CollectorSessionAggregate CreateSession() =>
-        CreateSessionResult().Value;
+    private static CollectorSessionAggregate CreateSession(
+        CollectorFailurePolicy failurePolicy = CollectorFailurePolicy.DeleteOnFailure,
+        TimeSpan? failureRetentionDuration = null) =>
+        CreateSessionResult(
+            failurePolicy: failurePolicy,
+            failureRetentionDuration: failureRetentionDuration).Value;
 
     private static CSharpFunctionalExtensions.Result<CollectorSessionAggregate, PolymarketLab.SharedKernel.Errors.Error>
         CreateSessionResult(
             IReadOnlyCollection<CollectorSessionTokenDefinition>? tokens = null,
             int projectionVersion = 3,
-            DateTimeOffset? eventEndsAt = null)
+            DateTimeOffset? eventEndsAt = null,
+            CollectorFailurePolicy failurePolicy = CollectorFailurePolicy.DeleteOnFailure,
+            TimeSpan? failureRetentionDuration = null)
     {
         return CollectorSessionAggregate.Create(
             CollectorSessionId.Create(Guid.NewGuid()).Value,
@@ -372,7 +479,9 @@ public sealed class CollectorSessionTests
             eventEndsAt ?? EventEndsAt,
             projectionVersion,
             tokens ?? CreateTokenDefinitions(),
-            CreatedAt);
+            CreatedAt,
+            failurePolicy,
+            failureRetentionDuration);
     }
 
     private static IReadOnlyCollection<CollectorSessionTokenDefinition> CreateTokenDefinitions() =>

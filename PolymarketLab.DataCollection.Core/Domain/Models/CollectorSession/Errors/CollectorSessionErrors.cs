@@ -35,6 +35,18 @@ internal static class CollectorSessionErrors
         ErrorType.ValueIsInvalid,
         "projectionVersion");
 
+    public static Error InvalidFailureRetentionDuration => new(
+        "collector.session.failure_retention_duration.invalid",
+        "Failure retention duration must be positive only for retain-on-failure policy.",
+        ErrorType.ValueIsInvalid,
+        "failureRetentionDuration");
+
+    public static Error InvalidFailurePolicy => new(
+        "collector.session.failure_policy.invalid",
+        "Collector session failure policy is invalid.",
+        ErrorType.ValueIsInvalid,
+        "failurePolicy");
+
     public static Error TokensRequired => new(
         "collector.session.tokens.insufficient",
         "Collector session requires at least two snapshot tokens.",
@@ -76,6 +88,12 @@ internal static class CollectorSessionErrors
         "Collector normalization wait cannot begin before resolution confirmation.",
         ErrorType.ValueIsInvalid,
         "awaitingNormalizationAt");
+
+    public static Error InvalidRetentionExpiryAt => new(
+        "collector.session.retention_expiry_at.invalid",
+        "Retained dataset cannot be deleted before its retention deadline.",
+        ErrorType.ValueIsInvalid,
+        "completedAt");
 
     public static Error InvalidResolutionTimestamps => new(
         "collector.session.resolution_timestamps.invalid",

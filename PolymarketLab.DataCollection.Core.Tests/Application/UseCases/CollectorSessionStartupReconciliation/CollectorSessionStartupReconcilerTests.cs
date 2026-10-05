@@ -1,6 +1,7 @@
 using CSharpFunctionalExtensions;
 using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionStartupReconciliation;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorFailedDatasetFinalization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
@@ -128,6 +129,49 @@ public sealed class CollectorSessionStartupReconcilerTests
         session.Status.Should().Be(CollectorSessionStatus.Invalidating);
     }
 
+    [Fact]
+    public async Task ReconcileAsync_WhenDiagnosticSessionWasActive_ShouldRetainWithoutCleanup()
+    {
+        var session = CollectorSessionTestFactory.CreateScheduled(
+            createdAt: Now.AddMinutes(-1),
+            failurePolicy: CollectorFailurePolicy.RetainOnFailure,
+            failureRetentionDuration: TimeSpan.FromHours(1));
+        session.BeginPreparation(Now.AddSeconds(-30));
+        var repository = new StubRepository([session]);
+        var cleanup = new StubCollectorDatasetCleanup();
+        var reconciler = CreateReconciler(repository, cleanup);
+
+        var result = await reconciler.ReconcileAsync(CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        session.Status.Should().Be(CollectorSessionStatus.Failed);
+        session.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Retained);
+        cleanup.Calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ReconcileAsync_ShouldFinalizeOnlyDiscoveredExpiredRetainedSessions()
+    {
+        var expired = CollectorSessionTestFactory.CreateScheduled(
+            createdAt: Now.AddHours(-2),
+            failurePolicy: CollectorFailurePolicy.RetainOnFailure,
+            failureRetentionDuration: TimeSpan.FromHours(1));
+        expired.BeginInvalidation(
+            Now.AddHours(-2), CollectorStopReason.StartupFailure,
+            "collector.failed", "Collector failed.");
+        expired.CompleteInvalidation(Now.AddHours(-1));
+        var repository = new StubRepository([]);
+        repository.ExpiredSessions.Add(expired);
+        var cleanup = new StubCollectorDatasetCleanup();
+        var reconciler = CreateReconciler(repository, cleanup);
+
+        var result = await reconciler.ReconcileAsync(CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        cleanup.Calls.Should().Equal(expired.Id);
+        expired.DatasetDisposition.Should().Be(CollectorDatasetDisposition.Deleted);
+    }
+
     private static CollectorSessionAggregate CreateSession(
         CollectorSessionStatus status)
     {
@@ -170,7 +214,10 @@ public sealed class CollectorSessionStartupReconcilerTests
             new CollectorSessionInvalidationCoordinator(
                 repository,
                 new StubRuntime()),
-            cleanup ?? new StubCollectorDatasetCleanup(),
+            new CollectorFailedDatasetFinalizer(
+                repository,
+                cleanup ?? new StubCollectorDatasetCleanup(),
+                new FixedTimeProvider(Now)),
             new FixedTimeProvider(Now));
 
     private sealed class StubRepository(
@@ -183,9 +230,15 @@ public sealed class CollectorSessionStartupReconcilerTests
 
         public Queue<Result<CollectorSessionUpdateStatus, Error>> UpdateResults { get; } = [];
         public List<UpdateCall> UpdateCalls { get; } = [];
+        public List<CollectorSessionAggregate> ExpiredSessions { get; } = [];
 
         public Task<IReadOnlyCollection<CollectorSessionAggregate>> GetActiveAsync(
             CancellationToken cancellationToken) => Task.FromResult(activeSessions);
+
+        public Task<IReadOnlyCollection<CollectorSessionAggregate>> GetExpiredRetainedAsync(
+            DateTimeOffset now,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyCollection<CollectorSessionAggregate>>(ExpiredSessions);
 
         public Task<CollectorSessionAggregate?> GetByIdAsync(
             CollectorSessionId sessionId,

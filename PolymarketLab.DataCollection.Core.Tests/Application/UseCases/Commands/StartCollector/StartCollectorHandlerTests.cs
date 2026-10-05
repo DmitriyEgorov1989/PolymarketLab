@@ -3,6 +3,7 @@ using FluentAssertions;
 using PolymarketLab.DataCollection.Core.Application.Errors;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorScheduling;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
+using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorFailedDatasetFinalization;
 using PolymarketLab.DataCollection.Core.Application.UseCases.Commands.StartCollector;
 using PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
@@ -78,6 +79,37 @@ public sealed class StartCollectorHandlerTests
             .Equal(
                 (fixture.Market.Tokens[0].TokenId, "Yes", 0),
                 (fixture.Market.Tokens[1].TokenId, "No", 1));
+    }
+
+    [Fact]
+    public async Task Handle_WithDefaultRetentionPolicy_ShouldDeleteDatasetOnFailure()
+    {
+        var fixture = new Fixture();
+
+        var result = await fixture.HandleAsync();
+
+        result.IsSuccess.Should().BeTrue();
+        fixture.Repository.InsertedSession!.FailurePolicy.Should()
+            .Be(CollectorFailurePolicy.DeleteOnFailure);
+        fixture.Repository.InsertedSession.FailureRetentionDuration.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Handle_WithDiagnosticRetentionPolicy_ShouldRetainDatasetForConfiguredPeriod()
+    {
+        var retentionPeriod = TimeSpan.FromHours(6);
+        var fixture = new Fixture(retentionPolicy: new FailedDatasetRetentionPolicy(
+            true,
+            retentionPeriod,
+            3));
+
+        var result = await fixture.HandleAsync();
+
+        result.IsSuccess.Should().BeTrue();
+        fixture.Repository.InsertedSession!.FailurePolicy.Should()
+            .Be(CollectorFailurePolicy.RetainOnFailure);
+        fixture.Repository.InsertedSession.FailureRetentionDuration.Should()
+            .Be(retentionPeriod);
     }
 
     [Fact]
@@ -184,6 +216,35 @@ public sealed class StartCollectorHandlerTests
     }
 
     [Fact]
+    public async Task Handle_WhenDiagnosticQuotaIsExceeded_ShouldReturnConflict()
+    {
+        var fixture = new Fixture();
+        fixture.Repository.InsertResult = CollectorSessionInsertStatus.DiagnosticQuotaExceeded;
+
+        var result = await fixture.HandleAsync();
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Single().Should().Be(StartCollectorErrors.DiagnosticQuotaExceeded);
+        fixture.Runtime.StartRequests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Handle_WhenQuotaFilledBySameMarketRace_ShouldReturnWinner()
+    {
+        var fixture = new Fixture();
+        var winner = CreateSession(fixture.Market!);
+        fixture.Repository.InsertResult = CollectorSessionInsertStatus.DiagnosticQuotaExceeded;
+        fixture.Repository.ActiveMarketResults.Enqueue(null);
+        fixture.Repository.ActiveMarketResults.Enqueue(winner);
+
+        var result = await fixture.HandleAsync();
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.SessionId.Should().Be(winner.Id.Value);
+        fixture.Runtime.StartRequests.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Handle_WithMissingMarket_ShouldReturnNotFound()
     {
         var fixture = new Fixture { Market = null };
@@ -239,7 +300,8 @@ public sealed class StartCollectorHandlerTests
         public Fixture(
             int projectionVersion = 3,
             DateTimeOffset? now = null,
-            TimeProvider? timeProvider = null)
+            TimeProvider? timeProvider = null,
+            FailedDatasetRetentionPolicy? retentionPolicy = null)
         {
             RequestedMarketId = _market!.MarketId;
             MarketSource = new StubMarketSource(() => _market, () => MarketError);
@@ -249,13 +311,21 @@ public sealed class StartCollectorHandlerTests
                 Repository,
                 Runtime,
                 new CollectorSessionInvalidationCoordinator(Repository, Runtime),
-                new StubCollectorDatasetCleanup(),
+                new CollectorFailedDatasetFinalizer(
+                    Repository,
+                    new StubCollectorDatasetCleanup(),
+                    actualTimeProvider),
                 new CollectorBoundaryCheckRegistry(),
                 actualTimeProvider);
             Handler = new StartCollectorHandler(
                 MarketSource,
                 Repository,
                 new StubProjectionVersionProvider(projectionVersion),
+                new StubFailedDatasetRetentionPolicyProvider(
+                    retentionPolicy ?? new FailedDatasetRetentionPolicy(
+                        false,
+                        TimeSpan.FromHours(12),
+                        5)),
                 scheduler,
                 actualTimeProvider);
         }
@@ -381,6 +451,13 @@ public sealed class StartCollectorHandlerTests
         : IProjectionVersionProvider
     {
         public int ProjectionVersion { get; } = projectionVersion;
+    }
+
+    private sealed class StubFailedDatasetRetentionPolicyProvider(
+        FailedDatasetRetentionPolicy policy)
+        : IFailedDatasetRetentionPolicyProvider
+    {
+        public FailedDatasetRetentionPolicy Policy { get; } = policy;
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider

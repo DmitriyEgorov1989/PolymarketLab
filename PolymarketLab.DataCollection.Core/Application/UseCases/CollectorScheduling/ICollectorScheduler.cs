@@ -19,9 +19,9 @@ public interface ICollectorScheduler
         CollectionMarket market,
         CancellationToken cancellationToken);
 
-    /// <summary>Возвращает идентификаторы активных sessions для независимой обработки.</summary>
+    /// <summary>Возвращает идентификаторы активных и просроченных retained sessions для независимой обработки.</summary>
     /// <param name="cancellationToken">Токен отмены операции.</param>
-    /// <returns>Снимок идентификаторов активных sessions.</returns>
+    /// <returns>Снимок идентификаторов sessions, требующих обработки.</returns>
     Task<IReadOnlyCollection<CollectorSessionId>> GetActiveSessionIdsAsync(
         CancellationToken cancellationToken);
 
