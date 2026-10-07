@@ -61,7 +61,11 @@ public sealed class CollectorScheduler(
         try
         {
             runtimeResult = await runtime.StartAsync(
-                new CollectorRuntimeStartRequest(session.Id, market, eventStartsAt.Value),
+                new CollectorRuntimeStartRequest(
+                    session.Id,
+                    market,
+                    eventStartsAt.Value,
+                    market.EventEndsAt),
                 cancellationToken);
         }
         catch

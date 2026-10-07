@@ -18,6 +18,9 @@ internal enum CollectorWorkerCompletionOrigin
     /// <summary>Обработчик завершился при остановке приложения.</summary>
     ApplicationShutdown,
 
+    /// <summary>Обработчик штатно завершил приём на границе предметного окна.</summary>
+    CollectionWindowEnded,
+
     /// <summary>Обработчик уже сохранил invalidation и завершился без повторного failure dispatch.</summary>
     Invalidated
 }

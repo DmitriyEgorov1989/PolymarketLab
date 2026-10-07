@@ -9,7 +9,8 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime;
 
 internal sealed class CollectorRuntime(
     ICollectorWorkerFactory workerFactory,
-    ICollectorRuntimeFailureDispatcher failureDispatcher)
+    ICollectorRuntimeFailureDispatcher failureDispatcher,
+    ICollectorRuntimeWindowCompletionDispatcher windowCompletionDispatcher)
     : ICollectorRuntime
 {
     private readonly ConcurrentDictionary<
@@ -277,6 +278,14 @@ internal sealed class CollectorRuntime(
         catch
         {
             RemoveEntry(sessionId, entryHolder);
+            return;
+        }
+
+        if (completion.Origin == CollectorWorkerCompletionOrigin.CollectionWindowEnded
+            && completion.Result.IsSuccess)
+        {
+            RemoveEntry(sessionId, entryHolder);
+            await windowCompletionDispatcher.DispatchAsync(sessionId, CancellationToken.None);
             return;
         }
 

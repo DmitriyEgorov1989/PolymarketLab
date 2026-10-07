@@ -106,7 +106,7 @@ public sealed partial class OrderBookProjectorTests
     }
 
     [Fact]
-    public void Apply_BestBidAskMismatch_ShouldReturnIntegrityIssue()
+    public void Apply_BestBidAskMismatch_ShouldAdvanceCursorWithoutIntegrityIssue()
     {
         var state = CreateSynchronizedState();
         var @event = new ProjectionModels.NormalizedOrderBookEvent.BestBidAsk(
@@ -123,9 +123,8 @@ public sealed partial class OrderBookProjectorTests
         var result = _projector.Apply(state, @event);
 
         result.Outcome.Should().Be(ProjectionModels.OrderBookProjectionOutcome.Applied);
-        result.IntegrityIssue.Should().NotBeNull();
-        result.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestBidMismatch);
-        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
+        result.IntegrityIssue.Should().BeNull();
+        state.Status.Should().Be(OrderBookSyncStatus.Synchronized);
     }
 
     [Fact]

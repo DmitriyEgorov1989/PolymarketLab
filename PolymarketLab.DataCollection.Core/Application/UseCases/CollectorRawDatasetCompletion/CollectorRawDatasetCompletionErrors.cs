@@ -13,12 +13,6 @@ internal static class CollectorRawDatasetCompletionErrors
         $"Collector session '{sessionId.Value}' was not found during raw completion.",
         ErrorType.NotFound);
 
-    /// <summary>У сессии нет durable confirmation resolution.</summary>
-    public static Error ResolutionNotConfirmed(CollectorSessionId sessionId) => new(
-        "collector.raw_completion.resolution_not_confirmed",
-        $"Collector session '{sessionId.Value}' has no durable resolution confirmation.",
-        ErrorType.Conflict);
-
     /// <summary>Durable counters и авторитетное количество raw rows не совпадают.</summary>
     public static Error AccountingMismatch(CollectorSessionProgress progress) => new(
         "collector.raw_completion.accounting_mismatch",

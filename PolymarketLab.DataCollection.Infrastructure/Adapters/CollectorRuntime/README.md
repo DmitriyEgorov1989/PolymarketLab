@@ -373,10 +373,12 @@ Completion публикуется только после попытки dispose
 4. Проверяет message type.
 5. Проверяет суммарный размер fragments.
 6. Копирует fragment в accumulator.
-7. После `EndOfMessage` создаёт `RawMarketMessage`.
-8. Полностью ожидает `IRawMarketMessageSink.EnqueueAsync`.
-9. Очищает accumulator.
-10. Возвращает pooled frame buffer в `finally`.
+7. После `EndOfMessage` фиксирует локальный `ReceivedAt` и прекращает приём, если
+   наступила исключительная граница `CollectionDeadline`.
+8. До границы создаёт `RawMarketMessage`.
+9. Полностью ожидает `IRawMarketMessageSink.EnqueueAsync`.
+10. Очищает accumulator.
+11. Возвращает pooled frame buffer в `finally`.
 
 ```mermaid
 flowchart TD
@@ -398,7 +400,9 @@ flowchart TD
 
 ### Timestamp semantics
 
-`ReceivedAt` берётся через `TimeProvider.GetUtcNow()` после получения последнего fragment и непосредственно перед enqueue.
+`ReceivedAt` берётся через `TimeProvider.GetUtcNow()` после получения последнего fragment и непосредственно перед enqueue. Logical message принимается только при `ReceivedAt < CollectionDeadline`; сообщение, завершившееся точно на границе, не учитывается telemetry и не передаётся в ingestion.
+
+До `EventStartsAt` worker сохраняет обязательные initial `book` как preparation baseline. Они подтверждают readiness и задают начальное состояние книги, но не являются торговыми событиями предметного окна `[EventStartsAt, EventEndsAt)`.
 
 Это:
 
@@ -476,6 +480,11 @@ Worker использует два token sources:
 | `_receiveCts` | Немедленно остановить получение данных после вызова `StopAsync` |
 | `_enqueueCts` | Дать уже полученному payload шанс попасть в channel до stop deadline |
 
+Кроме них, deadline CTS отменяет pending receive в `EventEndsAt`. Если сообщение
+полностью принято до границы, но ожидает channel capacity, enqueue не отменяется
+сразу и получает не более одного общего `StopTimeout` на завершение. Повторный
+requested stop или deadline signal не переносит уже установленную границу отмены.
+
 Оба источника отмены намеренно не связаны напрямую с `ApplicationStopping`. Остановку начинает `CollectorRuntimeShutdownService`: сначала общий invalidation coordinator запрещает новые producers и сохраняет durable write fence, затем runtime останавливает сборщики и только после этого закрывается очередь.
 
 ### Stop во время active receive
@@ -517,23 +526,25 @@ Stop отменяет startup token и ждёт `Completion`.
 
 ### Controlled drain успешной session
 
-После durable resolution consensus polling и WebSocket scanning прекращаются, а application coordinator `CollectorRawDatasetCompletionCoordinator` выполняет session-scoped успешный drain:
+При достижении `EventEndsAt` worker публикует успешный completion с origin
+`CollectionWindowEnded`. Runtime удаляет entry и scoped dispatcher запускает
+`CollectorRawDatasetCompletionCoordinator`, который выполняет session-scoped drain:
 
 ```text
-durable consensus
--> CAS Stopping/DrainingRaw
+CollectionDeadline
+-> CAS Running/CollectingWindow -> Stopping/DrainingRaw
 -> CollectorRuntime.StopAsync (producer closed)
 -> wait persisted to final enqueued boundary
 -> durable final checkpoint
 -> one PostgreSQL read: received=enqueued=persisted=raw>0
 -> CAS Stopping/AwaitingNormalization
 -> repeated snapshot-version suitability read
--> Stopped/MarketClosed on exact Processed cardinality and resolution provenance
+-> Stopped/MarketClosed on exact Processed cardinality and order-book integrity
 or
 -> Invalidating/Cleaning -> Failed on terminal normalization failure or timeout
 ```
 
-После `Stopping/AwaitingNormalization` тот же tick `ResolutionConsensusBackgroundService` маршрутизирует session в `CollectorNormalizationSuitabilityCoordinator`: один PostgreSQL statement доказывает, что каждому raw-сообщению соответствует ledger row snapshot-версии `CollectorSession.ProjectionVersion` со статусом `Processed`, а strict WS resolution observation указывает на обработанный normalized `market_resolved` item. Затем integrity gate читает committed typed order-book rows только этой session/version, упорядочивает их по `(raw_message_id, raw_item_index)` и воспроизводит в ephemeral `OrderBookState` каждого asset. Каждый token immutable session snapshot обязан иметь committed initial `book`. Его отсутствие, crossed book, несовпадение tick size/best bid/ask/spread или регрессия source timestamp внутри одного event type ведут в `Invalidating/Cleaning` с `PersistenceFailure` и кодом `collector.order_book.integrity.issue`; межтиповая регрессия допустима и не меняет archive order. Состояния разных sessions не разделяются. Момент завершения durable raw drain сохраняется как `AwaitingNormalizationAt`; `Pending`/`Processing`/missing rows ожидаются максимум до `AwaitingNormalizationAt + 5m`. `Invalid`, `Unsupported`, terminal `Failed`, несовпадение runtime-версии, неверный provenance, integrity issue и timeout ведут в durable invalidation. Deadline повторно проверяется после integrity gate; только успешный gate строго до deadline CAS-выполняет `Stopped/MarketClosed`. Normalizer при этом продолжает работать через собственный hosted service, а producer уже остановлен raw completion. Market channel не даёт пригодного session sequence number, поэтому integrity gate не доказывает отсутствие каждого возможного пропуска внешнего сообщения.
+После `Stopping/AwaitingNormalization` `ResolutionConsensusBackgroundService` маршрутизирует session в `CollectorNormalizationSuitabilityCoordinator`: один PostgreSQL statement доказывает, что каждому raw-сообщению соответствует ledger row snapshot-версии `CollectorSession.ProjectionVersion` со статусом `Processed`. Resolution winner и normalized `market_resolved` не являются prerequisites. Затем integrity gate читает committed typed order-book rows только этой session/version, упорядочивает их по `(raw_message_id, raw_item_index)` и воспроизводит в ephemeral `OrderBookState` каждого asset. Каждый token immutable session snapshot обязан иметь committed initial `book`. Его отсутствие, crossed book, несовпадение tick size/best bid/ask/spread или регрессия source timestamp внутри одного event type ведут в `Invalidating/Cleaning` с `PersistenceFailure` и кодом `collector.order_book.integrity.issue`; межтиповая регрессия допустима и не меняет archive order. Состояния разных sessions не разделяются. Момент завершения durable raw drain сохраняется как `AwaitingNormalizationAt`; `Pending`/`Processing`/missing rows ожидаются максимум до `AwaitingNormalizationAt + 5m`. `Invalid`, `Unsupported`, terminal `Failed`, несовпадение runtime-версии, integrity issue и timeout ведут в durable invalidation. Deadline повторно проверяется после integrity gate; только успешный gate строго до deadline CAS-выполняет `Stopped/MarketClosed`. Normalizer при этом продолжает работать через собственный hosted service, а producer уже остановлен raw completion. Market channel не даёт пригодного session sequence number, поэтому integrity gate не доказывает отсутствие каждого возможного пропуска внешнего сообщения.
 
 Ожидание хвоста и final checkpoint выполняет `ICollectorSessionProgressCompletion` поверх in-memory telemetry: после завершения `StopAsync` producer больше не увеличивает `received`/`enqueued`, поэтому снятая в начале граница `enqueued` стабильна. Точное равенство counters и авторитетного `count(raw_market_messages)` проверяет application coordinator одним PostgreSQL read; только после него session переходит к ожиданию нормализации.
 
@@ -547,12 +558,13 @@ or
 
 ## Completion
 
-`ICollectorWorker.Completion` — стабильный task всего lifecycle worker. Он возвращает `CollectorWorkerCompletion` с функциональным result, origin (`Startup`, `Autonomous`, `RequestedStop`, `ApplicationShutdown`) и временем обнаружения завершения.
+`ICollectorWorker.Completion` — стабильный task всего lifecycle worker. Он возвращает `CollectorWorkerCompletion` с функциональным result, origin (`Startup`, `Autonomous`, `RequestedStop`, `ApplicationShutdown`, `CollectionWindowEnded`) и временем обнаружения завершения.
 
 Completion завершается success при:
 
 - explicit stop;
 - application shutdown;
+- collection deadline;
 - stop до start.
 
 Completion завершается failure при:
@@ -590,6 +602,7 @@ Observer:
 2. Наблюдает fault/cancellation без unobserved exception.
 3. Удаляет entry conditional remove-операцией.
 4. Для autonomous failure передаёт session ID, timestamp и runtime error в scoped Application handler.
+5. Для `CollectionWindowEnded` запускает scoped controlled raw completion.
 
 Application handler переводит `Starting` или `Running` session в `Invalidating/Cleaning` с `FatalWebSocketError`. Coordinator сначала устанавливает in-memory runtime fence, затем сохраняет `InvalidatingAt` compare-and-set update по ожидаемому `Status`; это не позволяет позднему `Starting -> Running` открыть новые producers. При concurrency conflict coordinator перечитывает session и повторяет переход. Terminal состояния и уже начатая invalidation обрабатываются идемпотентно с сохранением первой причины.
 
@@ -864,7 +877,7 @@ reconnect_count     bigint not null
 ```
 
 `reconnect_count` не включает initial connect. Он предназначен для успешных
-повторных connect + subscription и остаётся равным `0`, пока reconnect loop не реализован.
+повторных connect + subscription; неудачные reconnect-attempt в него не входят.
 
 Это не PostgreSQL `COPY` и не специализированный bulk insert.
 
@@ -962,10 +975,12 @@ stateDiagram-v2
 До readiness повторяются только connect timeout, transport start/receive failure,
 remote close и heartbeat timeout. Protocol/identity violations, oversized или
 binary message, закрытый ingestion и ошибки durable readiness немедленно запускают
-session invalidation. После readiness любая transport discontinuity считается
-неподтверждённым разрывом и также инвалидирует session. Ошибка сохранения самой
-invalidation не маскируется как `Invalidated`: autonomous fallback повторяет запись,
-а при невозможности останавливает host.
+session invalidation. После readiness remote close получает максимум два
+reconnect-attempt на worker с паузами `ReconnectDelay` и `2 * ReconnectDelay`.
+Новый epoch локально заново требует initial books всех snapshot tokens и matching
+`PONG`; durable phase остаётся `Running`. Исчерпание попыток или другая transport
+ошибка запускает invalidation. Ошибка сохранения invalidation не маскируется как
+`Invalidated`: autonomous fallback повторяет запись, а при невозможности останавливает host.
 
 ### Exception semantics
 
@@ -984,6 +999,9 @@ Transport failures преобразуются в `UnitResult<Error>`, чтобы
 | `Endpoint` | `wss://ws-subscriptions-clob.polymarket.com/ws/market` | Polymarket market WebSocket |
 | `ConnectTimeout` | 10 s | Connect и subscription startup |
 | `StopTimeout` | 10 s | Общий stop budget |
+| `HeartbeatInterval` | 10 s | Интервал отправки `PING` |
+| `HeartbeatTimeout` | 10 s | Срок ожидания matching `PONG` |
+| `ReconnectDelay` | 1 s | Базовая пауза bounded reconnect; вторая попытка ждёт удвоенное значение |
 | `ReceiveBufferSize` | 16 KiB | Размер одного rented frame buffer |
 | `MaximumMessageSize` | 1 MiB | Лимит assembled logical message |
 | `CustomFeatureEnabled` | `true` | Поле subscription payload |
@@ -1172,7 +1190,7 @@ Singleton runtime/factory не должны напрямую зависеть о
 
 ## Известные ограничения
 
-1. Нет exponential backoff: pre-readiness reconnect использует фиксированную паузу.
+1. Pre-readiness reconnect использует фиксированную паузу; exponential backoff `1x`, `2x` применяется только к двум попыткам после remote close уже готового соединения.
 2. Между автономной ошибкой обработчика и записью сессии нет надёжного сохраняемого уведомления; после сбоя остаточная активная сессия исправляется только при следующем запуске.
 3. Остановка collector session опубликована только по `CollectorSessionId`, не по `MarketId`.
 4. Channel in-memory: process crash теряет непросохранённый tail.
@@ -1186,7 +1204,7 @@ Singleton runtime/factory не должны напрямую зависеть о
 12. Payload копируется несколько раз.
 13. JSON не валидируется; сохраняется любой text payload.
 14. Binary message завершает collector.
-15. Remote close считается failure, если local stop ещё не начался.
+15. Remote close после readiness допускает две попытки восстановления; после исчерпания он считается failure.
 16. Runtime uniqueness основана на `CollectorSessionId`, не на `MarketId`.
 17. Ошибка одного persistence batch останавливает всю ingestion subsystem.
 18. Миграции не применяются автоматически при запуске приложения.
@@ -1205,5 +1223,5 @@ stop command
   -> session завершается как Failed, successful dataset остаётся нетронутым
 ```
 
-Следующий этап — проектировать reconnect после readiness с явным восстановлением
-непрерывности и multi-instance ownership.
+Следующий этап — проектировать multi-instance ownership и внешний sequence/gap
+proof; bounded reconnect не может доказать отсутствие пропущенных market events.

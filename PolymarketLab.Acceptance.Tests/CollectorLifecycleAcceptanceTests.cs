@@ -94,19 +94,6 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
             advanceClock: false);
 
         AdvanceTo(clock, scenario.EventEndsAt);
-        await TickResolutionAsync(factory.Services);
-        await WaitForStateAsync(
-            client,
-            clock,
-            sessionId,
-            "Running",
-            "AwaitingResolution",
-            advanceClock: false);
-        scenario.IsResolved = true;
-        socket.Emit(ResolutionMessage(scenario));
-        await WaitForRawCountAsync(client, sessionId, minimumCount: 3);
-        clock.Advance(TimeSpan.FromSeconds(2));
-        await TickResolutionAsync(factory.Services);
         await WaitForStateAsync(
             client,
             clock,
@@ -114,9 +101,10 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
             "Stopping",
             "AwaitingNormalization",
             advanceClock: false);
+        await WaitForRawCountAsync(client, sessionId, minimumCount: 2);
 
         normalizationGate.Release();
-        await WaitForResolutionNormalizationAsync(client, sessionId);
+        await WaitForCompleteNormalizationAsync(client, sessionId);
         await TickResolutionAsync(factory.Services);
         var stopped = await WaitForStateAsync(
             client,
@@ -127,12 +115,10 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
             advanceClock: false);
         stopped["stopReason"]!.GetValue<string>().Should().Be("MarketClosed");
         stopped["cleanup"].Should().BeNull();
-        stopped["resolution"]!["winningTokenId"]!.GetValue<string>()
-            .Should().Be(scenario.YesTokenId);
-        stopped["resolution"]!["winningOutcome"]!.GetValue<string>()
-            .Should().Be("Yes");
+        stopped["resolution"]!["winningTokenId"].Should().BeNull();
+        stopped["resolution"]!["winningOutcome"].Should().BeNull();
         stopped["normalization"]!["resolutionRawItemProcessed"]!.GetValue<bool>()
-            .Should().BeTrue();
+            .Should().BeFalse();
 
         var evidence = await DurableCollectorAssertions.ReadAsync(
             database.ConnectionString,
@@ -143,7 +129,7 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
         evidence.MessagesPersisted.Should().Be(evidence.MessagesReceived);
         evidence.RawCount.Should().Be(evidence.MessagesReceived);
         evidence.ProcessedCount.Should().Be(evidence.MessagesReceived);
-        AssertConsensusEvidence(evidence);
+        AssertCompletionEvidence(evidence);
 
         var repeatedMarketId = await RegisterMarketAsync(client, scenario);
         repeatedMarketId.Should().Be(marketId);
@@ -204,23 +190,14 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
         await WaitForStateAsync(client, clock, secondSessionId, "Running", "CollectingWindow", false);
 
         AdvanceTo(clock, firstScenario.EventEndsAt);
-        await TickResolutionAsync(factory.Services);
-        await WaitForStateAsync(client, clock, firstSessionId, "Running", "AwaitingResolution", false);
-        await WaitForStateAsync(client, clock, secondSessionId, "Running", "AwaitingResolution", false);
-        firstScenario.IsResolved = true;
-        secondScenario.IsResolved = true;
-        firstMarketSocket.Emit(ResolutionMessage(firstScenario));
-        secondMarketSocket.Emit(ResolutionMessage(secondScenario));
-        await WaitForRawCountAsync(client, firstSessionId, minimumCount: 3);
-        await WaitForRawCountAsync(client, secondSessionId, minimumCount: 3);
-        clock.Advance(TimeSpan.FromSeconds(2));
-        await TickResolutionAsync(factory.Services);
         await WaitForStateAsync(client, clock, firstSessionId, "Stopping", "AwaitingNormalization", false);
         await WaitForStateAsync(client, clock, secondSessionId, "Stopping", "AwaitingNormalization", false);
+        await WaitForRawCountAsync(client, firstSessionId, minimumCount: 2);
+        await WaitForRawCountAsync(client, secondSessionId, minimumCount: 2);
 
         normalizationGate.Release();
-        await WaitForResolutionNormalizationAsync(client, firstSessionId);
-        await WaitForResolutionNormalizationAsync(client, secondSessionId);
+        await WaitForCompleteNormalizationAsync(client, firstSessionId);
+        await WaitForCompleteNormalizationAsync(client, secondSessionId);
         await TickResolutionAsync(factory.Services);
         var firstStopped = await WaitForStateAsync(client, clock, firstSessionId, "Stopped", null, false);
         var secondStopped = await WaitForStateAsync(client, clock, secondSessionId, "Stopped", null, false);
@@ -238,7 +215,7 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
             evidence.MessagesPersisted.Should().Be(evidence.MessagesReceived);
             evidence.RawCount.Should().Be(evidence.MessagesReceived);
             evidence.ProcessedCount.Should().Be(evidence.MessagesReceived);
-            AssertConsensusEvidence(evidence);
+            AssertCompletionEvidence(evidence);
         }
     }
 
@@ -358,23 +335,14 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
         await WaitForStateAsync(client, clock, validSessionId, "Running", "CollectingWindow", false);
 
         AdvanceTo(clock, invalidScenario.EventEndsAt);
-        await TickResolutionAsync(factory.Services);
-        await WaitForStateAsync(client, clock, invalidSessionId, "Running", "AwaitingResolution", false);
-        await WaitForStateAsync(client, clock, validSessionId, "Running", "AwaitingResolution", false);
-        invalidScenario.IsResolved = true;
-        validScenario.IsResolved = true;
-        invalidSocket.Emit(ResolutionMessage(invalidScenario));
-        validSocket.Emit(ResolutionMessage(validScenario));
-        await WaitForRawCountAsync(client, invalidSessionId, minimumCount: 3);
-        await WaitForRawCountAsync(client, validSessionId, minimumCount: 3);
-        clock.Advance(TimeSpan.FromSeconds(2));
-        await TickResolutionAsync(factory.Services);
         await WaitForStateAsync(client, clock, invalidSessionId, "Stopping", "AwaitingNormalization", false);
         await WaitForStateAsync(client, clock, validSessionId, "Stopping", "AwaitingNormalization", false);
+        await WaitForRawCountAsync(client, invalidSessionId, minimumCount: 2);
+        await WaitForRawCountAsync(client, validSessionId, minimumCount: 2);
 
         normalizationGate.Release();
-        await WaitForResolutionNormalizationAsync(client, invalidSessionId);
-        await WaitForResolutionNormalizationAsync(client, validSessionId);
+        await WaitForCompleteNormalizationAsync(client, invalidSessionId);
+        await WaitForCompleteNormalizationAsync(client, validSessionId);
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             var result = await scope.ServiceProvider
@@ -1237,15 +1205,18 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
             $"Session did not persist {minimumCount} raw messages.");
     }
 
-    private static async Task WaitForResolutionNormalizationAsync(
+    private static async Task WaitForCompleteNormalizationAsync(
         HttpClient client,
         Guid sessionId)
     {
         for (var attempt = 0; attempt < 60; attempt++)
         {
             var session = await GetSessionAsync(client, sessionId);
-            if (session["normalization"]?["resolutionRawItemProcessed"]
-                    ?.GetValue<bool>() == true)
+            var normalization = session["normalization"];
+            var rawCount = normalization?["rawCount"]?.GetValue<long>() ?? 0;
+            if (rawCount > 0
+                && normalization?["processedCount"]?.GetValue<long>() == rawCount
+                && normalization?["missingCount"]?.GetValue<long>() == 0)
             {
                 return;
             }
@@ -1254,7 +1225,7 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
         }
 
         throw new Xunit.Sdk.XunitException(
-            "Resolution raw item was not normalized.");
+            "Collector raw dataset was not fully normalized.");
     }
 
     private static void AssertState(JsonObject session, string status, string? phase)
@@ -1263,12 +1234,12 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
         session["phase"]?.GetValue<string>().Should().Be(phase);
     }
 
-    private static void AssertConsensusEvidence(DurableCollectorEvidence evidence)
+    private static void AssertCompletionEvidence(DurableCollectorEvidence evidence)
     {
         evidence.UnexpectedNormalizationCount.Should().Be(0);
         evidence.MismatchedNormalizedEventCount.Should().Be(0);
-        evidence.TerminalResolutionSourceCount.Should().Be(3);
-        evidence.ConsensusReferenceCount.Should().Be(1);
+        evidence.TerminalResolutionSourceCount.Should().Be(0);
+        evidence.ConsensusReferenceCount.Should().Be(0);
     }
 
     private static void AdvanceTo(FakeTimeProvider clock, DateTimeOffset target)
@@ -1299,18 +1270,6 @@ public sealed class CollectorLifecycleAcceptanceTests(PostgreSqlFixture fixture)
           "timestamp":"1788600000000",
           "bids":[{"price":"0.60","size":"10"}],
           "asks":[{"price":"0.50","size":"10"}]
-        }
-        """;
-
-    private static string ResolutionMessage(AcceptanceScenario scenario) => $$"""
-        {
-          "event_type":"market_resolved",
-          "id":"{{scenario.MarketId}}",
-          "market":"{{scenario.ConditionId}}",
-          "assets_ids":["{{scenario.YesTokenId}}","{{scenario.NoTokenId}}"],
-          "winning_asset_id":"{{scenario.YesTokenId}}",
-          "winning_outcome":"Yes",
-          "timestamp":"1788600300000"
         }
         """;
 

@@ -70,7 +70,7 @@ public static class DataCollectionInfrastructureDependencyInjection
             .Validate(
                 options => options.ReconnectDelay > TimeSpan.Zero
                            && options.ReconnectDelay <=
-                           CollectorWebSocketOptions.MaximumReconnectDelay,
+                           CollectorWebSocketOptions.MaximumReconnectDelay / 2,
                 "Collector WebSocket reconnect delay is outside the supported range.")
             .Validate(
                 options => options.ReceiveBufferSize > 0
@@ -252,6 +252,9 @@ public static class DataCollectionInfrastructureDependencyInjection
         services.AddSingleton<
             ICollectorRuntimeReadinessDispatcher,
             CollectorRuntimeReadinessDispatcher>();
+        services.AddSingleton<
+            ICollectorRuntimeWindowCompletionDispatcher,
+            CollectorRuntimeWindowCompletionDispatcher>();
         services.AddSingleton<CollectorRuntime>();
         services.AddSingleton<ICollectorRuntime>(serviceProvider =>
             serviceProvider.GetRequiredService<CollectorRuntime>());

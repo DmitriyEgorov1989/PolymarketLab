@@ -12,7 +12,7 @@ using CollectorSessionAggregate = PolymarketLab.DataCollection.Core.Domain.Model
 namespace PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRawDatasetCompletion;
 
 /// <summary>
-/// Выполняет controlled drain подтверждённой session: CAS-переводит её в
+/// Выполняет controlled drain завершившей предметное окно session: CAS-переводит её в
 /// <c>Stopping/DrainingRaw</c>, останавливает producer, дожидается durable хвоста,
 /// проверяет точное равенство <c>received = enqueued = persisted = raw &gt; 0</c>
 /// и только затем CAS-переводит session в <c>Stopping/AwaitingNormalization</c>.
@@ -40,6 +40,8 @@ public sealed class CollectorRawDatasetCompletionCoordinator(
                 sessionId,
                 draining.Error,
                 cancellationToken);
+        if (draining.Value is null)
+            return UnitResult.Success<Error>();
 
         var stop = await runtime.StopAsync(sessionId, cancellationToken);
         if (stop.IsFailure)
@@ -85,7 +87,7 @@ public sealed class CollectorRawDatasetCompletionCoordinator(
             : UnitResult.Success<Error>();
     }
 
-    private async Task<Result<CollectorSessionAggregate, Error>> MarkDrainingRawAsync(
+    private async Task<Result<CollectorSessionAggregate?, Error>> MarkDrainingRawAsync(
         CollectorSessionId sessionId,
         CancellationToken cancellationToken)
     {
@@ -95,6 +97,12 @@ public sealed class CollectorRawDatasetCompletionCoordinator(
 
         for (var attempt = 0; attempt < MaximumUpdateAttempts; attempt++)
         {
+            if (session.Status == CollectorSessionStatus.Stopped
+                && session.StopReason == CollectorStopReason.MarketClosed)
+            {
+                return Result.Success<CollectorSessionAggregate?, Error>(null);
+            }
+
             if (session.Status == CollectorSessionStatus.Stopping
                 && session.Phase is CollectorSessionPhase.DrainingRaw
                     or CollectorSessionPhase.AwaitingNormalization)
@@ -102,14 +110,22 @@ public sealed class CollectorRawDatasetCompletionCoordinator(
                 return session;
             }
 
-            if (session.Status != CollectorSessionStatus.Running
-                || session.Phase != CollectorSessionPhase.AwaitingResolution)
+            if (session.Status != CollectorSessionStatus.Running)
             {
                 return CollectorRawDatasetCompletionErrors.StateTransitionConflict(sessionId);
             }
 
-            if (session.ResolutionConfirmedAt is null)
-                return CollectorRawDatasetCompletionErrors.ResolutionNotConfirmed(sessionId);
+            if (session.Phase == CollectorSessionPhase.ReadyBeforeWindow)
+            {
+                var collecting = session.MarkCollectingWindow();
+                if (collecting.IsFailure)
+                    return collecting.Error;
+            }
+            else if (session.Phase is not CollectorSessionPhase.CollectingWindow
+                         and not CollectorSessionPhase.AwaitingResolution)
+            {
+                return CollectorRawDatasetCompletionErrors.StateTransitionConflict(sessionId);
+            }
 
             var transition = session.MarkStopping();
             if (transition.IsFailure)

@@ -15,7 +15,7 @@ namespace PolymarketLab.DataCollection.Core.Application.UseCases.CollectorNormal
 /// <summary>
 /// Доказывает пригодность normalized dataset snapshot-версии session: сравнивает
 /// snapshot <c>ProjectionVersion</c> с активной runtime-версией, одним persistence
-/// read проверяет точную Processed cardinality и strict WS resolution provenance,
+/// read проверяет точную Processed cardinality,
 /// ожидает незавершённую обработку до deadline
 /// <c>AwaitingNormalizationAt + 5 минут</c>,
 /// инвалидирует любой недоказанный dataset и завершает session как
@@ -152,14 +152,6 @@ public sealed class CollectorNormalizationSuitabilityCoordinator(
 
         if (IsFullyProcessed(suitability))
         {
-            if (!suitability.ResolutionRawItemProcessed)
-            {
-                return await InvalidateAndFailAsync(
-                    sessionId,
-                    CollectorNormalizationSuitabilityErrors.ResolutionProvenanceInvalid(sessionId),
-                    cancellationToken);
-            }
-
             var integrity = await orderBookIntegrityCoordinator.EvaluateAsync(
                 sessionId,
                 snapshotVersion,

@@ -216,10 +216,51 @@ public sealed class OrderBookState
                 levels[change.Price] = new OrderBookLevel(change.Price, change.Size);
         }
 
+        var finalChange = orderedChanges[^1];
+        if (finalChange.BestBid.HasValue)
+        {
+            if (finalChange.BestBid.Value == 0)
+            {
+                bids.Clear();
+            }
+            else
+            {
+                foreach (var stalePrice in bids.Keys
+                             .Where(price => price > finalChange.BestBid.Value)
+                             .ToArray())
+                {
+                    bids.Remove(stalePrice);
+                }
+            }
+        }
+        if (finalChange.BestAsk.HasValue)
+        {
+            if (finalChange.BestAsk.Value == 1)
+            {
+                asks.Clear();
+            }
+            else
+            {
+                foreach (var stalePrice in asks.Keys
+                             .Where(price => price < finalChange.BestAsk.Value)
+                             .ToArray())
+                {
+                    asks.Remove(stalePrice);
+                }
+            }
+        }
+
         ReplaceLevels(bids, asks);
         Hash = orderedChanges.LastOrDefault(change => change.Hash is not null)?.Hash ?? Hash;
         CommitEvent(first.Position, first.SourceTimestamp, ref _lastPriceChangeSourceTimestamp);
         RecalculateDerivedState();
+
+        var issue = FindEmbeddedBestBidAskMismatch(finalChange);
+        if (issue is null)
+            return;
+
+        IntegrityIssue = issue;
+        SetSuspectOrResynchronizingStatus();
     }
 
     /// <summary>Применяет изменение шага цены, не изменяя существующие уровни.</summary>
@@ -266,7 +307,7 @@ public sealed class OrderBookState
         RecalculateDerivedState();
     }
 
-    /// <summary>Сверяет вычисленные лучшие цены и спред с нормализованным событием.</summary>
+    /// <summary>Продвигает позицию и watermark для нормализованного события лучших цен.</summary>
     /// <param name="quote">Нормализованные лучшие цены актива.</param>
     public void Apply(BestBidAskRecord quote)
     {
@@ -280,7 +321,7 @@ public sealed class OrderBookState
         if (!_hasFullSnapshot)
         {
             throw new InvalidOperationException(
-                "A full snapshot must be applied before best bid and ask checks.");
+                "A full snapshot must be applied before best bid and ask events.");
         }
         if (!string.Equals(AssetId, quote.AssetId, StringComparison.Ordinal))
         {
@@ -296,13 +337,6 @@ public sealed class OrderBookState
             return;
 
         CommitEvent(quote.Position, quote.SourceTimestamp, ref _lastBestBidAskSourceTimestamp);
-
-        var issue = FindBestBidAskMismatch(quote);
-        if (issue is null)
-            return;
-
-        IntegrityIssue = issue;
-        SetSuspectOrResynchronizingStatus();
     }
 
     internal bool TryBeginResynchronization(
@@ -500,25 +534,21 @@ public sealed class OrderBookState
             : OrderBookSyncStatus.Synchronized;
     }
 
-    private OrderBookIntegrityIssue? FindBestBidAskMismatch(BestBidAskRecord quote)
+    private OrderBookIntegrityIssue? FindEmbeddedBestBidAskMismatch(PriceChangeRecord change)
     {
-        if (BestBid != quote.BestBid)
+        var eventBestBid = change.BestBid == 0 ? null : change.BestBid;
+        var eventBestAsk = change.BestAsk == 1 ? null : change.BestAsk;
+        if (change.BestBid.HasValue && BestBid != eventBestBid)
         {
             return CreateIssue(
                 OrderBookIntegrityIssueType.BestBidMismatch,
-                $"Local best bid '{Format(BestBid)}' does not match event best bid '{Format(quote.BestBid)}'.");
+                $"Local best bid '{Format(BestBid)}' does not match event best bid '{Format(change.BestBid)}'.");
         }
-        if (BestAsk != quote.BestAsk)
+        if (change.BestAsk.HasValue && BestAsk != eventBestAsk)
         {
             return CreateIssue(
                 OrderBookIntegrityIssueType.BestAskMismatch,
-                $"Local best ask '{Format(BestAsk)}' does not match event best ask '{Format(quote.BestAsk)}'.");
-        }
-        if (Spread != quote.Spread)
-        {
-            return CreateIssue(
-                OrderBookIntegrityIssueType.SpreadMismatch,
-                $"Local spread '{Format(Spread)}' does not match event spread '{Format(quote.Spread)}'.");
+                $"Local best ask '{Format(BestAsk)}' does not match event best ask '{Format(change.BestAsk)}'.");
         }
 
         return null;

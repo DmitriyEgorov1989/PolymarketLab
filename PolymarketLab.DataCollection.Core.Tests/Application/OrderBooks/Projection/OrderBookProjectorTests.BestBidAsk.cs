@@ -22,24 +22,24 @@ public sealed partial class OrderBookProjectorTests
     }
 
     [Fact]
-    public void Apply_MismatchingBestAsk_ShouldReturnBestAskIssue()
+    public void Apply_MismatchingBestAsk_ShouldAdvanceCursorWithoutIssue()
     {
         var state = CreateSynchronizedState();
 
         var result = _projector.Apply(state, BestBidAskEvent(0.4m, 0.7m, 0.3m));
 
-        result.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestAskMismatch);
+        result.IntegrityIssue.Should().BeNull();
         state.BestAsk.Should().Be(0.6m);
     }
 
     [Fact]
-    public void Apply_MismatchingSpread_ShouldReturnSpreadIssue()
+    public void Apply_MismatchingSpread_ShouldAdvanceCursorWithoutIssue()
     {
         var state = CreateSynchronizedState();
 
         var result = _projector.Apply(state, BestBidAskEvent(0.4m, 0.6m, 0.1m));
 
-        result.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.SpreadMismatch);
+        result.IntegrityIssue.Should().BeNull();
         state.Spread.Should().Be(0.2m);
     }
 
@@ -60,7 +60,7 @@ public sealed partial class OrderBookProjectorTests
     }
 
     [Fact]
-    public void Apply_EmptyLocalSideAndExternalPrice_ShouldReturnMismatch()
+    public void Apply_EmptyLocalSideAndExternalPrice_ShouldAdvanceCursorWithoutIssue()
     {
         var state = new OrderBookState("asset");
         _projector.Apply(
@@ -71,9 +71,9 @@ public sealed partial class OrderBookProjectorTests
         var result = _projector.Apply(state, BestBidAskEvent(0.4m, 0.6m, 0.2m));
 
         result.Outcome.Should().Be(ProjectionModels.OrderBookProjectionOutcome.Applied);
-        result.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestBidMismatch);
+        result.IntegrityIssue.Should().BeNull();
         state.BestBid.Should().BeNull();
-        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
+        state.Status.Should().Be(OrderBookSyncStatus.Synchronized);
     }
 
     private static ProjectionModels.NormalizedOrderBookEvent.BestBidAsk BestBidAskEvent(

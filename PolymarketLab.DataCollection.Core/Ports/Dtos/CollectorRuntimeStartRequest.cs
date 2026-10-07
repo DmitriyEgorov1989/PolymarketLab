@@ -6,7 +6,9 @@ namespace PolymarketLab.DataCollection.Core.Ports.Dtos;
 /// <param name="SessionId">Идентификатор сохранённой сессии.</param>
 /// <param name="Market">Рынок и токены для подписки.</param>
 /// <param name="ReadinessDeadline">Крайний UTC-момент доказательства готовности подписки.</param>
+/// <param name="CollectionDeadline">Исключительная UTC-граница приёма market-сообщений.</param>
 public sealed record CollectorRuntimeStartRequest(
     CollectorSessionId SessionId,
     CollectionMarket Market,
-    DateTimeOffset ReadinessDeadline);
+    DateTimeOffset ReadinessDeadline,
+    DateTimeOffset CollectionDeadline);

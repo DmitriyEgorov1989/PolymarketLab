@@ -436,6 +436,28 @@ public sealed class CollectorRuntimeStartTests
     }
 
     [Fact]
+    public async Task Completion_WhenCollectionWindowEnds_ShouldDispatchRawCompletionOnce()
+    {
+        var worker = new StubCollectorWorker();
+        var factory = new StubCollectorWorkerFactory(() => worker);
+        var windowDispatcher = new RecordingWindowCompletionDispatcher();
+        var runtime = CreateRuntime(
+            factory,
+            windowCompletionDispatcher: windowDispatcher);
+        var request = CreateRequest();
+        await runtime.StartAsync(request, CancellationToken.None);
+
+        worker.Complete(
+            UnitResult.Success<Error>(),
+            CollectorWorkerCompletionOrigin.CollectionWindowEnded);
+        var completedSessionId = await windowDispatcher.Dispatched.Task.WaitAsync(
+            TimeSpan.FromSeconds(1));
+
+        completedSessionId.Should().Be(request.SessionId);
+        windowDispatcher.SessionIds.Should().Equal(request.SessionId);
+    }
+
+    [Fact]
     public async Task Completion_WithStartupFailure_ShouldNotDispatchFailure()
     {
         var error = new Error(
@@ -478,11 +500,13 @@ public sealed class CollectorRuntimeStartTests
 
     private static CollectorRuntimeAdapter CreateRuntime(
         ICollectorWorkerFactory workerFactory,
-        ICollectorRuntimeFailureDispatcher? failureDispatcher = null)
+        ICollectorRuntimeFailureDispatcher? failureDispatcher = null,
+        ICollectorRuntimeWindowCompletionDispatcher? windowCompletionDispatcher = null)
     {
         return new CollectorRuntimeAdapter(
             workerFactory,
-            failureDispatcher ?? new RecordingFailureDispatcher());
+            failureDispatcher ?? new RecordingFailureDispatcher(),
+            windowCompletionDispatcher ?? new RecordingWindowCompletionDispatcher());
     }
 
     private static CollectorRuntimeStartRequest CreateRequest()
@@ -508,7 +532,25 @@ public sealed class CollectorRuntimeStartTests
         return new CollectorRuntimeStartRequest(
             CollectorSessionId.Create(Guid.NewGuid()).Value,
             market,
-            market.EventStartsAt.AddSeconds(-10));
+            market.EventStartsAt.AddSeconds(-10),
+            DateTimeOffset.MaxValue);
+    }
+
+    private sealed class RecordingWindowCompletionDispatcher
+        : ICollectorRuntimeWindowCompletionDispatcher
+    {
+        public List<CollectorSessionId> SessionIds { get; } = [];
+        public TaskCompletionSource<CollectorSessionId> Dispatched { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task DispatchAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken)
+        {
+            SessionIds.Add(sessionId);
+            Dispatched.TrySetResult(sessionId);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class StubCollectorWorkerFactory(

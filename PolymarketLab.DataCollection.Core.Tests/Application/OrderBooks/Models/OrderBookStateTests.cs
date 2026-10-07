@@ -505,23 +505,24 @@ public sealed class OrderBookStateTests
     }
 
     [Theory]
-    [InlineData("0.3", "0.6", "0.2", OrderBookIntegrityIssueType.BestBidMismatch)]
-    [InlineData("0.4", "0.7", "0.2", OrderBookIntegrityIssueType.BestAskMismatch)]
-    [InlineData("0.4", "0.6", "0.1", OrderBookIntegrityIssueType.SpreadMismatch)]
-    public void Apply_MismatchingBestBidAsk_ShouldCreateDiagnosticIssue(
+    [InlineData("0.3", "0.6", OrderBookIntegrityIssueType.BestBidMismatch)]
+    [InlineData("0.4", "0.7", OrderBookIntegrityIssueType.BestAskMismatch)]
+    public void Apply_PriceChangeWithMismatchingEmbeddedQuote_ShouldCreateDiagnosticIssue(
         string bestBid,
         string bestAsk,
-        string spread,
         OrderBookIntegrityIssueType expectedType)
     {
         var state = CreateSynchronizedState(timeProvider: new FixedTimeProvider(DetectedAt));
-        var quote = BestBidAsk(
+        var change = Change(
             2,
-            decimal.Parse(bestBid, System.Globalization.CultureInfo.InvariantCulture),
-            decimal.Parse(bestAsk, System.Globalization.CultureInfo.InvariantCulture),
-            decimal.Parse(spread, System.Globalization.CultureInfo.InvariantCulture));
+            NormalizationModels.TradeSide.Buy,
+            0.4m,
+            10m,
+            itemIndex: 0,
+            bestBid: decimal.Parse(bestBid, System.Globalization.CultureInfo.InvariantCulture),
+            bestAsk: decimal.Parse(bestAsk, System.Globalization.CultureInfo.InvariantCulture));
 
-        state.Apply(quote);
+        state.Apply([change]);
 
         state.Status.Should().Be(OrderBookSyncStatus.Suspect);
         state.IntegrityIssue.Should().NotBeNull();
@@ -531,28 +532,34 @@ public sealed class OrderBookStateTests
         state.IntegrityIssue.DetectedAt.Should().Be(DetectedAt);
         state.SourceTimestamp.Should().Be(2000);
         state.NormalizedEventId.Should().Be(2);
-        state.BestBid.Should().Be(0.4m);
-        state.BestAsk.Should().Be(0.6m);
-        state.Spread.Should().Be(0.2m);
     }
 
     [Fact]
-    public void Apply_BestBidAskAgainstEmptyBook_ShouldReportBestBidMismatch()
+    public void Apply_BestBidAskAgainstEmptyBook_ShouldAdvanceCursorWithoutIssue()
     {
         var state = new OrderBookState("asset", new FixedTimeProvider(DetectedAt));
         state.Apply(CreateSnapshot(1, 1000, 0.01m, [], []));
 
         state.Apply(BestBidAsk(2, bestBid: 0m, bestAsk: 1m, spread: 1m));
 
-        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
-        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestBidMismatch);
+        state.Status.Should().Be(OrderBookSyncStatus.Synchronized);
+        state.IntegrityIssue.Should().BeNull();
     }
 
     [Fact]
     public void Apply_PriceChangeAfterBestBidMismatch_ShouldPreserveIssueUntilSnapshot()
     {
         var state = CreateSynchronizedState(timeProvider: new FixedTimeProvider(DetectedAt));
-        state.Apply(BestBidAsk(2, bestBid: 0.3m, bestAsk: 0.6m, spread: 0.2m));
+        state.Apply([
+            Change(
+                2,
+                NormalizationModels.TradeSide.Buy,
+                0.4m,
+                10m,
+                itemIndex: 0,
+                bestBid: 0.3m,
+                bestAsk: 0.6m)
+        ]);
         var existingIssue = state.IntegrityIssue;
 
         state.Apply([
@@ -883,7 +890,9 @@ public sealed class OrderBookStateTests
         string assetId = "asset",
         long? sourceTimestamp = 2000,
         long? rawMessageId = null,
-        int rawItemIndex = 0)
+        int rawItemIndex = 0,
+        decimal? bestBid = null,
+        decimal? bestAsk = null)
     {
         return new ProjectionModels.PriceChangeRecord(
             rawMessageId ?? normalizedEventId,
@@ -895,8 +904,8 @@ public sealed class OrderBookStateTests
             price,
             size,
             hash: null,
-            bestBid: null,
-            bestAsk: null,
+            bestBid,
+            bestAsk,
             itemIndex);
     }
 

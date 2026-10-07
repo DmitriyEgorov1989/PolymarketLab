@@ -400,6 +400,8 @@ GET и Stop возвращают одинаковый полный снимок 
 - `resolution` всегда присутствует; `signaledAt`, `confirmedAt`, `winningTokenId`,
   `winningOutcome`, `connectionEpoch` и `lastPollingCycleAt` равны `null`, а
   `sourceStates` и `confirmationSources` пусты, пока durable observation нет.
+  Успешный collector не ожидает определения победителя, поэтому эти поля могут
+  оставаться пустыми и в `Stopped/MarketClosed`.
 - `cleanup` равен `null` до committed cleanup. После cleanup содержит
   `invalidatingAt`, `cleanedAt`, сохранённые `projectionVersion`,
   `failureCode`/`failureMessage` и deleted counts.
@@ -444,7 +446,7 @@ provenance (`rawMessageId`, `rawItemIndex`) и outcome arrays наблюдени
 Возвращает актуальную session каждого рынка, для которого существует job. Для рынка с
 активной session возвращается она; иначе возвращается последняя session рынка.
 Результат включает sessions после `eventEndsAt`, пока backend ещё выполняет
-resolution, drain, normalization или cleanup.
+drain, normalization или cleanup.
 Старые Markets без job не появляются в этом списке и автоматически не включаются
 в сбор.
 

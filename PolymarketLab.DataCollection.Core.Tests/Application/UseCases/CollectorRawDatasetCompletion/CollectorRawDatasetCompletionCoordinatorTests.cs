@@ -4,7 +4,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorRawDatasetCompletion;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
-using PolymarketLab.DataCollection.Core.Domain.Models.Resolution;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
@@ -22,7 +21,7 @@ public sealed class CollectorRawDatasetCompletionCoordinatorTests
         DateTimeOffset.Parse("2026-08-27T11:57:00Z");
 
     [Fact]
-    public async Task CompleteAsync_WithConfirmedResolution_ShouldPersistDrainingBeforeStopAndReadAfterCheckpoint()
+    public async Task CompleteAsync_WithClosedCollectionWindow_ShouldPersistDrainingBeforeStopAndReadAfterCheckpoint()
     {
         var fixture = new Fixture();
 
@@ -43,6 +42,7 @@ public sealed class CollectorRawDatasetCompletionCoordinatorTests
         fixture.Session.Status.Should().Be(CollectorSessionStatus.Stopping);
         fixture.Session.Phase.Should().Be(CollectorSessionPhase.AwaitingNormalization);
         fixture.Session.AwaitingNormalizationAt.Should().Be(CreatedAt.AddMinutes(20));
+        fixture.Session.ResolutionConfirmedAt.Should().BeNull();
         fixture.Invalidation.Calls.Should().BeEmpty();
     }
 
@@ -194,32 +194,48 @@ public sealed class CollectorRawDatasetCompletionCoordinatorTests
     }
 
     [Fact]
-    public async Task CompleteAsync_WhenResolutionNotConfirmed_ShouldInvalidateWithoutDrain()
+    public async Task CompleteAsync_WithoutCollectingWindowTick_ShouldEnterCollectingAndDrain()
     {
         var session = CollectorSessionTestFactory.CreateRunning(createdAt: CreatedAt);
-        session.MarkCollectingWindow();
-        session.MarkAwaitingResolution();
         var fixture = new Fixture(session: session);
 
         var result = await fixture.Coordinator.CompleteAsync(
             fixture.Session.Id,
             CancellationToken.None);
 
-        result.IsFailure.Should().BeTrue();
-        result.Error.Code.Should().Be("collector.raw_completion.resolution_not_confirmed");
-        fixture.Calls.Should().Equal("invalidation", "runtime:stop");
-        fixture.Sessions.TryUpdateCount.Should().Be(0);
-        fixture.ProgressCompletion.CallCount.Should().Be(0);
-        fixture.Progress.ReadCount.Should().Be(0);
-        fixture.Invalidation.Calls.Should().ContainSingle(call =>
-            call.Reason == CollectorStopReason.PersistenceFailure
-            && call.Failure.Code == "collector.raw_completion.resolution_not_confirmed");
+        result.IsSuccess.Should().BeTrue();
+        fixture.Calls.Should().Equal(
+            "session:draining",
+            "runtime:stop",
+            "progress:complete",
+            "postgres:read",
+            "session:awaiting_normalization");
+        fixture.Session.Phase.Should().Be(CollectorSessionPhase.AwaitingNormalization);
+        fixture.Invalidation.Calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task CompleteAsync_WhenSessionAlreadyStoppedForMarketClose_ShouldSucceedWithoutWork()
+    {
+        var session = CreateCollectingSession();
+        session.Stop(
+            session.EventEndsAt!.Value,
+            CollectorStopReason.MarketClosed).IsSuccess.Should().BeTrue();
+        var fixture = new Fixture(session: session);
+
+        var result = await fixture.Coordinator.CompleteAsync(
+            fixture.Session.Id,
+            CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        fixture.Calls.Should().BeEmpty();
+        fixture.Invalidation.Calls.Should().BeEmpty();
     }
 
     [Fact]
     public async Task CompleteAsync_WhenSessionAlreadyAwaitingNormalization_ShouldSucceedIdempotently()
     {
-        var session = CreateConfirmedSession();
+        var session = CreateCollectingSession();
         session.MarkStopping().IsSuccess.Should().BeTrue();
         session.MarkAwaitingNormalization(session.EventEndsAt!.Value.AddSeconds(1))
             .IsSuccess.Should().BeTrue();
@@ -242,7 +258,7 @@ public sealed class CollectorRawDatasetCompletionCoordinatorTests
     [Fact]
     public async Task CompleteAsync_WhenSessionAlreadyDrainingRaw_ShouldContinueWithoutRepeatedTransition()
     {
-        var session = CreateConfirmedSession();
+        var session = CreateCollectingSession();
         session.MarkStopping().IsSuccess.Should().BeTrue();
         var fixture = new Fixture(session: session);
 
@@ -266,7 +282,7 @@ public sealed class CollectorRawDatasetCompletionCoordinatorTests
     {
         var fixture = new Fixture();
         fixture.Sessions.UpdateStatus = CollectorSessionUpdateStatus.ConcurrencyConflict;
-        fixture.Sessions.OnGetById = CreateConfirmedSession;
+        fixture.Sessions.OnGetById = CreateCollectingSession;
 
         var result = await fixture.Coordinator.CompleteAsync(
             fixture.Session.Id,
@@ -289,17 +305,10 @@ public sealed class CollectorRawDatasetCompletionCoordinatorTests
             && call.Failure.Code == "collector.raw_completion.state_transition_conflict");
     }
 
-    private static CollectorSessionAggregate CreateConfirmedSession()
+    private static CollectorSessionAggregate CreateCollectingSession()
     {
         var session = CollectorSessionTestFactory.CreateRunning(createdAt: CreatedAt);
         session.MarkCollectingWindow();
-        session.MarkAwaitingResolution();
-        var confirmation = session.ConfirmResolution(
-            session.EventEndsAt!.Value,
-            session.EventEndsAt.Value,
-            new ResolutionWinner("1001", "Yes"),
-            2);
-        confirmation.IsSuccess.Should().BeTrue();
         return session;
     }
 
@@ -309,7 +318,7 @@ public sealed class CollectorRawDatasetCompletionCoordinatorTests
             CollectorSessionProgress? progress = null,
             CollectorSessionAggregate? session = null)
         {
-            Session = session ?? CreateConfirmedSession();
+            Session = session ?? CreateCollectingSession();
             Calls = [];
             Sessions = new SessionRepository(Session, Calls);
             Runtime = new StubRuntime(Calls);

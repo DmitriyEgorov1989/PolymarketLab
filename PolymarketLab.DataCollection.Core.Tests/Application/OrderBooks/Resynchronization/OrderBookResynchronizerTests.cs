@@ -140,15 +140,19 @@ public sealed class OrderBookResynchronizerTests
             "asset",
             OrderBookResyncReason.Manual,
             CancellationToken.None);
-        state.Apply(new BestBidAskRecord(
+        state.Apply([new PriceChangeRecord(
             2,
             0,
             2,
             "asset",
             1500,
+            TradeSide.Buy,
+            0.4m,
+            10m,
+            "hash",
             0.1m,
             0.6m,
-            0.5m));
+            0)]);
         state.IntegrityIssue.Should().NotBeNull();
         completion.SetResult(Result.Failure<OrderBookSnapshot, Error>(new Error(
             "snapshot.failed",

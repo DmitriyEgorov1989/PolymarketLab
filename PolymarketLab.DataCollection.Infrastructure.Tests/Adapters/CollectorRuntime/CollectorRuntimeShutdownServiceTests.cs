@@ -24,7 +24,8 @@ public sealed class CollectorRuntimeShutdownServiceTests
         var handler = new RecordingShutdownHandler();
         var runtime = new CollectorRuntimeAdapter(
             new StubWorkerFactory(worker),
-            new StubFailureDispatcher());
+            new StubFailureDispatcher(),
+            new StubWindowCompletionDispatcher());
         var request = CreateRequest();
         await runtime.StartAsync(request, CancellationToken.None);
         using var provider = CreateProvider(handler);
@@ -52,7 +53,8 @@ public sealed class CollectorRuntimeShutdownServiceTests
         var handler = new RecordingShutdownHandler();
         var runtime = new CollectorRuntimeAdapter(
             new StubWorkerFactory(worker),
-            new StubFailureDispatcher());
+            new StubFailureDispatcher(),
+            new StubWindowCompletionDispatcher());
         var request = CreateRequest();
         await runtime.StartAsync(request, CancellationToken.None);
         using var provider = CreateProvider(handler);
@@ -76,7 +78,8 @@ public sealed class CollectorRuntimeShutdownServiceTests
         var handler = new RecordingShutdownHandler();
         var runtime = new CollectorRuntimeAdapter(
             new StubWorkerFactory(worker),
-            new StubFailureDispatcher());
+            new StubFailureDispatcher(),
+            new StubWindowCompletionDispatcher());
         var request = CreateRequest();
         await runtime.StartAsync(request, CancellationToken.None);
         using var provider = CreateProvider(handler);
@@ -105,7 +108,8 @@ public sealed class CollectorRuntimeShutdownServiceTests
         var handler = new RecordingShutdownHandler { ThrowFirstStopping = true };
         var runtime = new CollectorRuntimeAdapter(
             new StubWorkerFactory(firstWorker, secondWorker),
-            new StubFailureDispatcher());
+            new StubFailureDispatcher(),
+            new StubWindowCompletionDispatcher());
         var firstRequest = CreateRequest();
         var secondRequest = CreateRequest();
         await runtime.StartAsync(firstRequest, CancellationToken.None);
@@ -137,7 +141,8 @@ public sealed class CollectorRuntimeShutdownServiceTests
         };
         var runtime = new CollectorRuntimeAdapter(
             new StubWorkerFactory(worker),
-            new StubFailureDispatcher(false));
+            new StubFailureDispatcher(false),
+            new StubWindowCompletionDispatcher());
         var request = CreateRequest();
         await runtime.StartAsync(request, CancellationToken.None);
         using var provider = CreateProvider(handler);
@@ -162,7 +167,8 @@ public sealed class CollectorRuntimeShutdownServiceTests
         var persistenceCompletion = new StubRawMessagePersistenceCompletion(false);
         var runtime = new CollectorRuntimeAdapter(
             new StubWorkerFactory(worker),
-            new StubFailureDispatcher());
+            new StubFailureDispatcher(),
+            new StubWindowCompletionDispatcher());
         var request = CreateRequest();
         await runtime.StartAsync(request, CancellationToken.None);
         using var provider = CreateProvider(handler);
@@ -192,7 +198,8 @@ public sealed class CollectorRuntimeShutdownServiceTests
         var persistenceCompletion = new StubRawMessagePersistenceCompletion(false);
         var runtime = new CollectorRuntimeAdapter(
             new StubWorkerFactory(worker),
-            new StubFailureDispatcher());
+            new StubFailureDispatcher(),
+            new StubWindowCompletionDispatcher());
         var request = CreateRequest();
         await runtime.StartAsync(request, CancellationToken.None);
         using var provider = CreateProvider(handler);
@@ -250,7 +257,16 @@ public sealed class CollectorRuntimeShutdownServiceTests
                         "No",
                         1)
                 ]),
-            DateTimeOffset.Parse("2026-08-28T11:59:50Z"));
+            DateTimeOffset.Parse("2026-08-28T11:59:50Z"),
+            DateTimeOffset.MaxValue);
+    }
+
+    private sealed class StubWindowCompletionDispatcher
+        : ICollectorRuntimeWindowCompletionDispatcher
+    {
+        public Task DispatchAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class StubWorkerFactory(params ICollectorWorker[] workers)

@@ -52,13 +52,6 @@ internal static class CollectorNormalizationSuitabilityErrors
         $"Collector session '{sessionId.Value}' snapshot ledger contains {count} failed raw message(s).",
         ErrorType.Failure);
 
-    /// <summary>Strict WS resolution observation не указывает на обработанный snapshot item.</summary>
-    public static Error ResolutionProvenanceInvalid(CollectorSessionId sessionId) => new(
-        "collector.normalization_suitability.resolution_provenance_invalid",
-        $"Collector session '{sessionId.Value}' strict WebSocket resolution observation " +
-        "does not reference a processed snapshot market_resolved item.",
-        ErrorType.Failure);
-
     /// <summary>Нормализация не завершилась к абсолютному deadline.</summary>
     public static Error Timeout(CollectorSessionId sessionId, DateTimeOffset deadline) => new(
         "collector.normalization_suitability.timeout",

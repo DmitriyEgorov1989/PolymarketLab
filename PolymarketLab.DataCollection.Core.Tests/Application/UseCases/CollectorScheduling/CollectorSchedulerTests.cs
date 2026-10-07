@@ -195,6 +195,8 @@ public sealed class CollectorSchedulerTests
         fixture.Runtime.StartRequests.Should().ContainSingle();
         fixture.Runtime.StartRequests.Single().ReadinessDeadline.Should()
             .Be(fixture.Session.EventStartsAt);
+        fixture.Runtime.StartRequests.Single().CollectionDeadline.Should()
+            .Be(fixture.Session.EventEndsAt);
     }
 
     [Fact]

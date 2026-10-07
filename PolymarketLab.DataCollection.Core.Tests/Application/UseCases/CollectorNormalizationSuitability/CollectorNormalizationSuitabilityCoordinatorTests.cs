@@ -5,7 +5,6 @@ using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorNormalizat
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorSessionInvalidation;
 using PolymarketLab.DataCollection.Core.Application.UseCases.CollectorOrderBookIntegrity;
 using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
-using PolymarketLab.DataCollection.Core.Domain.Models.Resolution;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.DataCollection.Core.Ports.Enums;
@@ -40,7 +39,7 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
     }
 
     [Fact]
-    public async Task EvaluateAsync_WithAllProcessedAndResolutionProvenance_ShouldStopAsMarketClosed()
+    public async Task EvaluateAsync_WithAllProcessed_ShouldStopAsMarketClosed()
     {
         var fixture = new Fixture();
 
@@ -248,7 +247,7 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
     }
 
     [Fact]
-    public async Task EvaluateAsync_WithProcessedCardinalityAndMissingResolutionProvenance_ShouldInvalidate()
+    public async Task EvaluateAsync_WithProcessedCardinalityAndNoResolutionProvenance_ShouldComplete()
     {
         var fixture = new Fixture(suitability: Fixture.FullyProcessed with
         {
@@ -259,14 +258,11 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
             fixture.Session.Id,
             CancellationToken.None);
 
-        result.IsFailure.Should().BeTrue();
-        result.Error.Code.Should()
-            .Be("collector.normalization_suitability.resolution_provenance_invalid");
-        fixture.Sessions.TryUpdateCount.Should().Be(0);
-        fixture.Invalidation.Calls.Should().ContainSingle(call =>
-            call.Reason == CollectorStopReason.PersistenceFailure
-            && call.Failure.Code ==
-            "collector.normalization_suitability.resolution_provenance_invalid");
+        result.IsSuccess.Should().BeTrue();
+        fixture.Session.Status.Should().Be(CollectorSessionStatus.Stopped);
+        fixture.Session.StopReason.Should().Be(CollectorStopReason.MarketClosed);
+        fixture.Integrity.Calls.Should().ContainSingle();
+        fixture.Invalidation.Calls.Should().BeEmpty();
     }
 
     [Fact]
@@ -402,15 +398,8 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
     {
         var session = CollectorSessionTestFactory.CreateRunning(createdAt: CreatedAt);
         session.MarkCollectingWindow();
-        session.MarkAwaitingResolution();
-        var confirmation = session.ConfirmResolution(
-            session.EventEndsAt!.Value,
-            session.EventEndsAt.Value,
-            new ResolutionWinner("1001", "Yes"),
-            2);
-        confirmation.IsSuccess.Should().BeTrue();
         session.MarkStopping().IsSuccess.Should().BeTrue();
-        session.MarkAwaitingNormalization(session.EventEndsAt.Value.AddSeconds(1))
+        session.MarkAwaitingNormalization(session.EventEndsAt!.Value.AddSeconds(1))
             .IsSuccess.Should().BeTrue();
         return session;
     }

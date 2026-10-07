@@ -151,7 +151,7 @@ public sealed class CollectorRuntimeStopTests
     }
 
     private static CollectorRuntimeAdapter CreateRuntime(ICollectorWorkerFactory factory) =>
-        new(factory, new StubFailureDispatcher());
+        new(factory, new StubFailureDispatcher(), new StubWindowCompletionDispatcher());
 
     private static CollectorRuntimeStartRequest CreateRequest()
     {
@@ -166,7 +166,18 @@ public sealed class CollectorRuntimeStopTests
                 new CollectionMarketToken(TokenId.Create("no-token").Value, "No", 1)
             ]);
         return new CollectorRuntimeStartRequest(
-            CollectorSessionId.Create(Guid.NewGuid()).Value, market, market.EventStartsAt.AddSeconds(-10));
+            CollectorSessionId.Create(Guid.NewGuid()).Value,
+            market,
+            market.EventStartsAt.AddSeconds(-10),
+            DateTimeOffset.MaxValue);
+    }
+
+    private sealed class StubWindowCompletionDispatcher
+        : ICollectorRuntimeWindowCompletionDispatcher
+    {
+        public Task DispatchAsync(
+            CollectorSessionId sessionId,
+            CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class StubFactory(Func<ICollectorWorker> create) : ICollectorWorkerFactory

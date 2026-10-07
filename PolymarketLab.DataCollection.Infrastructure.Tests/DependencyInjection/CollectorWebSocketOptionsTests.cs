@@ -26,6 +26,7 @@ public sealed class CollectorWebSocketOptionsTests
             "wss://ws-subscriptions-clob.polymarket.com/ws/market");
         options.ConnectTimeout.Should().Be(TimeSpan.FromSeconds(10));
         options.StopTimeout.Should().Be(TimeSpan.FromSeconds(10));
+        options.ReconnectDelay.Should().Be(TimeSpan.FromSeconds(1));
         options.ReceiveBufferSize.Should().Be(16 * 1024);
         options.MaximumMessageSize.Should().Be(1024 * 1024);
         options.CustomFeatureEnabled.Should().BeTrue();
