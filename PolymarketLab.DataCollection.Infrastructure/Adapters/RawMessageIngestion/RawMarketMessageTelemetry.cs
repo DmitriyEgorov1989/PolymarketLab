@@ -15,6 +15,7 @@ internal sealed class RawMarketMessageTelemetry : IDisposable
     private readonly Counter<long> _enqueuedCounter;
     private readonly Counter<long> _persistedCounter;
     private readonly Counter<long> _reconnectCounter;
+    private readonly Histogram<double> _enqueueWaitDuration;
     private readonly ConcurrentDictionary<CollectorSessionId, CounterState> _states = new();
 
     public RawMarketMessageTelemetry()
@@ -24,6 +25,8 @@ internal sealed class RawMarketMessageTelemetry : IDisposable
         _enqueuedCounter = _meter.CreateCounter<long>("raw_messages.enqueued");
         _persistedCounter = _meter.CreateCounter<long>("raw_messages.persisted");
         _reconnectCounter = _meter.CreateCounter<long>("collector.reconnects");
+        _enqueueWaitDuration = _meter.CreateHistogram<double>(
+            "raw_messages.enqueue_wait_ms");
     }
 
     public RawMarketMessageCounters RecordReceivedComplete(
@@ -59,6 +62,15 @@ internal sealed class RawMarketMessageTelemetry : IDisposable
         _reconnectCounter.Add(1, CreateTags(sessionId));
         return _states.GetOrAdd(sessionId, _ => new CounterState())
             .IncrementReconnect();
+    }
+
+    public void RecordEnqueueWait(
+        CollectorSessionId sessionId,
+        TimeSpan duration)
+    {
+        _enqueueWaitDuration.Record(
+            duration.TotalMilliseconds,
+            CreateTags(sessionId));
     }
 
     public RawMarketMessageCounters RecordConnectionEpoch(

@@ -244,6 +244,14 @@ public sealed record RawMarketMessage(
 10. Только после этой readiness boundary, зафиксированной строго до `T`, runtime сохраняет `Starting -> Running` через scoped dispatcher и CAS.
 11. При startup failure перевести session в `Invalidating/Cleaning` и остановить runtime как compensation.
 
+Heartbeat state защищён отдельной короткой синхронизацией между receive- и
+heartbeat-loop. Ожидание `PONG` регистрируется до отправки `PING`, поэтому быстрый
+ответ, обработанный до завершения `SendTextAsync`, не теряется. Срок
+`HeartbeatTimeout` считается от начала попытки `PING`, включая время отправки;
+увеличение timeout для сокрытия задержек не выполняется. При timeout уже начатый
+enqueue получает тот же bounded stop budget, после чего исходная heartbeat-причина
+сохраняется вместо вторичной ошибки отмены.
+
 DataCollection Application и Presentation подключены к API host. Публичные endpoints collector session:
 
 ```http
@@ -447,6 +455,13 @@ Binary messages не сохраняются. Они считаются protocol 
 Channel общий для параллельных collectors и имеет `FullMode.Wait`: заполнение
 создаёт backpressure, а не silent drop. Оно не является admission queue и не
 ограничивает число одновременно активных рынков.
+
+Worker журналирует длительность каждого enqueue, глубину очереди до и после
+ожидания и её capacity; длительность также публикуется как
+`raw_messages.enqueue_wait_ms`. Heartbeat timeout журналирует безопасные моменты
+начала `PING`, завершения отправки, последнего обработанного `PONG` и последнего
+полученного фрагмента. Эти значения описывают локальное наблюдение приложения и
+не доказывают момент доставки сообщения через сеть или proxy.
 
 ### Ownership payload
 

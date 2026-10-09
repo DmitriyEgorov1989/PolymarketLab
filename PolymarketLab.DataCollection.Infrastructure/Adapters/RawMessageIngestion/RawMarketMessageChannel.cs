@@ -5,13 +5,17 @@ using System.Threading.Channels;
 
 namespace PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
 
-internal sealed class RawMarketMessageChannel : IRawMarketMessageSink
+internal sealed class RawMarketMessageChannel :
+    IRawMarketMessageSink,
+    IRawMarketMessageSinkDiagnostics
 {
     private readonly Channel<RawMarketMessage> _channel;
+    private readonly int _capacity;
     private int _queuedCount;
 
     public RawMarketMessageChannel(IOptions<RawMessageIngestionOptions> options)
     {
+        _capacity = options.Value.Capacity;
         _channel = Channel.CreateBounded<RawMarketMessage>(
             new BoundedChannelOptions(options.Value.Capacity)
             {
@@ -24,6 +28,8 @@ internal sealed class RawMarketMessageChannel : IRawMarketMessageSink
 
     internal ChannelReader<RawMarketMessage> Reader => _channel.Reader;
     internal int QueuedCount => Volatile.Read(ref _queuedCount);
+    int IRawMarketMessageSinkDiagnostics.QueueDepth => QueuedCount;
+    int IRawMarketMessageSinkDiagnostics.Capacity => _capacity;
 
     public ValueTask EnqueueAsync(
         RawMarketMessage message,

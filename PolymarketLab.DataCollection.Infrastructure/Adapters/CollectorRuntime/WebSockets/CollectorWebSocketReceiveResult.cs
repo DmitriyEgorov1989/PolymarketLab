@@ -5,4 +5,5 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.CollectorRuntime.
 internal readonly record struct CollectorWebSocketReceiveResult(
     int Count,
     WebSocketMessageType MessageType,
-    bool EndOfMessage);
+    bool EndOfMessage,
+    WebSocketCloseStatus? CloseStatus = null);

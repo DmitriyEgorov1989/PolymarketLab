@@ -31,7 +31,8 @@ internal sealed class ClientWebSocketConnection : ICollectorWebSocketConnection
         return new CollectorWebSocketReceiveResult(
             result.Count,
             result.MessageType,
-            result.EndOfMessage);
+            result.EndOfMessage,
+            _socket.CloseStatus);
     }
 
     public Task CloseAsync(CancellationToken cancellationToken)

@@ -179,6 +179,118 @@ public sealed class CollectorWebSocketWorkerTests
     }
 
     [Fact]
+    public async Task PeriodicPing_WhenPongArrivesBeforeSendCompletes_ShouldNotTimeout()
+    {
+        var pingEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePing = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var pingCount = 0;
+        var connection = new StubWebSocketConnection();
+        connection.SendHandler = async (message, _) =>
+        {
+            if (!message.Span.SequenceEqual("PING"u8))
+                return;
+
+            if (Interlocked.Increment(ref pingCount) == 1)
+            {
+                connection.AddFrame("PONG"u8);
+                return;
+            }
+
+            connection.AddFrame("PONG"u8);
+            pingEntered.TrySetResult();
+            await releasePing.Task;
+        };
+
+        var request = CreateRequest(
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            DateTimeOffset.MaxValue);
+        var dispatcher = new StubReadinessDispatcher();
+        var worker = CreateWorker(
+            request,
+            connection,
+            options: CreateOptions(
+                heartbeatInterval: TimeSpan.FromMilliseconds(10),
+                heartbeatTimeout: TimeSpan.FromMilliseconds(100)),
+            readinessDispatcher: dispatcher);
+
+        var startResult = await worker.StartAsync(CancellationToken.None);
+        connection.AddFrame(BookMessage("yes-token"));
+        connection.AddFrame(BookMessage("no-token"));
+        await pingEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        releasePing.SetResult();
+        await Task.Delay(150);
+
+        dispatcher.InvalidationCount.Should().Be(0);
+        worker.Completion.IsCompleted.Should().BeFalse();
+
+        await worker.StopAsync(CancellationToken.None);
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+        startResult.IsSuccess.Should().BeTrue();
+        completion.Result.IsSuccess.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task HeartbeatTimeout_WhenEnqueueIsBlocked_ShouldCompleteWithinStopBudget()
+    {
+        var enqueueEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var connection = new StubWebSocketConnection();
+        var pingCount = 0;
+        connection.SendHandler = (message, _) =>
+        {
+            if (message.Span.SequenceEqual("PING"u8)
+                && Interlocked.Increment(ref pingCount) == 1)
+                connection.AddFrame("PONG"u8);
+            return Task.CompletedTask;
+        };
+        var receiveCount = 0;
+        connection.ReceiveHandler = async (buffer, cancellationToken) =>
+        {
+            var payload = Interlocked.Increment(ref receiveCount) == 1
+                ? "PONG"u8.ToArray()
+                : BookMessage("yes-token");
+            if (receiveCount > 2)
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+
+            payload.CopyTo(buffer);
+            return new CollectorWebSocketReceiveResult(
+                payload.Length,
+                WebSocketMessageType.Text,
+                true);
+        };
+        var sink = new StubRawMarketMessageSink
+        {
+            Handler = async (_, cancellationToken) =>
+            {
+                enqueueEntered.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+        };
+        var request = CreateRequest(
+            DateTimeOffset.UtcNow.AddMilliseconds(100),
+            DateTimeOffset.MaxValue);
+        var worker = CreateWorker(
+            request,
+            connection,
+            options: CreateOptions(
+                heartbeatInterval: TimeSpan.FromMilliseconds(10),
+                heartbeatTimeout: TimeSpan.FromMilliseconds(200),
+                stopTimeout: TimeSpan.FromMilliseconds(50)),
+            messageSink: sink);
+
+        await worker.StartAsync(CancellationToken.None);
+        await enqueueEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(1));
+
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Code.Should().Be("collector.runtime.heartbeat.timeout");
+        connection.IsDisposed.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task InitialReadiness_WhenStopCancelsPersistence_ShouldCleanUpAndCompleteSuccessfully()
     {
         var readinessEntered = new TaskCompletionSource(
@@ -1775,12 +1887,18 @@ public sealed class CollectorWebSocketWorkerTests
 
     private static CollectorWebSocketOptions CreateOptions(
         bool customFeatureEnabled = true,
-        TimeSpan? reconnectDelay = null)
+        TimeSpan? reconnectDelay = null,
+        TimeSpan? heartbeatInterval = null,
+        TimeSpan? heartbeatTimeout = null,
+        TimeSpan? stopTimeout = null)
     {
         return new CollectorWebSocketOptions
         {
             CustomFeatureEnabled = customFeatureEnabled,
-            ReconnectDelay = reconnectDelay ?? TimeSpan.FromSeconds(1)
+            ReconnectDelay = reconnectDelay ?? TimeSpan.FromSeconds(1),
+            HeartbeatInterval = heartbeatInterval ?? TimeSpan.FromSeconds(10),
+            HeartbeatTimeout = heartbeatTimeout ?? TimeSpan.FromSeconds(10),
+            StopTimeout = stopTimeout ?? TimeSpan.FromSeconds(10)
         };
     }
 
@@ -1869,10 +1987,10 @@ public sealed class CollectorWebSocketWorkerTests
         private readonly List<byte[]> _sentMessages = [];
 
         public Func<CancellationToken, Task>? ConnectHandler { get; init; }
-        public Func<ReadOnlyMemory<byte>, CancellationToken, Task>? SendHandler { get; init; }
+        public Func<ReadOnlyMemory<byte>, CancellationToken, Task>? SendHandler { get; set; }
         public Func<CancellationToken, Task>? CloseHandler { get; init; }
         public Func<Memory<byte>, CancellationToken,
-            ValueTask<CollectorWebSocketReceiveResult>>? ReceiveHandler { get; init; }
+            ValueTask<CollectorWebSocketReceiveResult>>? ReceiveHandler { get; set; }
         public Uri? Endpoint { get; private set; }
         public byte[]? SentMessage { get; private set; }
         public IReadOnlyList<byte[]> SentMessages => _sentMessages;

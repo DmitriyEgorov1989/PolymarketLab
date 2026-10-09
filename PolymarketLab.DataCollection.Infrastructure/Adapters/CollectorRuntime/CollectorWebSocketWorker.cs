@@ -615,6 +615,7 @@ internal sealed class CollectorWebSocketWorker(
                 remoteCloseReconnectAttempts++;
 
             state = state.NextEpoch();
+            var reconnectStartedAt = timeProvider.GetTimestamp();
             var reconnect = await ConnectAndSubscribeAsync(
                 state.Epoch,
                 reconnectDeadline,
@@ -622,6 +623,16 @@ internal sealed class CollectorWebSocketWorker(
                     ? result.Error
                     : CollectorRuntimeErrors.ReadinessTimedOut(request.SessionId),
                 _receiveCts.Token);
+            logger.LogInformation(
+                "Collector WebSocket {SessionId} reconnect attempt {ReconnectAttempt} for epoch {ConnectionEpoch} " +
+                "completed in {ReconnectDuration} with result {ReconnectResult}.",
+                request.SessionId.Value,
+                recoveringRemoteClose ? remoteCloseReconnectAttempts : 0,
+                state.Epoch,
+                timeProvider.GetElapsedTime(
+                    reconnectStartedAt,
+                    timeProvider.GetTimestamp()),
+                reconnect.IsSuccess ? "success" : reconnect.Error.Code);
             if (reconnect.IsSuccess)
             {
                 telemetry.RecordConnectionEpoch(request.SessionId, state.Epoch);
@@ -698,8 +709,9 @@ internal sealed class CollectorWebSocketWorker(
             }
 
             var initialPingAt = timeProvider.GetTimestamp();
+            state.BeginPing(initialPingAt);
             await connection.SendTextAsync("PING"u8.ToArray(), heartbeatCts.Token);
-            state.ObservePingSent(initialPingAt);
+            state.CompletePingSend(timeProvider.GetTimestamp());
         }
         catch (OperationCanceledException) when (heartbeatCts.IsCancellationRequested)
         {
@@ -728,18 +740,16 @@ internal sealed class CollectorWebSocketWorker(
         var heartbeat = HeartbeatLoopAsync(connection, state, heartbeatCts);
         var receive = ReceiveLoopAsync(connection, state, heartbeatCts.Token);
 
-        var completed = await Task.WhenAny(receive, heartbeat);
+        await Task.WhenAny(receive, heartbeat);
         heartbeatCts.Cancel();
 
         await ((Task)Task.WhenAll(receive, heartbeat))
             .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
+        var heartbeatResult = await heartbeat;
         var receiveResult = await receive;
-        if (receiveResult.IsFailure)
-            return receiveResult;
-
-        if (completed == heartbeat)
-            return await heartbeat;
+        if (heartbeatResult.IsFailure)
+            return heartbeatResult;
 
         return receiveResult;
     }
@@ -828,9 +838,15 @@ internal sealed class CollectorWebSocketWorker(
                 var frame = await connection.ReceiveAsync(
                     frameBuffer.AsMemory(0, options.ReceiveBufferSize),
                     receiveToken);
+                state.ObserveReceive(timeProvider.GetTimestamp());
 
                 if (frame.MessageType == WebSocketMessageType.Close)
                 {
+                    logger.LogInformation(
+                        "Collector WebSocket {SessionId} received remote close at epoch {ConnectionEpoch} with code {CloseStatus}.",
+                        request.SessionId.Value,
+                        state.Epoch,
+                        frame.CloseStatus);
                     return IsStopping() || HasCollectionEnded()
                         ? UnitResult.Success<Error>()
                         : UnitResult.Failure(
@@ -897,6 +913,8 @@ internal sealed class CollectorWebSocketWorker(
                     receivedCounters.Enqueued,
                     receivedCounters.Persisted);
 
+                var enqueueStartedAt = timeProvider.GetTimestamp();
+                var enqueueQueueDepth = GetQueueDiagnostics()?.QueueDepth;
                 try
                 {
                     await messageSink.EnqueueAsync(message, _enqueueCts.Token);
@@ -905,6 +923,27 @@ internal sealed class CollectorWebSocketWorker(
                     when (_enqueueCts.IsCancellationRequested)
                 {
                     throw new RawMessageEnqueueCancelledException(exception);
+                }
+                finally
+                {
+                    var enqueueDuration = timeProvider.GetElapsedTime(
+                        enqueueStartedAt,
+                        timeProvider.GetTimestamp());
+                    var queueDiagnostics = GetQueueDiagnostics();
+                    var queueDepth = queueDiagnostics?.QueueDepth ?? -1;
+                    var queueCapacity = queueDiagnostics?.Capacity ?? -1;
+                    telemetry.RecordEnqueueWait(
+                        request.SessionId,
+                        enqueueDuration);
+                    logger.LogDebug(
+                        "Collector WebSocket {SessionId} waited {EnqueueDuration} for raw message enqueue at epoch {ConnectionEpoch}. " +
+                        "QueueDepthBefore: {QueueDepthBefore}, QueueDepthAfter: {QueueDepthAfter}, QueueCapacity: {QueueCapacity}.",
+                        request.SessionId.Value,
+                        enqueueDuration,
+                        state.Epoch,
+                        enqueueQueueDepth,
+                        queueDepth,
+                        queueCapacity);
                 }
 
                 var enqueuedCounters = telemetry.RecordEnqueued(request.SessionId);
@@ -1138,17 +1177,40 @@ internal sealed class CollectorWebSocketWorker(
                     timeProvider);
                 if (timedOut)
                 {
+                    var heartbeat = state.GetHeartbeatSnapshot(timeProvider, now);
+                    ScheduleEnqueueCancellation();
                     heartbeatCts.Cancel();
+                    logger.LogWarning(
+                        "Collector WebSocket {SessionId} heartbeat timed out at epoch {ConnectionEpoch}. " +
+                        "PingStartedAt: {PingStartedAt}, PingSendDuration: {PingSendDuration}, " +
+                        "LastPongAt: {LastPongAt}, LastReceiveAt: {LastReceiveAt}.",
+                        request.SessionId.Value,
+                        state.Epoch,
+                        heartbeat.PingStartedAt,
+                        heartbeat.PingSendDuration,
+                        heartbeat.LastPongAt,
+                        heartbeat.LastReceiveAt);
                     return UnitResult.Failure(
                         CollectorRuntimeErrors.HeartbeatTimedOut(
                             request.SessionId,
                             options.HeartbeatTimeout));
                 }
 
-                if (state.CanSendPing(now, options.HeartbeatInterval, timeProvider))
+                if (state.TryBeginPing(
+                        now,
+                        options.HeartbeatInterval,
+                        timeProvider))
                 {
-                    await connection.SendTextAsync("PING"u8.ToArray(), heartbeatCts.Token);
-                    state.ObservePingSent(now);
+                    try
+                    {
+                        await connection.SendTextAsync("PING"u8.ToArray(), heartbeatCts.Token);
+                        state.CompletePingSend(timeProvider.GetTimestamp());
+                    }
+                    catch
+                    {
+                        state.CancelPing();
+                        throw;
+                    }
                 }
 
                 var delay = state.GetHeartbeatDelay(
@@ -1236,6 +1298,9 @@ internal sealed class CollectorWebSocketWorker(
 
     private static bool IsPong(byte[] payload) =>
         payload.AsSpan().SequenceEqual("PONG"u8);
+
+    private IRawMarketMessageSinkDiagnostics? GetQueueDiagnostics() =>
+        messageSink as IRawMarketMessageSinkDiagnostics;
 
     private async Task<UnitResult<Error>> CloseConnectionAsync(
         ICollectorWebSocketConnection connection)
@@ -1426,10 +1491,14 @@ internal sealed class CollectorWebSocketWorker(
         IReadOnlyCollection<string> expectedTokenIds,
         bool initialReadinessCompleted = false)
     {
+        private readonly object _heartbeatSync = new();
         private readonly HashSet<string> _initialBookTokenIds = [];
         private long? _lastPingSentTimestamp;
         private long? _outstandingPingTimestamp;
         private bool _hasMatchingPong;
+        private long? _lastPongTimestamp;
+        private long? _lastReceiveTimestamp;
+        private long? _pingSendCompletedTimestamp;
 
         public long Epoch { get; } = epoch;
 
@@ -1439,7 +1508,14 @@ internal sealed class CollectorWebSocketWorker(
 
         public bool HasAllInitialBooks => _initialBookTokenIds.Count == ExpectedTokenIds.Count;
 
-        public bool HasMatchingPong => _hasMatchingPong;
+        public bool HasMatchingPong
+        {
+            get
+            {
+                lock (_heartbeatSync)
+                    return _hasMatchingPong;
+            }
+        }
 
         public bool IsReady { get; private set; }
 
@@ -1459,33 +1535,74 @@ internal sealed class CollectorWebSocketWorker(
             _initialBookTokenIds.Add(tokenId);
         }
 
-        public void ObservePingSent(long timestamp)
+        public void BeginPing(long timestamp)
         {
-            _lastPingSentTimestamp = timestamp;
-            _outstandingPingTimestamp = timestamp;
-            _hasMatchingPong = false;
+            lock (_heartbeatSync)
+            {
+                _outstandingPingTimestamp = timestamp;
+                _hasMatchingPong = false;
+                _pingSendCompletedTimestamp = null;
+            }
+        }
+
+        public void CompletePingSend(long timestamp)
+        {
+            lock (_heartbeatSync)
+            {
+                _lastPingSentTimestamp = timestamp;
+                _pingSendCompletedTimestamp = timestamp;
+            }
+        }
+
+        public void CancelPing()
+        {
+            lock (_heartbeatSync)
+            {
+                _outstandingPingTimestamp = null;
+                _pingSendCompletedTimestamp = null;
+            }
         }
 
         public void ObservePong(long timestamp)
         {
-            if (_outstandingPingTimestamp is null)
-                return;
+            lock (_heartbeatSync)
+            {
+                if (_outstandingPingTimestamp is null)
+                    return;
 
-            _outstandingPingTimestamp = null;
-            _hasMatchingPong = true;
-            _lastPingSentTimestamp = timestamp;
+                _outstandingPingTimestamp = null;
+                _hasMatchingPong = true;
+                _lastPongTimestamp = timestamp;
+            }
         }
 
-        public bool CanSendPing(
+        public void ObserveReceive(long timestamp)
+        {
+            lock (_heartbeatSync)
+                _lastReceiveTimestamp = timestamp;
+        }
+
+        public bool TryBeginPing(
             long now,
             TimeSpan interval,
             TimeProvider timeProvider)
         {
-            if (_outstandingPingTimestamp is not null)
-                return false;
+            lock (_heartbeatSync)
+            {
+                if (_outstandingPingTimestamp is not null)
+                    return false;
 
-            return _lastPingSentTimestamp is null
-                   || timeProvider.GetElapsedTime(_lastPingSentTimestamp.Value, now) >= interval;
+                if (_lastPingSentTimestamp is not null
+                    && timeProvider.GetElapsedTime(_lastPingSentTimestamp.Value, now) < interval)
+                {
+                    return false;
+                }
+
+                _outstandingPingTimestamp = now;
+                _hasMatchingPong = false;
+                _pingSendCompletedTimestamp = null;
+                return true;
+            }
         }
 
         public bool IsHeartbeatTimedOut(
@@ -1493,8 +1610,11 @@ internal sealed class CollectorWebSocketWorker(
             TimeSpan timeout,
             TimeProvider timeProvider)
         {
-            return _outstandingPingTimestamp is not null
-                   && timeProvider.GetElapsedTime(_outstandingPingTimestamp.Value, now) >= timeout;
+            lock (_heartbeatSync)
+            {
+                return _outstandingPingTimestamp is not null
+                       && timeProvider.GetElapsedTime(_outstandingPingTimestamp.Value, now) >= timeout;
+            }
         }
 
         public TimeSpan GetHeartbeatDelay(
@@ -1503,15 +1623,49 @@ internal sealed class CollectorWebSocketWorker(
             TimeSpan timeout,
             TimeProvider timeProvider)
         {
-            var remaining = _outstandingPingTimestamp is null
-                ? interval - (_lastPingSentTimestamp is null
-                    ? interval
-                    : timeProvider.GetElapsedTime(_lastPingSentTimestamp.Value, now))
-                : timeout - timeProvider.GetElapsedTime(_outstandingPingTimestamp.Value, now);
+            TimeSpan remaining;
+            lock (_heartbeatSync)
+            {
+                remaining = _outstandingPingTimestamp is null
+                    ? interval - (_lastPingSentTimestamp is null
+                        ? interval
+                        : timeProvider.GetElapsedTime(_lastPingSentTimestamp.Value, now))
+                    : timeout - timeProvider.GetElapsedTime(_outstandingPingTimestamp.Value, now);
+            }
 
             return remaining <= TimeSpan.Zero
                 ? TimeSpan.FromMilliseconds(1)
                 : remaining;
+        }
+
+        public HeartbeatSnapshot GetHeartbeatSnapshot(
+            TimeProvider timeProvider,
+            long now)
+        {
+            lock (_heartbeatSync)
+            {
+                return new HeartbeatSnapshot(
+                    _outstandingPingTimestamp is null
+                        ? null
+                        : timeProvider.GetUtcNow() - timeProvider.GetElapsedTime(
+                            _outstandingPingTimestamp.Value,
+                            now),
+                    _pingSendCompletedTimestamp is null || _outstandingPingTimestamp is null
+                        ? null
+                        : timeProvider.GetElapsedTime(
+                            _outstandingPingTimestamp.Value,
+                            _pingSendCompletedTimestamp.Value),
+                    _lastPongTimestamp is null
+                        ? null
+                        : timeProvider.GetUtcNow() - timeProvider.GetElapsedTime(
+                            _lastPongTimestamp.Value,
+                            now),
+                    _lastReceiveTimestamp is null
+                        ? null
+                        : timeProvider.GetUtcNow() - timeProvider.GetElapsedTime(
+                            _lastReceiveTimestamp.Value,
+                            now));
+            }
         }
 
         public void MarkReady()
@@ -1519,6 +1673,12 @@ internal sealed class CollectorWebSocketWorker(
             IsReady = true;
         }
     }
+
+    private sealed record HeartbeatSnapshot(
+        DateTimeOffset? PingStartedAt,
+        TimeSpan? PingSendDuration,
+        DateTimeOffset? LastPongAt,
+        DateTimeOffset? LastReceiveAt);
 
     private sealed record ReadinessObservation(
         IReadOnlyList<string> TokenIds,
