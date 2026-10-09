@@ -28,5 +28,8 @@ public enum OrderBookIntegrityIssueType
     GapDetected = 8,
 
     /// <summary>Внешние hash состояния не совпали при диагностической проверке.</summary>
-    SnapshotHashMismatch = 9
+    SnapshotHashMismatch = 9,
+
+    /// <summary>Изменение шага нельзя проверить, поскольку текущий шаг неизвестен.</summary>
+    TickSizeUnknown = 10
 }

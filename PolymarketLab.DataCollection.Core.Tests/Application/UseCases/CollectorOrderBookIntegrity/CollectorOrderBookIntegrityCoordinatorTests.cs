@@ -11,6 +11,7 @@ using Xunit;
 using ProjectionBestBidAskRecord = PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection.Models.BestBidAskRecord;
 using ProjectionBookSnapshotRecord = PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection.Models.BookSnapshotRecord;
 using ProjectionPriceChangeRecord = PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection.Models.PriceChangeRecord;
+using ProjectionTickSizeChangeRecord = PolymarketLab.DataCollection.Core.Application.OrderBooks.Projection.Models.TickSizeChangeRecord;
 using OrderBookIntegrityIssueType = PolymarketLab.DataCollection.Core.Application.OrderBooks.Models.OrderBookIntegrityIssueType;
 
 namespace PolymarketLab.DataCollection.Core.Tests.Application.UseCases.CollectorOrderBookIntegrity;
@@ -72,6 +73,41 @@ public sealed class CollectorOrderBookIntegrityCoordinatorTests
         result.Error.Code.Should().Be("collector.order_book.integrity.issue");
         result.Error.Message.Should().NotContain("Local best bid");
         projector.CallCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WithUnknownTickSize_ShouldReturnIntegrityFailureAndLogProvenance()
+    {
+        var logger = new TestLogger();
+        var coordinator = new CollectorOrderBookIntegrityCoordinator(
+            new Reader(
+            [
+                new NormalizedOrderBookEvent.BookSnapshot(new ProjectionBookSnapshotRecord(
+                    1, 0, 11, "asset", "condition", 100, "hash", null, [], [], 1)),
+                new NormalizedOrderBookEvent.TickSizeChange(new ProjectionTickSizeChangeRecord(
+                    2, 0, 12, "asset", 101, 0.01m, 0.001m, 1))
+            ]),
+            new OrderBookProjector(),
+            logger);
+
+        var result = await coordinator.EvaluateAsync(
+            CollectorSessionId.Create(Guid.NewGuid()).Value,
+            3,
+            [TokenId.Create("asset").Value],
+            null,
+            null,
+            CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be("collector.order_book.integrity.issue");
+        logger.Entries.Should().ContainSingle();
+        logger.Entries.Single().Should().Contain(new Dictionary<string, object?>
+        {
+            ["IssueType"] = OrderBookIntegrityIssueType.TickSizeUnknown,
+            ["LocalTickSize"] = null,
+            ["OldTickSize"] = 0.01m,
+            ["NewTickSize"] = 0.001m
+        });
     }
 
     [Fact]
