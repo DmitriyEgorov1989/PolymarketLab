@@ -37,6 +37,7 @@ public sealed class OrderBookModelsTests
         ((int)OrderBookIntegrityIssueType.EventOrderViolation).Should().Be(7);
         ((int)OrderBookIntegrityIssueType.GapDetected).Should().Be(8);
         ((int)OrderBookIntegrityIssueType.SnapshotHashMismatch).Should().Be(9);
+        ((int)OrderBookIntegrityIssueType.TickSizeUnknown).Should().Be(10);
     }
 
     [Fact]

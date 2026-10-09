@@ -175,7 +175,9 @@ public sealed class CollectorOrderBookIntegrityCoordinator(
         if (issue.Type is not (OrderBookIntegrityIssueType.EventOrderViolation
             or OrderBookIntegrityIssueType.BestBidMismatch
             or OrderBookIntegrityIssueType.BestAskMismatch
-            or OrderBookIntegrityIssueType.SpreadMismatch))
+            or OrderBookIntegrityIssueType.SpreadMismatch
+            or OrderBookIntegrityIssueType.TickSizeMismatch
+            or OrderBookIntegrityIssueType.TickSizeUnknown))
         {
             return;
         }
@@ -205,7 +207,8 @@ public sealed class CollectorOrderBookIntegrityCoordinator(
             "EventSpread: {EventSpread}, PreviousEventBestBid: {PreviousEventBestBid}, " +
             "PreviousEventBestAsk: {PreviousEventBestAsk}, PreviousEventSpread: {PreviousEventSpread}, " +
             "PriceChangeCount: {PriceChangeCount}, LastChangeItemIndex: {LastChangeItemIndex}, " +
-            "LastChangeSide: {LastChangeSide}, LastChangePrice: {LastChangePrice}, LastChangeSize: {LastChangeSize}.",
+            "LastChangeSide: {LastChangeSide}, LastChangePrice: {LastChangePrice}, LastChangeSize: {LastChangeSize}, " +
+            "LocalTickSize: {LocalTickSize}, OldTickSize: {OldTickSize}, NewTickSize: {NewTickSize}.",
             sessionId.Value,
             projectionVersion,
             assetId,
@@ -239,7 +242,10 @@ public sealed class CollectorOrderBookIntegrityCoordinator(
             current.LastChangeItemIndex,
             current.LastChangeSide,
             current.LastChangePrice,
-            current.LastChangeSize);
+            current.LastChangeSize,
+            state.TickSize,
+            current.OldTickSize,
+            current.NewTickSize);
     }
 
     private static void UpdateSourceTimestampWatermark(
@@ -277,7 +283,9 @@ public sealed class CollectorOrderBookIntegrityCoordinator(
                 change.Record.ConnectionEpoch,
                 change.Record.ReceivedAt,
                 null,
-                null),
+                null,
+                OldTickSize: change.Record.OldTickSize,
+                NewTickSize: change.Record.NewTickSize),
             NormalizedOrderBookEvent.BestBidAsk quote => new(
                 "best_bid_ask",
                 quote.Record.Position,
@@ -342,5 +350,7 @@ public sealed class CollectorOrderBookIntegrityCoordinator(
         int? LastChangeItemIndex = null,
         Application.Normalization.Models.TradeSide? LastChangeSide = null,
         decimal? LastChangePrice = null,
-        decimal? LastChangeSize = null);
+        decimal? LastChangeSize = null,
+        decimal? OldTickSize = null,
+        decimal? NewTickSize = null);
 }

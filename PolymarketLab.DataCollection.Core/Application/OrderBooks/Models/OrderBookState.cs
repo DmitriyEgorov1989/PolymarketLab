@@ -23,9 +23,11 @@ public sealed class OrderBookState
     private long? _lastPriceChangeSourceTimestamp;
     private long? _lastTickSizeChangeSourceTimestamp;
     private long? _lastBestBidAskSourceTimestamp;
+    private TickSizeChangeRecord? _lastAppliedTickSizeChange;
     private long _version;
     private long _resynchronizationSequence;
     private long? _activeResynchronizationId;
+    private long? _connectionEpoch;
     private bool _hasFullSnapshot;
 
     /// <summary>Создаёт состояние, для которого полный снимок ещё не получен.</summary>
@@ -118,7 +120,10 @@ public sealed class OrderBookState
 
         MarketConditionId = book.MarketConditionId;
         Hash = book.Hash;
-        TickSize = book.TickSize;
+        ObserveConnectionEpoch(book.ConnectionEpoch);
+        TickSize = book.TickSize ?? TickSize;
+        if (book.TickSize.HasValue)
+            _lastAppliedTickSizeChange = null;
         _hasFullSnapshot = true;
         CommitEvent(book.Position, book.SourceTimestamp, ref _lastBookSourceTimestamp);
         RecalculateDerivedState(
@@ -192,10 +197,12 @@ public sealed class OrderBookState
                 nameof(changes));
         }
         if (!AcceptSourceTimestamp(
-                first.SourceTimestamp,
-                _lastPriceChangeSourceTimestamp,
-                first.NormalizedEventId))
+                 first.SourceTimestamp,
+                 _lastPriceChangeSourceTimestamp,
+                 first.NormalizedEventId))
             return;
+
+        ObserveConnectionEpoch(first.ConnectionEpoch);
 
         var bids = new SortedDictionary<decimal, OrderBookLevel>(_bids);
         var asks = new SortedDictionary<decimal, OrderBookLevel>(_asks);
@@ -274,11 +281,6 @@ public sealed class OrderBookState
     private void ApplyCore(TickSizeChangeRecord change)
     {
         ArgumentNullException.ThrowIfNull(change);
-        if (!_hasFullSnapshot || !TickSize.HasValue)
-        {
-            throw new InvalidOperationException(
-                "A full snapshot with a tick size must be applied before tick size changes.");
-        }
         if (!string.Equals(AssetId, change.AssetId, StringComparison.Ordinal))
         {
             throw new ArgumentException(
@@ -287,15 +289,34 @@ public sealed class OrderBookState
         }
         EnsureIncreasingPosition(change.Position, nameof(change), "Tick size change");
         if (!AcceptSourceTimestamp(
-                change.SourceTimestamp,
-                _lastTickSizeChangeSourceTimestamp,
-                change.NormalizedEventId))
+                 change.SourceTimestamp,
+                 _lastTickSizeChangeSourceTimestamp,
+                 change.NormalizedEventId))
             return;
+
+        ObserveConnectionEpoch(change.ConnectionEpoch);
+
+        if (!_hasFullSnapshot || !TickSize.HasValue)
+        {
+            IntegrityIssue = CreateIssue(
+                OrderBookIntegrityIssueType.TickSizeUnknown,
+                "Tick size change cannot be verified because the current tick size is unknown.",
+                change.NormalizedEventId);
+            SetSuspectOrResynchronizingStatus();
+            ++_version;
+            return;
+        }
 
         CommitEvent(change.Position, change.SourceTimestamp, ref _lastTickSizeChangeSourceTimestamp);
 
         if (TickSize.Value != change.OldTickSize)
         {
+            if (IsRepeatOfLastTickSizeChange(change))
+            {
+                CommitEvent(change.Position, change.SourceTimestamp, ref _lastTickSizeChangeSourceTimestamp);
+                return;
+            }
+
             IntegrityIssue = CreateIssue(
                 OrderBookIntegrityIssueType.TickSizeMismatch,
                 $"Local tick size '{Format(TickSize)}' does not match event old tick size '{Format(change.OldTickSize)}'.");
@@ -304,6 +325,7 @@ public sealed class OrderBookState
         }
 
         TickSize = change.NewTickSize;
+        _lastAppliedTickSizeChange = change;
         RecalculateDerivedState();
     }
 
@@ -331,10 +353,12 @@ public sealed class OrderBookState
         }
         EnsureIncreasingPosition(quote.Position, nameof(quote), "Best bid and ask");
         if (!AcceptSourceTimestamp(
-                quote.SourceTimestamp,
-                _lastBestBidAskSourceTimestamp,
-                quote.NormalizedEventId))
+                 quote.SourceTimestamp,
+                 _lastBestBidAskSourceTimestamp,
+                 quote.NormalizedEventId))
             return;
+
+        ObserveConnectionEpoch(quote.ConnectionEpoch);
 
         CommitEvent(quote.Position, quote.SourceTimestamp, ref _lastBestBidAskSourceTimestamp);
     }
@@ -600,6 +624,31 @@ public sealed class OrderBookState
         return true;
     }
 
+    private void ObserveConnectionEpoch(long? connectionEpoch)
+    {
+        if (!connectionEpoch.HasValue)
+            return;
+
+        if (_connectionEpoch.HasValue && _connectionEpoch.Value != connectionEpoch.Value)
+        {
+            TickSize = null;
+            _lastAppliedTickSizeChange = null;
+        }
+
+        _connectionEpoch = connectionEpoch;
+    }
+
+    private bool IsRepeatOfLastTickSizeChange(TickSizeChangeRecord change)
+    {
+        return _lastAppliedTickSizeChange is not null
+            && string.Equals(_lastAppliedTickSizeChange.AssetId, change.AssetId, StringComparison.Ordinal)
+            && _lastAppliedTickSizeChange.ConnectionEpoch == change.ConnectionEpoch
+            && _lastAppliedTickSizeChange.SourceTimestamp.HasValue
+            && _lastAppliedTickSizeChange.SourceTimestamp == change.SourceTimestamp
+            && _lastAppliedTickSizeChange.OldTickSize == change.OldTickSize
+            && _lastAppliedTickSizeChange.NewTickSize == change.NewTickSize;
+    }
+
     private void CommitEvent(
         OrderBookEventPosition position,
         long? sourceTimestamp,
@@ -631,7 +680,8 @@ public sealed class OrderBookState
             or OrderBookIntegrityIssueType.TickSizeMismatch
             or OrderBookIntegrityIssueType.EventOrderViolation
             or OrderBookIntegrityIssueType.GapDetected
-            or OrderBookIntegrityIssueType.SnapshotHashMismatch;
+            or OrderBookIntegrityIssueType.SnapshotHashMismatch
+            or OrderBookIntegrityIssueType.TickSizeUnknown;
     }
 
     private void SetSuspectOrResynchronizingStatus()

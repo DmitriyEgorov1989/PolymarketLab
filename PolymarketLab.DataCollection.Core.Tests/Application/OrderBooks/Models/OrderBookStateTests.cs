@@ -46,7 +46,7 @@ public sealed class OrderBookStateTests
     }
 
     [Fact]
-    public void Apply_SecondSnapshot_ShouldClearOldLevelsAndNullableMetadata()
+    public void Apply_SecondSnapshotWithoutTickSize_ShouldPreserveKnownTickSize()
     {
         var state = new OrderBookState("asset");
         state.Apply(CreateSnapshot(
@@ -65,7 +65,7 @@ public sealed class OrderBookStateTests
 
         state.Bids.Keys.Should().Equal(0.3m);
         state.Asks.Should().BeEmpty();
-        state.TickSize.Should().BeNull();
+        state.TickSize.Should().Be(0.01m);
         state.SourceTimestamp.Should().BeNull();
         state.NormalizedEventId.Should().Be(2);
         state.BestBid.Should().Be(0.3m);
@@ -412,31 +412,120 @@ public sealed class OrderBookStateTests
     }
 
     [Fact]
-    public void Apply_TickSizeChangeBeforeSnapshot_ShouldRejectWithoutChangingState()
+    public void Apply_TickSizeChangeBeforeSnapshot_ShouldReturnIntegrityIssue()
     {
         var state = new OrderBookState("asset");
 
-        var action = () => state.Apply(TickSizeChange(1, 0.01m, 0.001m));
+        state.Apply(TickSizeChange(1, 0.01m, 0.001m));
 
-        action.Should().Throw<InvalidOperationException>();
-        state.Status.Should().Be(OrderBookSyncStatus.Uninitialized);
+        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
         state.TickSize.Should().BeNull();
         state.NormalizedEventId.Should().BeNull();
+        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.TickSizeUnknown);
     }
 
     [Fact]
-    public void Apply_TickSizeChangeWithoutLocalTickSize_ShouldRejectWithoutChangingState()
+    public void Apply_TickSizeChangeWithoutLocalTickSize_ShouldReturnIntegrityIssue()
     {
         var state = new OrderBookState("asset");
         state.Apply(CreateSnapshot(1, 1000, tickSize: null, [], []));
 
-        var action = () => state.Apply(TickSizeChange(2, 0.01m, 0.001m));
+        state.Apply(TickSizeChange(2, 0.01m, 0.001m));
 
-        action.Should().Throw<InvalidOperationException>();
-        state.Status.Should().Be(OrderBookSyncStatus.Synchronized);
+        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
         state.TickSize.Should().BeNull();
         state.SourceTimestamp.Should().Be(1000);
         state.NormalizedEventId.Should().Be(1);
+        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.TickSizeUnknown);
+    }
+
+    [Fact]
+    public void Apply_SnapshotWithoutTickSizeInNewConnectionEpoch_ShouldNotReusePreviousTickSize()
+    {
+        var state = new OrderBookState("asset");
+        state.Apply(CreateSnapshot(
+            1,
+            1000,
+            0.01m,
+            [],
+            [],
+            connectionEpoch: 1));
+
+        state.Apply(CreateSnapshot(
+            2,
+            2000,
+            tickSize: null,
+            [],
+            [],
+            connectionEpoch: 2));
+
+        state.TickSize.Should().BeNull();
+        state.Status.Should().Be(OrderBookSyncStatus.Synchronized);
+    }
+
+    [Fact]
+    public void Apply_TickSizeChangeAfterSnapshotWithoutTickSizeInSameEpoch_ShouldUseKnownTickSize()
+    {
+        var state = new OrderBookState("asset");
+        state.Apply(CreateSnapshot(1, 1000, 0.01m, [], [], connectionEpoch: 1));
+        state.Apply(CreateSnapshot(2, 1500, tickSize: null, [], [], connectionEpoch: 1));
+
+        state.Apply(TickSizeChange(
+            3,
+            oldTickSize: 0.01m,
+            newTickSize: 0.001m,
+            connectionEpoch: 1));
+
+        state.TickSize.Should().Be(0.001m);
+        state.Status.Should().Be(OrderBookSyncStatus.Synchronized);
+        state.IntegrityIssue.Should().BeNull();
+    }
+
+    [Fact]
+    public void Apply_ExactRepeatedTickSizeChange_ShouldAdvanceArchiveWithoutNewIssue()
+    {
+        var state = CreateSynchronizedState();
+        state.Apply(TickSizeChange(
+            2,
+            oldTickSize: 0.01m,
+            newTickSize: 0.001m,
+            sourceTimestamp: 2000,
+            connectionEpoch: 1));
+
+        state.Apply(TickSizeChange(
+            3,
+            oldTickSize: 0.01m,
+            newTickSize: 0.001m,
+            sourceTimestamp: 2000,
+            connectionEpoch: 1));
+
+        state.TickSize.Should().Be(0.001m);
+        state.NormalizedEventId.Should().Be(3);
+        state.Status.Should().Be(OrderBookSyncStatus.Synchronized);
+        state.IntegrityIssue.Should().BeNull();
+    }
+
+    [Fact]
+    public void Apply_RepeatedTickSizeChangeWithDifferentSourceTimestamp_ShouldKeepMismatch()
+    {
+        var state = CreateSynchronizedState();
+        state.Apply(TickSizeChange(
+            2,
+            oldTickSize: 0.01m,
+            newTickSize: 0.001m,
+            sourceTimestamp: 2000,
+            connectionEpoch: 1));
+
+        state.Apply(TickSizeChange(
+            3,
+            oldTickSize: 0.01m,
+            newTickSize: 0.001m,
+            sourceTimestamp: 2001,
+            connectionEpoch: 1));
+
+        state.TickSize.Should().Be(0.001m);
+        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.TickSizeMismatch);
+        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
     }
 
     [Fact]
@@ -857,7 +946,8 @@ public sealed class OrderBookStateTests
         IReadOnlyCollection<NormalizationModels.BookLevelRecord> asks,
         string assetId = "asset",
         long? rawMessageId = null,
-        int rawItemIndex = 0)
+        int rawItemIndex = 0,
+        long? connectionEpoch = null)
     {
         return new ProjectionModels.BookSnapshotRecord(
             rawMessageId ?? normalizedEventId,
@@ -869,7 +959,8 @@ public sealed class OrderBookStateTests
             "hash",
             tickSize,
             bids,
-            asks);
+            asks,
+            connectionEpoch);
     }
 
     private static NormalizationModels.BookLevelRecord Level(
@@ -916,7 +1007,8 @@ public sealed class OrderBookStateTests
         string assetId = "asset",
         long? sourceTimestamp = 2000,
         long? rawMessageId = null,
-        int rawItemIndex = 0)
+        int rawItemIndex = 0,
+        long? connectionEpoch = null)
     {
         return new ProjectionModels.TickSizeChangeRecord(
             rawMessageId ?? normalizedEventId,
@@ -925,7 +1017,8 @@ public sealed class OrderBookStateTests
             assetId,
             sourceTimestamp,
             oldTickSize,
-            newTickSize);
+            newTickSize,
+            connectionEpoch);
     }
 
     private static ProjectionModels.BestBidAskRecord BestBidAsk(
