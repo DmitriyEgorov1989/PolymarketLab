@@ -291,6 +291,75 @@ public sealed class CollectorWebSocketWorkerTests
     }
 
     [Fact]
+    public async Task HeartbeatTimeout_AfterReadiness_ShouldReconnectWithNextEpoch()
+    {
+        var firstConnection = new StubWebSocketConnection();
+        firstConnection.AddFrame(BookMessage("yes-token"));
+        firstConnection.AddFrame(BookMessage("no-token"));
+        firstConnection.AddFrame("PONG"u8);
+        var secondFrames = Channel.CreateUnbounded<byte[]>();
+        secondFrames.Writer.TryWrite(BookMessage("yes-token"));
+        secondFrames.Writer.TryWrite(BookMessage("no-token"));
+        var secondConnection = new StubWebSocketConnection
+        {
+            SendHandler = (message, _) =>
+            {
+                if (message.Span.SequenceEqual("PING"u8))
+                    secondFrames.Writer.TryWrite("PONG"u8.ToArray());
+                return Task.CompletedTask;
+            },
+            ReceiveHandler = async (buffer, cancellationToken) =>
+            {
+                var payload = await secondFrames.Reader.ReadAsync(cancellationToken);
+                payload.CopyTo(buffer);
+                return new CollectorWebSocketReceiveResult(
+                    payload.Length,
+                    WebSocketMessageType.Text,
+                    true);
+            }
+        };
+        var factory = new StubWebSocketFactory(firstConnection, secondConnection);
+        var dispatcher = new StubReadinessDispatcher();
+        var telemetry = new RawMarketMessageTelemetry();
+        var sink = new StubRawMarketMessageSink();
+        var request = CreateRequest(DateTimeOffset.UtcNow.AddMinutes(1));
+        var worker = CreateWorker(
+            request,
+            firstConnection,
+            options: CreateOptions(
+                reconnectDelay: TimeSpan.Zero,
+                heartbeatInterval: TimeSpan.FromMilliseconds(10),
+                heartbeatTimeout: TimeSpan.FromMilliseconds(100),
+                stopTimeout: TimeSpan.FromMilliseconds(50)),
+            messageSink: sink,
+            telemetry: telemetry,
+            webSocketFactory: factory,
+            readinessDispatcher: dispatcher);
+
+        await worker.StartAsync(CancellationToken.None);
+        await dispatcher.WaitForRunningAsync();
+        await WaitUntilAsync(() => factory.CreateCallCount == 2);
+
+        worker.Completion.IsCompleted.Should().BeFalse();
+        dispatcher.InvalidationCount.Should().Be(0);
+        telemetry.GetCheckpoint(request.SessionId).CurrentConnectionEpoch.Should().Be(2);
+        telemetry.GetCheckpoint(request.SessionId).ReconnectCount.Should().Be(1);
+
+        for (var index = 0; index < 4; index++)
+            await sink.WaitForMessageAsync();
+        await Task.Delay(100);
+        var afterRecovery = Encoding.UTF8.GetBytes(
+            "{\"event_type\":\"last_trade_price\"}");
+        secondFrames.Writer.TryWrite(afterRecovery);
+        var recoveredMessage = await sink.WaitForMessageAsync();
+        recoveredMessage.ConnectionEpoch.Should().Be(2);
+        recoveredMessage.Payload.Should().Equal(afterRecovery);
+        worker.Completion.IsCompleted.Should().BeFalse();
+
+        await worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task InitialReadiness_WhenStopCancelsPersistence_ShouldCleanUpAndCompleteSuccessfully()
     {
         var readinessEntered = new TaskCompletionSource(

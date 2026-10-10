@@ -2,6 +2,7 @@ using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using PolymarketLab.DataCollection.Core.Application.Normalization.Models;
+using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
@@ -14,7 +15,11 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
     private const string ClaimSql =
         """
         WITH writable_sessions AS MATERIALIZED (
-            SELECT session.id
+            SELECT
+                session.id,
+                session.status,
+                session.phase,
+                session.awaiting_normalization_at
             FROM data_collection.collector_sessions AS session
             WHERE session.invalidating_at IS NULL
             ORDER BY session.id
@@ -37,7 +42,19 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
                         OR normalization.claimed_at < CURRENT_TIMESTAMP - @claim_timeout
                     )
                )
-            ORDER BY raw.id
+            ORDER BY
+                CASE
+                    WHEN session.status = @stopping_status
+                     AND session.phase = @awaiting_normalization_phase
+                    THEN 0
+                    ELSE 1
+                END,
+                CASE
+                    WHEN session.status = @stopping_status
+                     AND session.phase = @awaiting_normalization_phase
+                    THEN session.awaiting_normalization_at
+                END NULLS LAST,
+                raw.id
             LIMIT @batch_size
             FOR UPDATE OF raw SKIP LOCKED
         ),
@@ -79,7 +96,21 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
         FROM claimed
         INNER JOIN data_collection.raw_market_messages AS raw
             ON raw.id = claimed.raw_message_id
-        ORDER BY raw.id
+        INNER JOIN data_collection.collector_sessions AS session
+            ON session.id = raw.session_id
+        ORDER BY
+            CASE
+                WHEN session.status = @stopping_status
+                 AND session.phase = @awaiting_normalization_phase
+                THEN 0
+                ELSE 1
+            END,
+            CASE
+                WHEN session.status = @stopping_status
+                 AND session.phase = @awaiting_normalization_phase
+                THEN session.awaiting_normalization_at
+            END NULLS LAST,
+            raw.id
         """;
 
     public async Task<IReadOnlyList<ClaimedRawMessage>> ClaimBatchAsync(
@@ -103,6 +134,11 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
         AddParameter(command, "claim_timeout", claimTimeout);
         AddParameter(command, "pending_status", (int)NormalizationStatus.Pending);
         AddParameter(command, "processing_status", (int)NormalizationStatus.Processing);
+        AddParameter(command, "stopping_status", (int)CollectorSessionStatus.Stopping);
+        AddParameter(
+            command,
+            "awaiting_normalization_phase",
+            (int)CollectorSessionPhase.AwaitingNormalization);
 
         var claimedMessages = new List<ClaimedRawMessage>(batchSize);
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))

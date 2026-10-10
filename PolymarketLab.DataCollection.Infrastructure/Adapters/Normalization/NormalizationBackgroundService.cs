@@ -111,7 +111,23 @@ internal sealed class NormalizationBackgroundService(
 
     private void LogMessageErrors(IReadOnlyCollection<NormalizationMessageError> errors)
     {
-        foreach (var error in errors)
+        const string claimLostCode = "normalization.write.claim_lost";
+        var claimLostGroups = errors
+            .Where(error => error.ErrorCode == claimLostCode)
+            .GroupBy(error => new { error.SessionId, error.ProjectionVersion });
+        foreach (var group in claimLostGroups)
+        {
+            logger.LogWarning(
+                "Normalizer claims lost before write commit. SessionId: {SessionId}, ProjectionVersion: {ProjectionVersion}, ErrorCode: {ErrorCode}, ErrorCount: {ErrorCount}, FirstRawMessageId: {FirstRawMessageId}, LastRawMessageId: {LastRawMessageId}.",
+                group.Key.SessionId.Value,
+                group.Key.ProjectionVersion,
+                claimLostCode,
+                group.Count(),
+                group.Min(error => error.RawMessageId),
+                group.Max(error => error.RawMessageId));
+        }
+
+        foreach (var error in errors.Where(error => error.ErrorCode != claimLostCode))
         {
             logger.Log(
                 error.Status == NormalizationStatus.Failed

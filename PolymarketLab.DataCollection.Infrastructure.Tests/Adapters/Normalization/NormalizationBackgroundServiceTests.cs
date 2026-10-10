@@ -311,6 +311,59 @@ public sealed class NormalizationBackgroundServiceTests
             "normalization.processing.failed"));
     }
 
+    [Fact]
+    public async Task ExecuteAsync_ClaimLostMessages_ShouldLogSingleAggregateWarning()
+    {
+        var logger = new CapturingLogger<NormalizationBackgroundService>();
+        var sessionId = CollectorSessionId.Create(Guid.NewGuid()).Value;
+        var errors = new[] { 10L, 11L }.Select(rawMessageId =>
+            new NormalizationMessageError(
+                rawMessageId,
+                sessionId,
+                null,
+                null,
+                1,
+                null,
+                NormalizationStatus.Failed,
+                "normalization.write.claim_lost",
+                null)).ToArray();
+        var result = new NormalizationBatchResult(
+            2,
+            0,
+            0,
+            0,
+            2,
+            10,
+            11,
+            errors);
+        await using var fixture = CreateFixture(
+            new NormalizerOptions { IdleDelay = TimeSpan.FromHours(1) },
+            (call, cancellationToken) => call == 1
+                ? Task.FromResult(result)
+                : Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken)
+                    .ContinueWith(
+                        _ => EmptyBatch(),
+                        CancellationToken.None,
+                        TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default),
+            logger);
+
+        await fixture.Worker.StartAsync(default);
+        await fixture.State.WaitForCallAsync();
+        await fixture.State.WaitForCallAsync();
+
+        var warning = logger.Entries.Should().ContainSingle(entry =>
+            entry.Level == LogLevel.Warning).Which;
+        warning.Properties.Should().Contain(new KeyValuePair<string, object?>(
+            "ErrorCode",
+            "normalization.write.claim_lost"));
+        warning.Properties.Should().Contain(new KeyValuePair<string, object?>(
+            "ErrorCount",
+            2));
+        logger.Entries.Should().NotContain(entry =>
+            entry.Level == LogLevel.Error);
+    }
+
     private static WorkerFixture CreateFixture(
         NormalizerOptions options,
         Func<int, CancellationToken, Task<NormalizationBatchResult>> process,

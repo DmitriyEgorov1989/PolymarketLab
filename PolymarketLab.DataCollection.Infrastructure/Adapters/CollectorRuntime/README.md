@@ -250,7 +250,9 @@ heartbeat-loop. Ожидание `PONG` регистрируется до отп
 `HeartbeatTimeout` считается от начала попытки `PING`, включая время отправки;
 увеличение timeout для сокрытия задержек не выполняется. При timeout уже начатый
 enqueue получает тот же bounded stop budget, после чего исходная heartbeat-причина
-сохраняется вместо вторичной ошибки отмены.
+сохраняется вместо вторичной ошибки отмены. После readiness timeout закрывает только
+текущую connection и запускает bounded reconnect; session инвалидируется только при
+исчерпании общего reconnect budget или collection deadline.
 
 DataCollection Application и Presentation подключены к API host. Публичные endpoints collector session:
 
@@ -990,8 +992,9 @@ stateDiagram-v2
 До readiness повторяются только connect timeout, transport start/receive failure,
 remote close и heartbeat timeout. Protocol/identity violations, oversized или
 binary message, закрытый ingestion и ошибки durable readiness немедленно запускают
-session invalidation. После readiness remote close получает максимум два
-reconnect-attempt на worker с паузами `ReconnectDelay` и `2 * ReconnectDelay`.
+session invalidation. После readiness remote close и heartbeat timeout используют
+общий бюджет максимум из двух reconnect-attempt на worker с паузами
+`ReconnectDelay` и `2 * ReconnectDelay`.
 Новый epoch локально заново требует initial books всех snapshot tokens и matching
 `PONG`; durable phase остаётся `Running`. Исчерпание попыток или другая transport
 ошибка запускает invalidation. Ошибка сохранения invalidation не маскируется как

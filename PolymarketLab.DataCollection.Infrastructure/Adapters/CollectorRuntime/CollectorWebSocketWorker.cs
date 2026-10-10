@@ -538,7 +538,9 @@ internal sealed class CollectorWebSocketWorker(
                 }
 
                 if ((state.InitialReadinessCompleted || state.IsReady)
-                    && result.Error.Code == "collector.runtime.receive.closed")
+                    && result.Error.Code is
+                        "collector.runtime.receive.closed"
+                        or "collector.runtime.heartbeat.timeout")
                 {
                     recoveringRemoteClose = true;
                 }
@@ -624,11 +626,12 @@ internal sealed class CollectorWebSocketWorker(
                     : CollectorRuntimeErrors.ReadinessTimedOut(request.SessionId),
                 _receiveCts.Token);
             logger.LogInformation(
-                "Collector WebSocket {SessionId} reconnect attempt {ReconnectAttempt} for epoch {ConnectionEpoch} " +
+                "Collector WebSocket {SessionId} reconnect attempt {ReconnectAttempt} for epoch {ConnectionEpoch} after {RecoveryErrorCode} " +
                 "completed in {ReconnectDuration} with result {ReconnectResult}.",
                 request.SessionId.Value,
                 recoveringRemoteClose ? remoteCloseReconnectAttempts : 0,
                 state.Epoch,
+                result.Error.Code,
                 timeProvider.GetElapsedTime(
                     reconnectStartedAt,
                     timeProvider.GetTimestamp()),
@@ -697,6 +700,8 @@ internal sealed class CollectorWebSocketWorker(
             _receiveCts.Token,
             applicationLifetime.ApplicationStopping,
             collectionDeadlineCts.Token);
+        using var connectionEnqueueCts = CancellationTokenSource.CreateLinkedTokenSource(
+            _enqueueCts.Token);
         try
         {
             if (!state.InitialReadinessCompleted)
@@ -737,8 +742,16 @@ internal sealed class CollectorWebSocketWorker(
                 CollectorRuntimeErrors.ReceiveUnexpected(request.SessionId));
         }
 
-        var heartbeat = HeartbeatLoopAsync(connection, state, heartbeatCts);
-        var receive = ReceiveLoopAsync(connection, state, heartbeatCts.Token);
+        var heartbeat = HeartbeatLoopAsync(
+            connection,
+            state,
+            heartbeatCts,
+            connectionEnqueueCts);
+        var receive = ReceiveLoopAsync(
+            connection,
+            state,
+            heartbeatCts.Token,
+            connectionEnqueueCts.Token);
 
         await Task.WhenAny(receive, heartbeat);
         heartbeatCts.Cancel();
@@ -757,11 +770,16 @@ internal sealed class CollectorWebSocketWorker(
     private async Task<UnitResult<Error>> ReceiveLoopAsync(
         ICollectorWebSocketConnection connection,
         ConnectionReadinessState state,
-        CancellationToken receiveToken)
+        CancellationToken receiveToken,
+        CancellationToken enqueueToken)
     {
         try
         {
-            return await ReceiveLoopCoreAsync(connection, state, receiveToken);
+            return await ReceiveLoopCoreAsync(
+                connection,
+                state,
+                receiveToken,
+                enqueueToken);
         }
         catch (RawMessageEnqueueCancelledException exception)
         {
@@ -826,7 +844,8 @@ internal sealed class CollectorWebSocketWorker(
     private async Task<UnitResult<Error>> ReceiveLoopCoreAsync(
         ICollectorWebSocketConnection connection,
         ConnectionReadinessState state,
-        CancellationToken receiveToken)
+        CancellationToken receiveToken,
+        CancellationToken enqueueToken)
     {
         var frameBuffer = ArrayPool<byte>.Shared.Rent(options.ReceiveBufferSize);
         var messageBuffer = new ArrayBufferWriter<byte>(options.ReceiveBufferSize);
@@ -917,10 +936,10 @@ internal sealed class CollectorWebSocketWorker(
                 var enqueueQueueDepth = GetQueueDiagnostics()?.QueueDepth;
                 try
                 {
-                    await messageSink.EnqueueAsync(message, _enqueueCts.Token);
+                    await messageSink.EnqueueAsync(message, enqueueToken);
                 }
                 catch (OperationCanceledException exception)
-                    when (_enqueueCts.IsCancellationRequested)
+                    when (enqueueToken.IsCancellationRequested)
                 {
                     throw new RawMessageEnqueueCancelledException(exception);
                 }
@@ -1164,7 +1183,8 @@ internal sealed class CollectorWebSocketWorker(
     private async Task<UnitResult<Error>> HeartbeatLoopAsync(
         ICollectorWebSocketConnection connection,
         ConnectionReadinessState state,
-        CancellationTokenSource heartbeatCts)
+        CancellationTokenSource heartbeatCts,
+        CancellationTokenSource connectionEnqueueCts)
     {
         try
         {
@@ -1178,7 +1198,7 @@ internal sealed class CollectorWebSocketWorker(
                 if (timedOut)
                 {
                     var heartbeat = state.GetHeartbeatSnapshot(timeProvider, now);
-                    ScheduleEnqueueCancellation();
+                    connectionEnqueueCts.CancelAfter(options.StopTimeout);
                     heartbeatCts.Cancel();
                     logger.LogWarning(
                         "Collector WebSocket {SessionId} heartbeat timed out at epoch {ConnectionEpoch}. " +

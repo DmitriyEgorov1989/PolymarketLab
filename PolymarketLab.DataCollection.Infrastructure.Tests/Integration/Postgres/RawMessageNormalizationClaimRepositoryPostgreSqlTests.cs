@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using PolymarketLab.DataCollection.Core.Application.Normalization.Models;
+using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.Normalization;
 using Xunit;
@@ -55,6 +56,42 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
         secondBatch.Should().HaveCount(5);
         firstBatch.Concat(secondBatch).Should().OnlyContain(claim =>
             claim.ProjectionVersion == 1 && claim.AttemptCount == 1);
+    }
+
+    [Fact]
+    public async Task ClaimBatch_ShouldPrioritizeSessionAwaitingNormalization()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var backgroundIds = await SeedRawMessagesAsync(database.ConnectionString, 2);
+        var awaitingSessionId = Guid.NewGuid();
+        var awaitingRawId = await ExecuteScalarAsync<long>(
+            database.ConnectionString,
+            """
+            INSERT INTO data_collection.collector_sessions
+                (id, market_id, status, created_at, phase, awaiting_normalization_at)
+            VALUES
+                (@session_id, @market_id, @status, @created_at, @phase, @awaiting_at);
+
+            INSERT INTO data_collection.raw_market_messages
+                (session_id, connection_epoch, received_at, payload)
+            VALUES (@session_id, 1, @awaiting_at, @payload)
+            RETURNING id
+            """,
+            new NpgsqlParameter("session_id", awaitingSessionId),
+            new NpgsqlParameter("market_id", Guid.NewGuid()),
+            new NpgsqlParameter("status", (int)CollectorSessionStatus.Stopping),
+            new NpgsqlParameter("created_at", DateTimeOffset.Parse("2026-08-14T10:00:00Z")),
+            new NpgsqlParameter("phase", (int)CollectorSessionPhase.AwaitingNormalization),
+            new NpgsqlParameter("awaiting_at", DateTimeOffset.Parse("2026-08-14T10:05:00Z")),
+            new NpgsqlParameter("payload", new byte[] { 42 }));
+        await using var context = CreateContext(database.ConnectionString);
+
+        var claims = await new RawMessageNormalizationClaimRepository(context)
+            .ClaimBatchAsync(1, 1, ClaimTimeout, default);
+
+        awaitingRawId.Should().BeGreaterThan(backgroundIds.Max());
+        claims.Should().ContainSingle();
+        claims[0].Message.RawMessageId.Should().Be(awaitingRawId);
     }
 
     [Fact]
