@@ -16,6 +16,10 @@ namespace PolymarketLab.DataCollection.Core.Ports.Dtos;
 /// <see langword="true" />, если strict WebSocket resolution observation ссылается
 /// на обработанный parent raw и normalized <c>market_resolved</c> item этой версии.
 /// </param>
+/// <param name="LatestCompletedAt">
+/// Наиболее позднее время завершения ledger row указанной версии;
+/// <see langword="null" />, если завершённых ledger rows нет.
+/// </param>
 public sealed record NormalizationSuitability(
     long RawCount,
     long LedgerCount,
@@ -25,7 +29,8 @@ public sealed record NormalizationSuitability(
     long UnsupportedCount,
     long InvalidCount,
     long FailedCount,
-    bool ResolutionRawItemProcessed)
+    bool ResolutionRawItemProcessed,
+    DateTimeOffset? LatestCompletedAt = null)
 {
     /// <summary>Количество raw-сообщений без ledger row указанной версии.</summary>
     public long MissingCount => RawCount - LedgerCount;

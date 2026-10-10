@@ -25,6 +25,7 @@ dotnet user-secrets set "Database:ConnectionString" "Host=localhost;Port=5433;Da
   "Normalizer": {
     "Enabled": true,
     "ProjectionVersion": 1,
+    "WorkerCount": 3,
     "BatchSize": 500,
     "WriteBatchSize": 100,
     "IdleDelay": "00:00:00.250",
@@ -38,6 +39,7 @@ dotnet user-secrets set "Database:ConnectionString" "Host=localhost;Port=5433;Da
 |---|---|
 | `Enabled` | Запускает continuous worker и обновление метрик backlog. Не влияет на сбор и сохранение raw-сообщений. |
 | `ProjectionVersion` | Версия создаваемых проекций. Должна быть больше нуля. Данные разных версий хранятся одновременно. |
+| `WorkerCount` | Число параллельных worker loops от `1` до `16`. Одна collector session обрабатывается не более чем одним worker одновременно. |
 | `BatchSize` | Максимальное число raw-сообщений в одном batch. Должно быть от `1` до `1000`. |
 | `WriteBatchSize` | Максимальное число подготовленных результатов в одной PostgreSQL-транзакции. Должно быть от `1` до `1000` и не превышать `BatchSize`. Пакет из нескольких сообщений дополнительно ограничен примерно `10000` создаваемых строк; одно более крупное сообщение остаётся атомарным. |
 | `IdleDelay` | Пауза после пустого batch. При включённом worker должна быть больше нуля. |
@@ -376,7 +378,7 @@ ingestion и не равны normalization lag. Сначала raw-сообще�
 
 1. Проверь, что raw ingestion работает: `messages_received`, `messages_persisted`, `last_message_at` и состояние collector session.
 2. Проверь `Database:ConnectionString` и наличие всех миграций обоих контекстов.
-3. Проверь активные `Enabled`, `ProjectionVersion`, `BatchSize`, `WriteBatchSize`, `IdleDelay` и `ClaimTimeout` в окружении процесса.
+3. Проверь активные `Enabled`, `ProjectionVersion`, `WorkerCount`, `BatchSize`, `WriteBatchSize`, `IdleDelay` и `ClaimTimeout` в окружении процесса.
 4. Найди в журнале запуск API, сообщение об отключённом worker или `Normalizer background iteration failed`.
 5. Сравни `normalizer_lag_messages` и `normalizer_pending_messages` для нужной версии.
 6. Выполни запрос ожидающих сообщений и отдельно проверь свежие и устаревшие `Processing`.

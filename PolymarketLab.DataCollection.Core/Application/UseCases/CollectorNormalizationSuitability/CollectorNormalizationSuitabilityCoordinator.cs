@@ -15,7 +15,7 @@ namespace PolymarketLab.DataCollection.Core.Application.UseCases.CollectorNormal
 /// <summary>
 /// Доказывает пригодность normalized dataset snapshot-версии session: сравнивает
 /// snapshot <c>ProjectionVersion</c> с активной runtime-версией, одним persistence
-/// read проверяет точную Processed cardinality,
+/// read проверяет точную Processed cardinality и время завершения ledger,
 /// ожидает незавершённую обработку до deadline
 /// <c>AwaitingNormalizationAt + 5 минут</c>,
 /// инвалидирует любой недоказанный dataset и завершает session как
@@ -92,13 +92,6 @@ public sealed class CollectorNormalizationSuitabilityCoordinator(
         }
 
         var deadline = session.AwaitingNormalizationAt.Value + NormalizationTimeout;
-        if (timeProvider.GetUtcNow() >= deadline)
-        {
-            return await InvalidateAndFailAsync(
-                sessionId,
-                CollectorNormalizationSuitabilityErrors.Timeout(sessionId, deadline),
-                cancellationToken);
-        }
 
         NormalizationSuitability suitability;
         try
@@ -152,6 +145,27 @@ public sealed class CollectorNormalizationSuitabilityCoordinator(
 
         if (IsFullyProcessed(suitability))
         {
+            if (suitability.LatestCompletedAt is null)
+            {
+                if (timeProvider.GetUtcNow() >= deadline)
+                {
+                    return await InvalidateAndFailAsync(
+                        sessionId,
+                        CollectorNormalizationSuitabilityErrors.Timeout(sessionId, deadline),
+                        cancellationToken);
+                }
+
+                return UnitResult.Success<Error>();
+            }
+
+            if (suitability.LatestCompletedAt >= deadline)
+            {
+                return await InvalidateAndFailAsync(
+                    sessionId,
+                    CollectorNormalizationSuitabilityErrors.Timeout(sessionId, deadline),
+                    cancellationToken);
+            }
+
             var integrity = await orderBookIntegrityCoordinator.EvaluateAsync(
                 sessionId,
                 snapshotVersion,
@@ -167,22 +181,21 @@ public sealed class CollectorNormalizationSuitabilityCoordinator(
                     cancellationToken);
             }
 
-            var completedAt = timeProvider.GetUtcNow();
-            if (completedAt >= deadline)
-            {
-                return await InvalidateAndFailAsync(
-                    sessionId,
-                    CollectorNormalizationSuitabilityErrors.Timeout(sessionId, deadline),
-                    cancellationToken);
-            }
-
             var completion = await StopAsMarketClosedAsync(
                 session,
-                completedAt,
+                timeProvider.GetUtcNow(),
                 cancellationToken);
             return completion.IsSuccess
                 ? UnitResult.Success<Error>()
                 : await InvalidateAndFailAsync(sessionId, completion.Error, cancellationToken);
+        }
+
+        if (timeProvider.GetUtcNow() >= deadline)
+        {
+            return await InvalidateAndFailAsync(
+                sessionId,
+                CollectorNormalizationSuitabilityErrors.Timeout(sessionId, deadline),
+                cancellationToken);
         }
 
         return UnitResult.Success<Error>();

@@ -19,6 +19,8 @@ public sealed class NormalizationSuitabilityReaderPostgreSqlTests(PostgreSqlFixt
         DateTimeOffset.Parse("2026-09-03T12:05:01Z");
     private static readonly DateTimeOffset ReceivedAt =
         DateTimeOffset.Parse("2026-09-03T12:04:00Z");
+    private static readonly DateTimeOffset CompletedAt =
+        DateTimeOffset.Parse("2026-09-03T12:04:30Z");
     private static readonly byte[] Payload = [1, 2, 3];
 
     [Fact]
@@ -70,7 +72,8 @@ public sealed class NormalizationSuitabilityReaderPostgreSqlTests(PostgreSqlFixt
             UnsupportedCount: 0,
             InvalidCount: 0,
             FailedCount: 0,
-            ResolutionRawItemProcessed: true));
+            ResolutionRawItemProcessed: true,
+            LatestCompletedAt: CompletedAt.AddSeconds(3)));
     }
 
     [Fact]
@@ -116,7 +119,8 @@ public sealed class NormalizationSuitabilityReaderPostgreSqlTests(PostgreSqlFixt
             UnsupportedCount: 1,
             InvalidCount: 1,
             FailedCount: 0,
-            ResolutionRawItemProcessed: false));
+            ResolutionRawItemProcessed: false,
+            LatestCompletedAt: CompletedAt.AddSeconds(5)));
         suitability.MissingCount.Should().Be(1);
     }
 
@@ -162,7 +166,8 @@ public sealed class NormalizationSuitabilityReaderPostgreSqlTests(PostgreSqlFixt
             UnsupportedCount: 0,
             InvalidCount: 0,
             FailedCount: 0,
-            ResolutionRawItemProcessed: false));
+            ResolutionRawItemProcessed: false,
+            LatestCompletedAt: CompletedAt.AddSeconds(3)));
     }
 
     [Fact]
@@ -215,7 +220,8 @@ public sealed class NormalizationSuitabilityReaderPostgreSqlTests(PostgreSqlFixt
             UnsupportedCount: 0,
             InvalidCount: 0,
             FailedCount: 0,
-            ResolutionRawItemProcessed: true));
+            ResolutionRawItemProcessed: true,
+            LatestCompletedAt: CompletedAt.AddSeconds(2)));
     }
 
     [Theory]
@@ -427,12 +433,13 @@ public sealed class NormalizationSuitabilityReaderPostgreSqlTests(PostgreSqlFixt
             connectionString,
             """
             INSERT INTO data_collection.raw_message_normalizations
-                (raw_message_id, projection_version, status, attempt_count)
-            VALUES (@raw_message_id, @projection_version, @status, 0)
+                (raw_message_id, projection_version, status, attempt_count, completed_at)
+            VALUES (@raw_message_id, @projection_version, @status, 0, @completed_at)
             """,
             new NpgsqlParameter("raw_message_id", rawMessageId),
             new NpgsqlParameter("projection_version", projectionVersion),
-            new NpgsqlParameter("status", (int)status));
+            new NpgsqlParameter("status", (int)status),
+            new NpgsqlParameter("completed_at", CompletedAt.AddSeconds(rawMessageId)));
 
     private static Task InsertNormalizedEventAsync(
         string connectionString,

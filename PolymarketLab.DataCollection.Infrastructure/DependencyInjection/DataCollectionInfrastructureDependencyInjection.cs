@@ -133,6 +133,10 @@ public static class DataCollectionInfrastructureDependencyInjection
                 options => options.ProjectionVersion > 0,
                 "Normalizer projection version must be positive.")
             .Validate(
+                options => options.WorkerCount > 0
+                           && options.WorkerCount <= NormalizerOptions.MaximumWorkerCount,
+                "Normalizer worker count must be positive and not exceed the supported maximum.")
+            .Validate(
                 options => options.BatchSize > 0
                            && options.BatchSize <= NormalizationProcessor.MaximumClaimBatchSize,
                 "Normalizer batch size must be positive and not exceed the supported maximum.")

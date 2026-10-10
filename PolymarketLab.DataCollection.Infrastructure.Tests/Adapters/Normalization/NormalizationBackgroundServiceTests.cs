@@ -31,6 +31,35 @@ public sealed class NormalizationBackgroundServiceTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_WithThreeWorkers_ShouldProcessThreeBatchesConcurrently()
+    {
+        var releaseBatches = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var fixture = CreateFixture(
+            new NormalizerOptions(),
+            async (_, cancellationToken) =>
+            {
+                await releaseBatches.Task.WaitAsync(cancellationToken);
+                return ProcessedBatch();
+            },
+            workerCount: 3);
+
+        await fixture.Worker.StartAsync(default);
+        await fixture.State.WaitForCallAsync();
+        await fixture.State.WaitForCallAsync();
+        await fixture.State.WaitForCallAsync();
+
+        fixture.State.InstanceCount.Should().Be(3);
+        fixture.State.CallCount.Should().Be(3);
+        var stop = fixture.Worker.StopAsync(default);
+        await Task.Delay(100);
+        stop.IsCompleted.Should().BeFalse();
+        releaseBatches.TrySetResult();
+        await stop.WaitAsync(TimeSpan.FromSeconds(1));
+        fixture.State.DisposeCount.Should().Be(3);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_NonEmptyBatches_ShouldContinueWithNewScopeWithoutDelay()
     {
         await using var fixture = CreateFixture(
@@ -367,8 +396,20 @@ public sealed class NormalizationBackgroundServiceTests
     private static WorkerFixture CreateFixture(
         NormalizerOptions options,
         Func<int, CancellationToken, Task<NormalizationBatchResult>> process,
-        ILogger<NormalizationBackgroundService>? logger = null)
+        ILogger<NormalizationBackgroundService>? logger = null,
+        int workerCount = 1)
     {
+        options = new NormalizerOptions
+        {
+            Enabled = options.Enabled,
+            ProjectionVersion = options.ProjectionVersion,
+            WorkerCount = workerCount,
+            BatchSize = options.BatchSize,
+            WriteBatchSize = options.WriteBatchSize,
+            IdleDelay = options.IdleDelay,
+            ClaimTimeout = options.ClaimTimeout,
+            ShutdownTimeout = options.ShutdownTimeout
+        };
         var state = new WorkerState(process);
         var services = new ServiceCollection();
         services.AddScoped<INormalizationProcessor>(_ => state.CreateProcessor());

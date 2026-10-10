@@ -27,6 +27,13 @@ internal sealed class NormalizationBackgroundService(
             return;
         }
 
+        var workers = Enumerable.Range(0, options.WorkerCount)
+            .Select(_ => RunWorkerAsync(stoppingToken));
+        await Task.WhenAll(workers);
+    }
+
+    private async Task RunWorkerAsync(CancellationToken stoppingToken)
+    {
         var consecutiveFailures = 0;
         while (!stoppingToken.IsCancellationRequested)
         {

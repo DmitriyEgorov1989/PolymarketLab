@@ -46,6 +46,16 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
         var repository = new RawMessageNormalizationClaimRepository(context);
 
         var firstBatch = await repository.ClaimBatchAsync(1, 2, ClaimTimeout, default);
+        await ExecuteAsync(
+            database.ConnectionString,
+            """
+            UPDATE data_collection.raw_message_normalizations
+            SET status = @status, completed_at = CURRENT_TIMESTAMP
+            WHERE raw_message_id <= @last_raw_message_id
+              AND projection_version = 1
+            """,
+            new NpgsqlParameter("status", (int)NormalizationStatus.Processed),
+            new NpgsqlParameter("last_raw_message_id", rawMessageIds[1]));
         var secondBatch = await repository.ClaimBatchAsync(1, 10, ClaimTimeout, default);
 
         firstBatch.Select(claim => claim.Message.RawMessageId)
@@ -134,25 +144,18 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
     public async Task ClaimBatch_ShouldRecoverOnlyStaleProcessingRows()
     {
         await using var database = await CreateMigratedDatabaseAsync();
-        var rawMessageIds = await SeedRawMessagesAsync(database.ConnectionString, 3);
+        var rawMessageIds = await SeedRawMessagesAsync(database.ConnectionString, 2);
         var now = DateTimeOffset.UtcNow;
         await InsertLedgerAsync(
             database.ConnectionString,
             rawMessageIds[0],
             1,
             NormalizationStatus.Processing,
-            attemptCount: 1,
-            claimedAt: now);
-        await InsertLedgerAsync(
-            database.ConnectionString,
-            rawMessageIds[1],
-            1,
-            NormalizationStatus.Processing,
             attemptCount: 2,
             claimedAt: now.Subtract(ClaimTimeout).AddSeconds(-1));
         await InsertLedgerAsync(
             database.ConnectionString,
-            rawMessageIds[2],
+            rawMessageIds[1],
             1,
             NormalizationStatus.Processing,
             attemptCount: 4,
@@ -162,21 +165,17 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
         var claimed = await new RawMessageNormalizationClaimRepository(context)
             .ClaimBatchAsync(1, 10, ClaimTimeout, default);
 
-        claimed.Select(claim => claim.Message.RawMessageId)
-            .Should().Equal(rawMessageIds.Skip(1));
+        claimed.Select(claim => claim.Message.RawMessageId).Should().Equal(rawMessageIds);
         claimed.Select(claim => claim.AttemptCount).Should().Equal(3, 5);
         var leases = await ReadLeasesAsync(database.ConnectionString, 1);
-        leases[rawMessageIds[0]].AttemptCount.Should().Be(1);
-        leases[rawMessageIds[0]].ClaimedAt.Should().BeCloseTo(now, TimeSpan.FromSeconds(1));
-        leases[rawMessageIds[0]].ErrorField.Should().Be("old.field");
-        leases[rawMessageIds[1]].ClaimedAt.Should().BeAfter(now);
+        leases[rawMessageIds[0]].ClaimedAt.Should().BeAfter(now);
+        leases[rawMessageIds[0]].ErrorField.Should().BeNull();
+        leases[rawMessageIds[1]].ClaimedAt.Should().NotBeNull();
         leases[rawMessageIds[1]].ErrorField.Should().BeNull();
-        leases[rawMessageIds[2]].ClaimedAt.Should().NotBeNull();
-        leases[rawMessageIds[2]].ErrorField.Should().BeNull();
     }
 
     [Fact]
-    public async Task ClaimBatch_ConcurrentRepositoriesShouldReturnDisjointRows()
+    public async Task ClaimBatch_ConcurrentRepositoriesShouldNotClaimSameSession()
     {
         await using var database = await CreateMigratedDatabaseAsync();
         var rawMessageIds = await SeedRawMessagesAsync(database.ConnectionString, 20);
@@ -191,10 +190,31 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
         var firstIds = batches[0].Select(claim => claim.Message.RawMessageId).ToArray();
         var secondIds = batches[1].Select(claim => claim.Message.RawMessageId).ToArray();
 
-        firstIds.Should().HaveCount(10);
-        secondIds.Should().HaveCount(10);
-        firstIds.Should().NotIntersectWith(secondIds);
-        firstIds.Concat(secondIds).Order().Should().Equal(rawMessageIds);
+        firstIds.Concat(secondIds).Should().HaveCount(10);
+        firstIds.Concat(secondIds).Should().OnlyContain(id => rawMessageIds.Contains(id));
+        batches.Should().ContainSingle(batch => batch.Count == 10);
+        batches.Should().ContainSingle(batch => batch.Count == 0);
+    }
+
+    [Fact]
+    public async Task ClaimBatch_ConcurrentRepositoriesShouldClaimDifferentSessions()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        await SeedRawMessagesAsync(database.ConnectionString, 10);
+        await SeedRawMessagesAsync(database.ConnectionString, 10);
+        await using var firstContext = CreateContext(database.ConnectionString);
+        await using var secondContext = CreateContext(database.ConnectionString);
+        var firstRepository = new RawMessageNormalizationClaimRepository(firstContext);
+        var secondRepository = new RawMessageNormalizationClaimRepository(secondContext);
+
+        var batches = await Task.WhenAll(
+            firstRepository.ClaimBatchAsync(1, 10, ClaimTimeout, default),
+            secondRepository.ClaimBatchAsync(1, 10, ClaimTimeout, default));
+
+        batches.Should().OnlyContain(batch => batch.Count == 10);
+        batches.Should().OnlyContain(batch =>
+            batch.Select(claim => claim.Message.SessionId).Distinct().Count() == 1);
+        batches.Select(batch => batch[0].Message.SessionId).Distinct().Should().HaveCount(2);
     }
 
     private async Task<PostgreSqlTestDatabase> CreateMigratedDatabaseAsync()

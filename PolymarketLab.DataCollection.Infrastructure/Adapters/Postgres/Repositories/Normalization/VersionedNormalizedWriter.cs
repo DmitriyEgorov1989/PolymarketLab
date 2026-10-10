@@ -93,7 +93,11 @@ internal sealed class VersionedNormalizedWriter(
                 AddTypedRows(item.Event, item.Entity.Id);
 
             await dbContext.SaveChangesAsync(cancellationToken);
-            var completed = await CompleteLedgersAsync(writable, transaction, cancellationToken);
+            var completed = await CompleteLedgersAsync(
+                writable,
+                timeProvider.GetUtcNow(),
+                transaction,
+                cancellationToken);
             if (completed.Count != writable.Count)
             {
                 throw new InvalidOperationException(
@@ -172,6 +176,7 @@ internal sealed class VersionedNormalizedWriter(
 
     private async Task<IReadOnlySet<(long RawMessageId, int ProjectionVersion)>> CompleteLedgersAsync(
         IReadOnlyList<(int Index, NormalizationWriteRequest Request)> writable,
+        DateTimeOffset completedAt,
         IDbContextTransaction transaction,
         CancellationToken cancellationToken)
     {
@@ -180,6 +185,7 @@ internal sealed class VersionedNormalizedWriter(
 
         await using var command = dbContext.Database.GetDbConnection().CreateCommand();
         command.Transaction = transaction.GetDbTransaction();
+        AddParameter(command, "completed_at", completedAt);
         var values = new StringBuilder();
         for (var index = 0; index < writable.Count; index++)
         {
@@ -217,7 +223,7 @@ internal sealed class VersionedNormalizedWriter(
         command.CommandText = $"""
             UPDATE data_collection.raw_message_normalizations AS normalization
             SET status = completion.status,
-                completed_at = CURRENT_TIMESTAMP,
+                completed_at = @completed_at,
                 error_code = completion.error_code,
                 error_message = completion.error_message,
                 error_field = completion.error_field

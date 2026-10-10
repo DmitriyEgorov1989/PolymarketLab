@@ -128,6 +128,30 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
     }
 
     [Fact]
+    public async Task WriteProcessed_ShouldUseConfiguredClockForLedgerCompletion()
+    {
+        var completedAt = DateTimeOffset.Parse("2026-09-03T12:09:59Z");
+        await using var database = await CreateMigratedDatabaseAsync();
+        await SeedRawMessagesAsync(database.ConnectionString, 1);
+        var claim = (await ClaimAsync(database.ConnectionString, 1, 1)).Single();
+        await using var context = CreateContext(database.ConnectionString);
+        var writer = new VersionedNormalizedWriter(
+            context,
+            new FixedTimeProvider(completedAt));
+
+        var status = await writer.WriteAsync(
+            claim,
+            NormalizationCompletion.Processed([]),
+            default);
+
+        status.Should().Be(NormalizationWriteStatus.Written);
+        var persistedAt = await ExecuteScalarAsync<DateTime>(
+            database.ConnectionString,
+            "SELECT completed_at FROM data_collection.raw_message_normalizations");
+        persistedAt.Should().Be(completedAt.UtcDateTime);
+    }
+
+    [Fact]
     public async Task WriteTerminalOutcomes_ShouldNotCreateProjectionRows()
     {
         await using var database = await CreateMigratedDatabaseAsync();
@@ -629,4 +653,9 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
         string? ErrorCode,
         string? ErrorMessage,
         string? ErrorField);
+
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
+    }
 }

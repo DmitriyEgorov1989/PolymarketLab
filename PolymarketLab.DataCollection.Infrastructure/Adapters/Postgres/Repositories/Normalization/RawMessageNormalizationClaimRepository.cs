@@ -14,7 +14,7 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
 {
     private const string ClaimSql =
         """
-        WITH writable_sessions AS MATERIALIZED (
+        WITH target_session AS MATERIALIZED (
             SELECT
                 session.id,
                 session.status,
@@ -22,13 +22,60 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
                 session.awaiting_normalization_at
             FROM data_collection.collector_sessions AS session
             WHERE session.invalidating_at IS NULL
-            ORDER BY session.id
-            FOR SHARE
+              AND NOT EXISTS
+              (
+                  SELECT 1
+                  FROM data_collection.raw_market_messages AS active_raw
+                  INNER JOIN data_collection.raw_message_normalizations AS active_normalization
+                    ON active_normalization.raw_message_id = active_raw.id
+                   AND active_normalization.projection_version = @projection_version
+                  WHERE active_raw.session_id = session.id
+                    AND active_normalization.status = @processing_status
+                    AND active_normalization.claimed_at >= CURRENT_TIMESTAMP - @claim_timeout
+              )
+              AND EXISTS
+              (
+                  SELECT 1
+                  FROM data_collection.raw_market_messages AS eligible_raw
+                  LEFT JOIN data_collection.raw_message_normalizations AS eligible_normalization
+                    ON eligible_normalization.raw_message_id = eligible_raw.id
+                   AND eligible_normalization.projection_version = @projection_version
+                  WHERE eligible_raw.session_id = session.id
+                    AND
+                    (
+                        eligible_normalization.raw_message_id IS NULL
+                        OR eligible_normalization.status = @pending_status
+                        OR
+                        (
+                            eligible_normalization.status = @processing_status
+                            AND
+                            (
+                                eligible_normalization.claimed_at IS NULL
+                                OR eligible_normalization.claimed_at < CURRENT_TIMESTAMP - @claim_timeout
+                            )
+                        )
+                    )
+              )
+            ORDER BY
+                CASE
+                    WHEN session.status = @stopping_status
+                     AND session.phase = @awaiting_normalization_phase
+                    THEN 0
+                    ELSE 1
+                END,
+                CASE
+                    WHEN session.status = @stopping_status
+                     AND session.phase = @awaiting_normalization_phase
+                    THEN session.awaiting_normalization_at
+                END NULLS LAST,
+                session.id
+            LIMIT 1
+            FOR UPDATE OF session SKIP LOCKED
         ),
         candidates AS MATERIALIZED (
             SELECT raw.id
             FROM data_collection.raw_market_messages AS raw
-            INNER JOIN writable_sessions AS session
+            INNER JOIN target_session AS session
               ON session.id = raw.session_id
             LEFT JOIN data_collection.raw_message_normalizations AS normalization
               ON normalization.raw_message_id = raw.id

@@ -27,6 +27,7 @@ public sealed class NormalizerOptionsTests
 
         options.Enabled.Should().BeTrue();
         options.ProjectionVersion.Should().Be(1);
+        options.WorkerCount.Should().Be(3);
         options.BatchSize.Should().Be(500);
         options.WriteBatchSize.Should().Be(100);
         options.IdleDelay.Should().Be(TimeSpan.FromMilliseconds(250));
@@ -41,6 +42,7 @@ public sealed class NormalizerOptionsTests
         {
             [$"{NormalizerOptions.SectionName}:Enabled"] = "false",
             [$"{NormalizerOptions.SectionName}:ProjectionVersion"] = "2",
+            [$"{NormalizerOptions.SectionName}:WorkerCount"] = "2",
             [$"{NormalizerOptions.SectionName}:BatchSize"] = "25",
             [$"{NormalizerOptions.SectionName}:WriteBatchSize"] = "10",
             [$"{NormalizerOptions.SectionName}:IdleDelay"] = "00:00:00",
@@ -52,6 +54,7 @@ public sealed class NormalizerOptionsTests
 
         options.Enabled.Should().BeFalse();
         options.ProjectionVersion.Should().Be(2);
+        options.WorkerCount.Should().Be(2);
         options.BatchSize.Should().Be(25);
         options.WriteBatchSize.Should().Be(10);
         options.IdleDelay.Should().Be(TimeSpan.Zero);
@@ -76,6 +79,9 @@ public sealed class NormalizerOptionsTests
     [Theory]
     [InlineData("ProjectionVersion", "0")]
     [InlineData("ProjectionVersion", "-1")]
+    [InlineData("WorkerCount", "0")]
+    [InlineData("WorkerCount", "-1")]
+    [InlineData("WorkerCount", "17")]
     [InlineData("BatchSize", "0")]
     [InlineData("BatchSize", "-1")]
     [InlineData("BatchSize", "1001")]

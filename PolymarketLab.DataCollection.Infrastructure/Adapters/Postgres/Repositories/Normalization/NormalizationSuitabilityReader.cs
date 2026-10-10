@@ -10,7 +10,8 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Reposito
 /// <summary>
 /// Одним согласованным PostgreSQL read получает session-scoped снимок пригодности
 /// нормализации: raw/ledger cardinality, counts по статусам ledger указанной
-/// snapshot-версии и strict WebSocket resolution provenance без raw payload.
+/// snapshot-версии, последнее время завершения ledger и strict WebSocket
+/// resolution provenance без raw payload.
 /// </summary>
 public sealed class NormalizationSuitabilityReader(DataCollectionDbContext dbContext)
     : INormalizationSuitabilityReader
@@ -49,7 +50,10 @@ public sealed class NormalizationSuitabilityReader(DataCollectionDbContext dbCon
                 ),
                 snapshot_ledger AS
                 (
-                    SELECT normalization.raw_message_id, normalization.status
+                    SELECT
+                        normalization.raw_message_id,
+                        normalization.status,
+                        normalization.completed_at
                     FROM data_collection.raw_message_normalizations AS normalization
                     INNER JOIN session_raw AS raw
                         ON raw.id = normalization.raw_message_id
@@ -65,7 +69,8 @@ public sealed class NormalizationSuitabilityReader(DataCollectionDbContext dbCon
                         COUNT(*) FILTER (WHERE status = @processing_status)::bigint AS processing_count,
                         COUNT(*) FILTER (WHERE status = @unsupported_status)::bigint AS unsupported_count,
                         COUNT(*) FILTER (WHERE status = @invalid_status)::bigint AS invalid_count,
-                        COUNT(*) FILTER (WHERE status = @failed_status)::bigint AS failed_count
+                        COUNT(*) FILTER (WHERE status = @failed_status)::bigint AS failed_count,
+                        MAX(completed_at) AS latest_completed_at
                     FROM snapshot_ledger
                 )
                 SELECT
@@ -77,6 +82,7 @@ public sealed class NormalizationSuitabilityReader(DataCollectionDbContext dbCon
                     counts.unsupported_count,
                     counts.invalid_count,
                     counts.failed_count,
+                    counts.latest_completed_at,
                     EXISTS
                     (
                         SELECT 1
@@ -129,7 +135,8 @@ public sealed class NormalizationSuitabilityReader(DataCollectionDbContext dbCon
                 reader.GetInt64(5),
                 reader.GetInt64(6),
                 reader.GetInt64(7),
-                reader.GetBoolean(8));
+                reader.GetBoolean(9),
+                reader.IsDBNull(8) ? null : reader.GetFieldValue<DateTimeOffset>(8));
         }
         finally
         {

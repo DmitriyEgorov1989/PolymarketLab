@@ -176,7 +176,10 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
     [Fact]
     public async Task EvaluateAsync_AtExactDeadlineWithFullyProcessedLedger_ShouldInvalidateAsTimeout()
     {
-        var fixture = new Fixture();
+        var fixture = new Fixture(suitability: Fixture.FullyProcessed with
+        {
+            LatestCompletedAt = DateTimeOffset.Parse("2026-09-03T12:10:01Z")
+        });
         fixture.Time.SetUtcNow(fixture.AwaitingNormalizationAt.AddMinutes(5));
 
         var result = await fixture.Coordinator.EvaluateAsync(
@@ -192,24 +195,22 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
     }
 
     [Fact]
-    public async Task EvaluateAsync_WhenDeadlineExpiresDuringIntegrityCheck_ShouldInvalidateAsTimeout()
+    public async Task EvaluateAsync_AfterDeadlineWithLedgerCompletedBeforeDeadline_ShouldComplete()
     {
-        var fixture = new Fixture();
-        fixture.Time.SetUtcNow(
-            fixture.AwaitingNormalizationAt.AddMinutes(5).AddTicks(-1));
-        fixture.Integrity.OnEvaluate = () =>
-            fixture.Time.SetUtcNow(fixture.AwaitingNormalizationAt.AddMinutes(5));
+        var fixture = new Fixture(suitability: Fixture.FullyProcessed with
+        {
+            LatestCompletedAt = DateTimeOffset.Parse("2026-09-03T12:09:59Z")
+        });
+        fixture.Time.SetUtcNow(fixture.AwaitingNormalizationAt.AddMinutes(6));
 
         var result = await fixture.Coordinator.EvaluateAsync(
             fixture.Session.Id,
             CancellationToken.None);
 
-        result.IsFailure.Should().BeTrue();
-        result.Error.Code.Should().Be("collector.normalization_suitability.timeout");
-        fixture.Sessions.TryUpdateCount.Should().Be(0);
-        fixture.Invalidation.Calls.Should().ContainSingle(call =>
-            call.Reason == CollectorStopReason.PersistenceFailure
-            && call.Failure.Code == "collector.normalization_suitability.timeout");
+        result.IsSuccess.Should().BeTrue();
+        fixture.Session.Status.Should().Be(CollectorSessionStatus.Stopped);
+        fixture.Integrity.Calls.Should().ContainSingle();
+        fixture.Invalidation.Calls.Should().BeEmpty();
     }
 
     [Fact]
@@ -473,7 +474,16 @@ public sealed class CollectorNormalizationSuitabilityCoordinatorTests
         }
 
         public static NormalizationSuitability FullyProcessed { get; } = new(
-            1250, 1250, 1250, 0, 0, 0, 0, 0, true);
+            1250,
+            1250,
+            1250,
+            0,
+            0,
+            0,
+            0,
+            0,
+            true,
+            DateTimeOffset.Parse("2026-09-03T12:06:00Z"));
 
         public static NormalizationSuitability Incomplete { get; } = new(
             1250, 1240, 1240, 10, 0, 0, 0, 0, true);
