@@ -8,6 +8,9 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: http://+:8080
       Database__ConnectionString: Host=postgres;Port=5432;Database=polymarket_lab;Username=postgres;Password=postgres
+      FailedDatasetRetention__Enabled: "true"
+      FailedDatasetRetention__RetentionPeriod: "12:00:00"
+      FailedDatasetRetention__MaximumRetainedSessions: "5"
     ports:
       - "5285:8080"
     depends_on:

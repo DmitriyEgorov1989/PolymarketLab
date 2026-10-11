@@ -38,22 +38,35 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
               (
                   SELECT 1
                   FROM data_collection.raw_market_messages AS eligible_raw
-                  LEFT JOIN data_collection.raw_message_normalizations AS eligible_normalization
-                    ON eligible_normalization.raw_message_id = eligible_raw.id
-                   AND eligible_normalization.projection_version = @projection_version
                   WHERE eligible_raw.session_id = session.id
                     AND
                     (
-                        eligible_normalization.raw_message_id IS NULL
-                        OR eligible_normalization.status = @pending_status
-                        OR
+                        NOT EXISTS
                         (
-                            eligible_normalization.status = @processing_status
-                            AND
-                            (
-                                eligible_normalization.claimed_at IS NULL
-                                OR eligible_normalization.claimed_at < CURRENT_TIMESTAMP - @claim_timeout
-                            )
+                            SELECT 1
+                            FROM data_collection.raw_message_normalizations AS eligible_normalization
+                            WHERE eligible_normalization.raw_message_id = eligible_raw.id
+                              AND eligible_normalization.projection_version = @projection_version
+                        )
+                        OR EXISTS
+                        (
+                            SELECT 1
+                            FROM data_collection.raw_message_normalizations AS eligible_normalization
+                            WHERE eligible_normalization.raw_message_id = eligible_raw.id
+                              AND eligible_normalization.projection_version = @projection_version
+                              AND
+                              (
+                                  eligible_normalization.status = @pending_status
+                                  OR
+                                  (
+                                      eligible_normalization.status = @processing_status
+                                      AND
+                                      (
+                                          eligible_normalization.claimed_at IS NULL
+                                          OR eligible_normalization.claimed_at < CURRENT_TIMESTAMP - @claim_timeout
+                                      )
+                                  )
+                              )
                         )
                     )
               )
@@ -78,18 +91,33 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
             FROM data_collection.raw_market_messages AS raw
             INNER JOIN target_session AS session
               ON session.id = raw.session_id
-            LEFT JOIN data_collection.raw_message_normalizations AS normalization
-              ON normalization.raw_message_id = raw.id
-             AND normalization.projection_version = @projection_version
-            WHERE normalization.raw_message_id IS NULL
-               OR normalization.status = @pending_status
-               OR (
-                    normalization.status = @processing_status
-                    AND (
-                        normalization.claimed_at IS NULL
-                        OR normalization.claimed_at < CURRENT_TIMESTAMP - @claim_timeout
-                    )
-               )
+            WHERE NOT EXISTS
+                  (
+                      SELECT 1
+                      FROM data_collection.raw_message_normalizations AS normalization
+                      WHERE normalization.raw_message_id = raw.id
+                        AND normalization.projection_version = @projection_version
+                  )
+               OR EXISTS
+                  (
+                      SELECT 1
+                      FROM data_collection.raw_message_normalizations AS normalization
+                      WHERE normalization.raw_message_id = raw.id
+                        AND normalization.projection_version = @projection_version
+                        AND
+                        (
+                            normalization.status = @pending_status
+                            OR
+                            (
+                                normalization.status = @processing_status
+                                AND
+                                (
+                                    normalization.claimed_at IS NULL
+                                    OR normalization.claimed_at < CURRENT_TIMESTAMP - @claim_timeout
+                                )
+                            )
+                        )
+                  )
             ORDER BY
                 CASE
                     WHEN session.status = @stopping_status

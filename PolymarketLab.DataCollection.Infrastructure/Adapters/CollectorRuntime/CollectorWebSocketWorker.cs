@@ -27,7 +27,7 @@ internal sealed class CollectorWebSocketWorker(
     ILogger<CollectorWebSocketWorker> logger)
     : ICollectorWorker
 {
-    private const int MaximumRemoteCloseReconnectAttempts = 2;
+    private const int MaximumPostReadinessReconnectAttempts = 2;
     private readonly object _sync = new();
     private readonly CancellationTokenSource _receiveCts = new();
     private readonly CancellationTokenSource _enqueueCts = new();
@@ -428,7 +428,7 @@ internal sealed class CollectorWebSocketWorker(
             or "collector.runtime.heartbeat.timeout";
     }
 
-    internal static TimeSpan GetRemoteCloseReconnectDelay(
+    internal static TimeSpan GetPostReadinessReconnectDelay(
         TimeSpan baseDelay,
         int attempt) => attempt switch
         {
@@ -444,8 +444,8 @@ internal sealed class CollectorWebSocketWorker(
         UnitResult<Error> result = UnitResult.Success<Error>();
         var completionOrigin = CollectorWorkerCompletionOrigin.RequestedStop;
         var pendingConnection = connection;
-        var recoveringRemoteClose = false;
-        var remoteCloseReconnectAttempts = 0;
+        var recoveringAfterReadiness = false;
+        var postReadinessReconnectAttempts = 0;
 
         while (true)
         {
@@ -500,11 +500,11 @@ internal sealed class CollectorWebSocketWorker(
                 pendingConnection = null;
 
                 if (state.IsReady)
-                    recoveringRemoteClose = false;
+                    recoveringAfterReadiness = false;
 
                 if (result.IsSuccess
                     && HasCollectionEnded()
-                    && recoveringRemoteClose
+                    && recoveringAfterReadiness
                     && !state.IsReady)
                 {
                     result = UnitResult.Failure(
@@ -540,12 +540,13 @@ internal sealed class CollectorWebSocketWorker(
                 if ((state.InitialReadinessCompleted || state.IsReady)
                     && result.Error.Code is
                         "collector.runtime.receive.closed"
+                        or "collector.runtime.receive.failed"
                         or "collector.runtime.heartbeat.timeout")
                 {
-                    recoveringRemoteClose = true;
+                    recoveringAfterReadiness = true;
                 }
 
-                if (!recoveringRemoteClose
+                if (!recoveringAfterReadiness
                     && (state.IsReady
                         || timeProvider.GetUtcNow() >= request.ReadinessDeadline
                         || !IsRetryableConnectionFailure(result.Error)))
@@ -555,28 +556,28 @@ internal sealed class CollectorWebSocketWorker(
                 }
             }
 
-            if (recoveringRemoteClose
+            if (recoveringAfterReadiness
                 && !IsRetryableConnectionFailure(result.Error))
             {
                 completionOrigin = await InvalidateSessionAsync(result.Error);
                 break;
             }
 
-            if (recoveringRemoteClose
-                && remoteCloseReconnectAttempts >= MaximumRemoteCloseReconnectAttempts)
+            if (recoveringAfterReadiness
+                && postReadinessReconnectAttempts >= MaximumPostReadinessReconnectAttempts)
             {
                 completionOrigin = await InvalidateSessionAsync(result.Error);
                 break;
             }
 
-            var reconnectDeadline = recoveringRemoteClose
+            var reconnectDeadline = recoveringAfterReadiness
                 ? request.CollectionDeadline
                 : request.ReadinessDeadline;
             var reconnectDelay = reconnectDeadline - timeProvider.GetUtcNow();
-            var configuredDelay = recoveringRemoteClose
-                ? GetRemoteCloseReconnectDelay(
+            var configuredDelay = recoveringAfterReadiness
+                ? GetPostReadinessReconnectDelay(
                     options.ReconnectDelay,
-                    remoteCloseReconnectAttempts + 1)
+                    postReadinessReconnectAttempts + 1)
                 : options.ReconnectDelay;
             if (reconnectDelay > configuredDelay)
                 reconnectDelay = configuredDelay;
@@ -604,7 +605,7 @@ internal sealed class CollectorWebSocketWorker(
 
             if (timeProvider.GetUtcNow() >= reconnectDeadline)
             {
-                if (!recoveringRemoteClose)
+                if (!recoveringAfterReadiness)
                 {
                     result = UnitResult.Failure(
                         CollectorRuntimeErrors.ReadinessTimedOut(request.SessionId));
@@ -613,15 +614,15 @@ internal sealed class CollectorWebSocketWorker(
                 break;
             }
 
-            if (recoveringRemoteClose)
-                remoteCloseReconnectAttempts++;
+            if (recoveringAfterReadiness)
+                postReadinessReconnectAttempts++;
 
             state = state.NextEpoch();
             var reconnectStartedAt = timeProvider.GetTimestamp();
             var reconnect = await ConnectAndSubscribeAsync(
                 state.Epoch,
                 reconnectDeadline,
-                recoveringRemoteClose
+                recoveringAfterReadiness
                     ? result.Error
                     : CollectorRuntimeErrors.ReadinessTimedOut(request.SessionId),
                 _receiveCts.Token);
@@ -629,7 +630,7 @@ internal sealed class CollectorWebSocketWorker(
                 "Collector WebSocket {SessionId} reconnect attempt {ReconnectAttempt} for epoch {ConnectionEpoch} after {RecoveryErrorCode} " +
                 "completed in {ReconnectDuration} with result {ReconnectResult}.",
                 request.SessionId.Value,
-                recoveringRemoteClose ? remoteCloseReconnectAttempts : 0,
+                recoveringAfterReadiness ? postReadinessReconnectAttempts : 0,
                 state.Epoch,
                 result.Error.Code,
                 timeProvider.GetElapsedTime(
@@ -656,8 +657,8 @@ internal sealed class CollectorWebSocketWorker(
 
             if (timeProvider.GetUtcNow() >= reconnectDeadline
                 || !IsRetryableConnectionFailure(reconnect.Error)
-                || recoveringRemoteClose
-                && remoteCloseReconnectAttempts >= MaximumRemoteCloseReconnectAttempts)
+                || recoveringAfterReadiness
+                && postReadinessReconnectAttempts >= MaximumPostReadinessReconnectAttempts)
             {
                 completionOrigin = await InvalidateSessionAsync(reconnect.Error);
                 break;

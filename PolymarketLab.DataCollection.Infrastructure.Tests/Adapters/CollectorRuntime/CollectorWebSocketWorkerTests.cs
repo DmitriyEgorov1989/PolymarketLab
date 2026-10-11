@@ -808,6 +808,40 @@ public sealed class CollectorWebSocketWorkerTests
     }
 
     [Fact]
+    public async Task ReceiveAsync_WhenTransportFailsAfterReadiness_ShouldReconnectAndRequalifyEpoch()
+    {
+        var firstConnection = CreateReadyThenFailingConnection(
+            new IOException("Abrupt EOF."));
+        var secondConnection = new StubWebSocketConnection();
+        secondConnection.AddFrame(BookMessage("yes-token"));
+        secondConnection.AddFrame(BookMessage("no-token"));
+        secondConnection.AddFrame("PONG"u8);
+        var dispatcher = new StubReadinessDispatcher();
+        var telemetry = new RawMarketMessageTelemetry();
+        var factory = new StubWebSocketFactory(firstConnection, secondConnection);
+        var request = CreateRequest();
+        var worker = CreateWorker(
+            request,
+            firstConnection,
+            options: CreateOptions(reconnectDelay: TimeSpan.Zero),
+            telemetry: telemetry,
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:40Z")),
+            readinessDispatcher: dispatcher,
+            webSocketFactory: factory);
+
+        await worker.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => secondConnection.ReceiveCallCount >= 4);
+        await worker.StopAsync(CancellationToken.None);
+
+        factory.CreateCallCount.Should().Be(2);
+        telemetry.GetCheckpoint(request.SessionId).ReconnectCount.Should().Be(1);
+        dispatcher.RunningCount.Should().Be(1);
+        dispatcher.AwaitingInitialBooksCount.Should().Be(1);
+        dispatcher.InvalidationCount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task ReceiveAsync_WhenRemoteCloseRetriesAreExhausted_ShouldInvalidateAfterTwoAttempts()
     {
         var firstConnection = new StubWebSocketConnection();
@@ -838,6 +872,45 @@ public sealed class CollectorWebSocketWorkerTests
 
         completion.Result.IsFailure.Should().BeTrue();
         completion.Result.Error.Code.Should().Be("collector.runtime.receive.closed");
+        completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
+        factory.CreateCallCount.Should().Be(3);
+        dispatcher.InvalidationCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReceiveAsync_WhenTransportFailureRetriesAreExhausted_ShouldInvalidateAfterTwoAttempts()
+    {
+        var firstConnection = CreateReadyThenFailingConnection(
+            new IOException("Abrupt EOF."));
+        var secondConnection = new StubWebSocketConnection
+        {
+            ReceiveHandler = (_, _) => ValueTask.FromException<
+                CollectorWebSocketReceiveResult>(new IOException("Abrupt EOF."))
+        };
+        var thirdConnection = new StubWebSocketConnection
+        {
+            ReceiveHandler = (_, _) => ValueTask.FromException<
+                CollectorWebSocketReceiveResult>(new IOException("Abrupt EOF."))
+        };
+        var dispatcher = new StubReadinessDispatcher();
+        var factory = new StubWebSocketFactory(
+            firstConnection,
+            secondConnection,
+            thirdConnection);
+        var worker = CreateWorker(
+            CreateRequest(),
+            firstConnection,
+            options: CreateOptions(reconnectDelay: TimeSpan.Zero),
+            timeProvider: new StubTimeProvider(
+                DateTimeOffset.Parse("2026-08-28T11:59:40Z")),
+            readinessDispatcher: dispatcher,
+            webSocketFactory: factory);
+
+        await worker.StartAsync(CancellationToken.None);
+        var completion = await worker.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        completion.Result.IsFailure.Should().BeTrue();
+        completion.Result.Error.Code.Should().Be("collector.runtime.receive.failed");
         completion.Origin.Should().Be(CollectorWorkerCompletionOrigin.Invalidated);
         factory.CreateCallCount.Should().Be(3);
         dispatcher.InvalidationCount.Should().Be(1);
@@ -968,11 +1041,11 @@ public sealed class CollectorWebSocketWorkerTests
     [Theory]
     [InlineData(1, 1)]
     [InlineData(2, 2)]
-    public void GetRemoteCloseReconnectDelay_ShouldDoubleFromBaseDelay(
+    public void GetPostReadinessReconnectDelay_ShouldDoubleFromBaseDelay(
         int attempt,
         int expectedSeconds)
     {
-        CollectorWebSocketWorker.GetRemoteCloseReconnectDelay(
+        CollectorWebSocketWorker.GetPostReadinessReconnectDelay(
                 TimeSpan.FromSeconds(1),
                 attempt)
             .Should()
@@ -2010,6 +2083,33 @@ public sealed class CollectorWebSocketWorkerTests
 
     private static string BookMessageText(string tokenId) =>
         $"{{\"event_type\":\"book\",\"market\":\"0xcondition\",\"asset_id\":\"{tokenId}\",\"bids\":[],\"asks\":[]}}";
+
+    private static StubWebSocketConnection CreateReadyThenFailingConnection(
+        Exception exception)
+    {
+        var frames = new Queue<byte[]>([
+            BookMessage("yes-token"),
+            BookMessage("no-token"),
+            "PONG"u8.ToArray()
+        ]);
+        return new StubWebSocketConnection
+        {
+            ReceiveHandler = (buffer, _) =>
+            {
+                if (!frames.TryDequeue(out var payload))
+                {
+                    return ValueTask.FromException<CollectorWebSocketReceiveResult>(
+                        exception);
+                }
+
+                payload.CopyTo(buffer);
+                return ValueTask.FromResult(new CollectorWebSocketReceiveResult(
+                    payload.Length,
+                    WebSocketMessageType.Text,
+                    true));
+            }
+        };
+    }
 
     private sealed class CapturingLogger<T> : ILogger<T>
     {

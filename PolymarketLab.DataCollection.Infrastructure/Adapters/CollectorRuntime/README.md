@@ -992,7 +992,8 @@ stateDiagram-v2
 До readiness повторяются только connect timeout, transport start/receive failure,
 remote close и heartbeat timeout. Protocol/identity violations, oversized или
 binary message, закрытый ingestion и ошибки durable readiness немедленно запускают
-session invalidation. После readiness remote close и heartbeat timeout используют
+session invalidation. После readiness remote close, временная transport receive failure
+и heartbeat timeout используют
 общий бюджет максимум из двух reconnect-attempt на worker с паузами
 `ReconnectDelay` и `2 * ReconnectDelay`.
 Новый epoch локально заново требует initial books всех snapshot tokens и matching
