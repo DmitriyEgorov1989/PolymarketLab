@@ -35,6 +35,10 @@ internal sealed class NormalizationBackgroundService(
     private async Task RunWorkerAsync(CancellationToken stoppingToken)
     {
         var consecutiveFailures = 0;
+        var idleDelay = options.IdleDelay;
+        var maximumIdleDelay = options.IdleDelay > TimeSpan.FromSeconds(2)
+            ? options.IdleDelay
+            : TimeSpan.FromSeconds(2);
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -56,7 +60,17 @@ internal sealed class NormalizationBackgroundService(
                     return;
 
                 if (result.Total == 0)
-                    await Task.Delay(options.IdleDelay, timeProvider, stoppingToken);
+                {
+                    await Task.Delay(idleDelay, timeProvider, stoppingToken);
+                    idleDelay = TimeSpan.FromTicks(
+                        idleDelay.Ticks >= maximumIdleDelay.Ticks / 2
+                            ? maximumIdleDelay.Ticks
+                            : idleDelay.Ticks * 2);
+                }
+                else
+                {
+                    idleDelay = options.IdleDelay;
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

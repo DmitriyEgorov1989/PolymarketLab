@@ -15,6 +15,31 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
 {
     private static readonly TimeSpan ClaimTimeout = TimeSpan.FromMinutes(5);
 
+    [Theory]
+    [InlineData(CollectorSessionStatus.Starting, true)]
+    [InlineData(CollectorSessionStatus.Running, true)]
+    [InlineData(CollectorSessionStatus.Stopping, true)]
+    [InlineData(CollectorSessionStatus.Stopped, false)]
+    [InlineData(CollectorSessionStatus.Failed, false)]
+    [InlineData(CollectorSessionStatus.Interrupted, false)]
+    [InlineData(CollectorSessionStatus.Scheduled, false)]
+    [InlineData(CollectorSessionStatus.Invalidating, false)]
+    public async Task ClaimBatch_ShouldOnlyProcessActiveSessions(CollectorSessionStatus status, bool eligible)
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        await SeedRawMessagesAsync(database.ConnectionString, 2);
+        await ExecuteAsync(database.ConnectionString,
+            "UPDATE data_collection.collector_sessions SET status = @status",
+            new NpgsqlParameter("status", (int)status));
+        await using var context = CreateContext(database.ConnectionString);
+
+        var claims = await new RawMessageNormalizationClaimRepository(context)
+            .ClaimBatchAsync(2, 10, ClaimTimeout, default);
+
+        claims.Should().HaveCount(eligible ? 2 : 0);
+        (await ReadLeasesAsync(database.ConnectionString, 2)).Should().HaveCount(eligible ? 2 : 0);
+    }
+
     [Fact]
     public async Task ClaimBatch_AfterInvalidationFence_ShouldNotCreateLedger()
     {
@@ -244,7 +269,7 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
             """
             INSERT INTO data_collection.collector_sessions
                 (id, market_id, status, created_at)
-            VALUES (@session_id, @market_id, 4, @created_at)
+            VALUES (@session_id, @market_id, 1, @created_at)
             """,
             new NpgsqlParameter("session_id", sessionId),
             new NpgsqlParameter("market_id", Guid.NewGuid()),

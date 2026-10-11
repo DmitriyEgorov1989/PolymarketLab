@@ -261,7 +261,12 @@ public sealed class NormalizationReplayPostgreSqlTests(PostgreSqlFixture fixture
                 .GetRequiredService<INormalizationProcessor>()
                 .ProcessBatchAsync(default);
             if (result.Total == 0)
+            {
+                await scope.ServiceProvider.GetRequiredService<DataCollectionDbContext>()
+                    .Database.ExecuteSqlRawAsync(
+                        "UPDATE data_collection.collector_sessions SET status = 3 WHERE status = 1");
                 return;
+            }
         }
     }
 
@@ -284,7 +289,7 @@ public sealed class NormalizationReplayPostgreSqlTests(PostgreSqlFixture fixture
             """
             INSERT INTO data_collection.collector_sessions
                 (id, market_id, status, created_at)
-            VALUES (@session_id, @market_id, 4, @created_at)
+            VALUES (@session_id, @market_id, 1, @created_at)
             """,
             new NpgsqlParameter("session_id", sessionId),
             new NpgsqlParameter("market_id", Guid.NewGuid()),

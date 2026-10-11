@@ -221,13 +221,16 @@ public sealed class NormalizationProcessorPostgreSqlTests(PostgreSqlFixture fixt
     }
 
     [Fact]
-    public async Task ProcessBatch_ConcurrentProcessors_ShouldClaimDisjointMessages()
+    public async Task ProcessBatch_ConcurrentProcessors_ShouldProcessDifferentSessions()
     {
         await using var database = await CreateMigratedDatabaseAsync();
         var payload = ReadFixture("last-trade-price.json");
         await SeedRawMessagesAsync(
             database.ConnectionString,
-            Enumerable.Repeat(payload, 20).ToArray());
+            Enumerable.Repeat(payload, 10).ToArray());
+        await SeedRawMessagesAsync(
+            database.ConnectionString,
+            Enumerable.Repeat(payload, 10).ToArray());
         await using var firstContext = CreateContext(database.ConnectionString);
         await using var secondContext = CreateContext(database.ConnectionString);
         using var blockingDecoder = new BlockingDecoder(new RawMessageDecoder());
@@ -338,7 +341,7 @@ public sealed class NormalizationProcessorPostgreSqlTests(PostgreSqlFixture fixt
             """
             INSERT INTO data_collection.collector_sessions
                 (id, market_id, status, created_at)
-            VALUES (@session_id, @market_id, 4, @created_at)
+            VALUES (@session_id, @market_id, 1, @created_at)
             """,
             new NpgsqlParameter("session_id", sessionId),
             new NpgsqlParameter("market_id", Guid.NewGuid()),

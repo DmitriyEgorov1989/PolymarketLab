@@ -42,9 +42,19 @@ dotnet user-secrets set "Database:ConnectionString" "Host=localhost;Port=5433;Da
 | `WorkerCount` | Число параллельных worker loops от `1` до `16`. Одна collector session обрабатывается не более чем одним worker одновременно. |
 | `BatchSize` | Максимальное число raw-сообщений в одном batch. Должно быть от `1` до `1000`. |
 | `WriteBatchSize` | Максимальное число подготовленных результатов в одной PostgreSQL-транзакции. Должно быть от `1` до `1000` и не превышать `BatchSize`. Пакет из нескольких сообщений дополнительно ограничен примерно `10000` создаваемых строк; одно более крупное сообщение остаётся атомарным. |
-| `IdleDelay` | Пауза после пустого batch. При включённом worker должна быть больше нуля. |
+| `IdleDelay` | Начальная пауза после пустого batch. Последовательные пустые результаты удваивают её до `max(IdleDelay, 2 секунды)`; непустой результат сбрасывает паузу. При включённом worker должна быть больше нуля. |
 | `ClaimTimeout` | Время, после которого незавершённый `Processing` считается устаревшим и может быть захвачен повторно. |
 | `ShutdownTimeout` | Максимальное время на завершение уже захваченного пакета после начала остановки. Новые пакеты при этом не захватываются. |
+
+Continuous normalizer захватывает сообщения только sessions в `Starting`, `Running`
+и `Stopping`, для которых не установлен `InvalidatingAt`. Метрики pending/lag
+имеют ту же область: завершённый архив не участвует в поиске работы и подсчёте
+backlog. Для исторических sessions используется явный replay; смена
+`ProjectionVersion` сама по себе не запускает обработку завершённого архива.
+Backoff применяется независимо для каждого worker, снижает частоту пустых
+запросов, но не запрещает их одновременное выполнение. При стандартной настройке
+добавочная задержка обнаружения новой работы составляет до двух секунд плюс
+время запроса.
 
 Любой параметр можно переопределить переменной окружения, например:
 
@@ -286,7 +296,7 @@ WHERE normalization.projection_version = 1
 ORDER BY normalization.raw_message_id;
 ```
 
-Ручной `UPDATE` не требуется. Включённый worker автоматически захватывает такие
+Ручной `UPDATE` не требуется. Для активных sessions без invalidation fence включённый worker автоматически захватывает такие
 строки повторно, увеличивает `attempt_count`, очищает предыдущую ошибку и
 обновляет `claimed_at`. Порядок восстановления:
 
@@ -303,19 +313,14 @@ ORDER BY normalization.raw_message_id;
 
 ### Полный повтор в новую версию
 
-Чтобы повторно обработать все сохранённые raw-сообщения, увеличь
-`Normalizer:ProjectionVersion` и перезапусти API:
-
-```powershell
-$env:Normalizer__Enabled = "true"
-$env:Normalizer__ProjectionVersion = "2"
-dotnet run --project .\PolymarketLab.Api\PolymarketLab.Api.csproj --launch-profile http
-```
-
-Для версии `2` ledger сначала отсутствует, поэтому continuous worker обработает
-всю таблицу `raw_market_messages`, а затем продолжит обрабатывать новые
-сообщения. Версия `1` и её проекции не удаляются. Не переиспользуй номер версии
-после изменения логики или схемы проекции.
+Изменение `Normalizer:ProjectionVersion` задаёт версию continuous normalizer,
+но не запускает обработку завершённого архива. Для повторной обработки используй
+`ReplayNormalizationCommand`, описанную ниже, с нужной исходной версией и без
+фильтров session/event type. Replay обрабатывает доступные записи исходной версии;
+он не является восстановлением missing ledger произвольного terminal dataset.
+Исходные проекции не удаляются. Не переиспользуй номер версии после изменения
+логики или схемы проекции. Не меняй активную версию во время незавершённых sessions:
+их immutable snapshot должен совпадать с runtime-версией.
 
 ### Выборочный replay
 
@@ -338,8 +343,8 @@ await sender.Send(
 ```
 
 Если continuous worker включён, target выборочного replay не может совпадать с
-его активной `ProjectionVersion`. До появления административного endpoint для
-операционного полного replay используй увеличение `ProjectionVersion`.
+его активной `ProjectionVersion`. Операционный replay требует host/tool с DI;
+публичного HTTP или CLI запуска пока нет.
 
 ## Интерпретация отставания
 
@@ -355,6 +360,7 @@ API публикует gauges с меткой `projection_version`:
 lag - pending = свежие Processing
 ```
 
+Метрики учитывают только `Starting`, `Running`, `Stopping` без invalidation fence.
 `Invalid`, `Unsupported`, `Failed` и `Processed` в lag не входят. Метрики backlog
 обновляются раз в 10 секунд только при `Enabled=true`.
 

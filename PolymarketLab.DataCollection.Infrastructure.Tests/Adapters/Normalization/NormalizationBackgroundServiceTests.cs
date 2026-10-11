@@ -17,6 +17,29 @@ namespace PolymarketLab.DataCollection.Infrastructure.Tests.Adapters.Normalizati
 public sealed class NormalizationBackgroundServiceTests
 {
     [Fact]
+    public async Task ExecuteAsync_EmptyBatches_ShouldBackOffAndResetAfterWork()
+    {
+        var time = new ControlledDelayTimeProvider();
+        await using var fixture = CreateFixture(
+            new NormalizerOptions { IdleDelay = TimeSpan.FromMilliseconds(250) },
+            (call, _) => Task.FromResult(call == 6 ? ProcessedBatch() : EmptyBatch()),
+            timeProvider: time);
+        await fixture.Worker.StartAsync(default);
+
+        foreach (var milliseconds in new[] { 250, 500, 1000, 2000, 2000, 250 })
+        {
+            var delay = await time.NextAsync();
+            delay.DueTime.Should().Be(TimeSpan.FromMilliseconds(milliseconds));
+            if (fixture.State.CallCount == 7)
+                break;
+            delay.Fire();
+        }
+
+        fixture.State.CallCount.Should().Be(7);
+        await fixture.Worker.StopAsync(default).WaitAsync(TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WhenDisabled_ShouldNotResolveProcessor()
     {
         await using var fixture = CreateFixture(
@@ -397,7 +420,8 @@ public sealed class NormalizationBackgroundServiceTests
         NormalizerOptions options,
         Func<int, CancellationToken, Task<NormalizationBatchResult>> process,
         ILogger<NormalizationBackgroundService>? logger = null,
-        int workerCount = 1)
+        int workerCount = 1,
+        TimeProvider? timeProvider = null)
     {
         options = new NormalizerOptions
         {
@@ -419,13 +443,37 @@ public sealed class NormalizationBackgroundServiceTests
             provider.GetRequiredService<IServiceScopeFactory>(),
             telemetry,
             Options.Create(options),
-            TimeProvider.System,
+            timeProvider ?? TimeProvider.System,
             logger ?? NullLogger<NormalizationBackgroundService>.Instance);
         return new WorkerFixture(worker, provider, telemetry, state);
     }
 
     private static NormalizationBatchResult EmptyBatch() =>
         new(0, 0, 0, 0, 0, null, null);
+
+    private sealed class ControlledDelayTimeProvider : TimeProvider
+    {
+        private readonly Channel<ControlledTimer> timers = Channel.CreateUnbounded<ControlledTimer>();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new ControlledTimer(callback, state, dueTime);
+            timers.Writer.TryWrite(timer);
+            return timer;
+        }
+
+        public async Task<ControlledTimer> NextAsync() =>
+            await timers.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    private sealed class ControlledTimer(TimerCallback callback, object? state, TimeSpan dueTime) : ITimer
+    {
+        public TimeSpan DueTime { get; } = dueTime;
+        public void Fire() => callback(state);
+        public bool Change(TimeSpan dueTime, TimeSpan period) => throw new NotSupportedException();
+        public void Dispose() { }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
 
     private static NormalizationBatchResult ProcessedBatch() =>
         new(1, 1, 0, 0, 0, 1, 1);

@@ -52,6 +52,7 @@
 - Session snapshot, включая расписание, неизменяем. Schedule mismatch ведёт в invalidation/cleanup; явное повторное добавление после cleanup принимает обновлённое расписание.
 - До изменения runtime, ingestion, ownership буферов или hosted-service ordering прочитай `PolymarketLab.DataCollection.Infrastructure/Adapters/CollectorRuntime/README.md`.
 - До изменения normalizer прочитай `docs/normalizer-input-contract.md` и root `README.md`. Raw payload не логируй и не включай в agent context без необходимости.
+- Continuous claim и метрики pending/lag ограничены sessions `Starting`, `Running`, `Stopping` без `InvalidatingAt`; terminal archive обрабатывается явным replay. Смена projection version не возвращает terminal sessions в continuous backlog. После пустого batch каждый worker удваивает `IdleDelay` до `max(IdleDelay, 2s)`, после непустого сбрасывает паузу; параллельная обработка разных sessions сохраняется.
 - Fixtures в `PolymarketLab.DataCollection.Infrastructure.Tests/Fixtures/Polymarket` имеют зафиксированные SHA-256 и помечены `-text`; не форматируй их и не меняй line endings.
 
 ## Локальное Окружение

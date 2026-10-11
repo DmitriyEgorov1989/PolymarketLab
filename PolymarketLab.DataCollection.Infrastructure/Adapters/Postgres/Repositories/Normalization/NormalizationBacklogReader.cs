@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using PolymarketLab.DataCollection.Core.Application.Normalization.Models;
+using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Normalization;
 
 namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.Normalization;
@@ -56,8 +57,12 @@ internal sealed class NormalizationBacklogReader(DataCollectionDbContext dbConte
                 JOIN data_collection.collector_sessions AS session
                   ON session.id = raw.session_id
                  AND session.invalidating_at IS NULL
+                 AND session.status IN (@starting_status, @running_status, @stopping_status)
                 """;
             AddParameter(command, "projection_version", projectionVersion);
+            AddParameter(command, "starting_status", (int)CollectorSessionStatus.Starting);
+            AddParameter(command, "running_status", (int)CollectorSessionStatus.Running);
+            AddParameter(command, "stopping_status", (int)CollectorSessionStatus.Stopping);
             AddParameter(command, "pending_status", (int)NormalizationStatus.Pending);
             AddParameter(command, "processing_status", (int)NormalizationStatus.Processing);
             AddParameter(command, "claim_timeout", claimTimeout);

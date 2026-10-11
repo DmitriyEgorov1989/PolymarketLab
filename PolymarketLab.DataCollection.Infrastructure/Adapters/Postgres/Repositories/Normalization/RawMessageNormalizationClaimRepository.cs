@@ -22,6 +22,7 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
                 session.awaiting_normalization_at
             FROM data_collection.collector_sessions AS session
             WHERE session.invalidating_at IS NULL
+              AND session.status IN (@starting_status, @running_status, @stopping_status)
               AND NOT EXISTS
               (
                   SELECT 1
@@ -182,6 +183,8 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
         AddParameter(command, "pending_status", (int)NormalizationStatus.Pending);
         AddParameter(command, "processing_status", (int)NormalizationStatus.Processing);
         AddParameter(command, "stopping_status", (int)CollectorSessionStatus.Stopping);
+        AddParameter(command, "starting_status", (int)CollectorSessionStatus.Starting);
+        AddParameter(command, "running_status", (int)CollectorSessionStatus.Running);
         AddParameter(
             command,
             "awaiting_normalization_phase",

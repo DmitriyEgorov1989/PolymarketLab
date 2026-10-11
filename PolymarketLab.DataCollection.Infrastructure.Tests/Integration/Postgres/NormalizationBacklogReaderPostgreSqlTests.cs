@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using PolymarketLab.DataCollection.Core.Application.Normalization.Models;
+using PolymarketLab.DataCollection.Core.Domain.Models.Enums;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Normalization;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.Normalization;
@@ -13,6 +14,29 @@ namespace PolymarketLab.DataCollection.Infrastructure.Tests.Integration.Postgres
 public sealed class NormalizationBacklogReaderPostgreSqlTests(PostgreSqlFixture fixture)
 {
     private static readonly TimeSpan ClaimTimeout = TimeSpan.FromMinutes(5);
+
+    [Theory]
+    [InlineData(CollectorSessionStatus.Starting, true)]
+    [InlineData(CollectorSessionStatus.Running, true)]
+    [InlineData(CollectorSessionStatus.Stopping, true)]
+    [InlineData(CollectorSessionStatus.Stopped, false)]
+    [InlineData(CollectorSessionStatus.Failed, false)]
+    [InlineData(CollectorSessionStatus.Interrupted, false)]
+    [InlineData(CollectorSessionStatus.Scheduled, false)]
+    [InlineData(CollectorSessionStatus.Invalidating, false)]
+    public async Task Read_ShouldOnlyCountActiveSessions(CollectorSessionStatus status, bool eligible)
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        await SeedRawMessagesAsync(database.ConnectionString, 2);
+        await ExecuteAsync(database.ConnectionString,
+            "UPDATE data_collection.collector_sessions SET status = @status",
+            new NpgsqlParameter("status", (int)status));
+        await using var context = CreateContext(database.ConnectionString);
+
+        var snapshot = await new NormalizationBacklogReader(context).ReadAsync(2, ClaimTimeout, default);
+
+        snapshot.Should().Be(new NormalizationBacklogSnapshot(2, eligible ? 2 : 0, eligible ? 2 : 0));
+    }
 
     [Fact]
     public async Task Read_ShouldDistinguishClaimablePendingFromVersionedLag()
@@ -104,7 +128,7 @@ public sealed class NormalizationBacklogReaderPostgreSqlTests(PostgreSqlFixture 
             """
             INSERT INTO data_collection.collector_sessions
                 (id, market_id, status, created_at, invalidating_at, failure_policy)
-            VALUES (@session_id, @market_id, 4, @created_at, @invalidating_at, 0)
+            VALUES (@session_id, @market_id, 1, @created_at, @invalidating_at, 0)
             """,
             new NpgsqlParameter("session_id", sessionId),
             new NpgsqlParameter("market_id", Guid.NewGuid()),
