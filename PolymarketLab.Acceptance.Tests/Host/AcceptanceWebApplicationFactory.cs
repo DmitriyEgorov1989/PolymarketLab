@@ -25,6 +25,7 @@ internal sealed class AcceptanceWebApplicationFactory(
         builder.UseSetting("Normalizer:BatchSize", "32");
         builder.UseSetting("Normalizer:WriteBatchSize", "16");
         builder.UseSetting("Normalizer:IdleDelay", "00:00:00.050");
+        builder.UseSetting("Normalizer:ShutdownTimeout", "00:00:00.050");
         if (settings is not null)
         {
             foreach (var setting in settings)
