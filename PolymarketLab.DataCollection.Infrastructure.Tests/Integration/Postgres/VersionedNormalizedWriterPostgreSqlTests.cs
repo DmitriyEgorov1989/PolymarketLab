@@ -511,7 +511,7 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
             """
             INSERT INTO data_collection.collector_sessions
                 (id, market_id, status, created_at)
-            VALUES (@session_id, @market_id, 4, @created_at)
+            VALUES (@session_id, @market_id, 1, @created_at)
             """,
             new NpgsqlParameter("session_id", sessionId),
             new NpgsqlParameter("market_id", Guid.NewGuid()),
@@ -550,7 +550,7 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
                 WITH inserted_session AS (
                     INSERT INTO data_collection.collector_sessions
                         (id, market_id, status, created_at)
-                    VALUES (@session_id, @market_id, 4, @created_at)
+                    VALUES (@session_id, @market_id, 1, @created_at)
                     RETURNING id
                 )
                 INSERT INTO data_collection.raw_market_messages

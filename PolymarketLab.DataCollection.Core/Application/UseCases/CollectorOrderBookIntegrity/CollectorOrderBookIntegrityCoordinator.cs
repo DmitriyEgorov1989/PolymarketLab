@@ -34,43 +34,67 @@ public sealed class CollectorOrderBookIntegrityCoordinator(
                 sessionId,
                 projectionVersion,
                 cancellationToken);
-            var expectedAssetIds = tokenIds
+            var orderedAssetIds = tokenIds
                 .Select(tokenId => tokenId.Value)
-                .ToHashSet(StringComparer.Ordinal);
-            if (expectedAssetIds.Count == 0)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (orderedAssetIds.Length == 0)
                 throw new InvalidOperationException("Collector session has no snapshot tokens.");
 
-            var states = expectedAssetIds.ToDictionary(
-                assetId => assetId,
-                assetId => new OrderBookState(assetId),
-                StringComparer.Ordinal);
-            var initializedAssetIds = new HashSet<string>(StringComparer.Ordinal);
+            var expectedAssetIds = orderedAssetIds.ToHashSet(StringComparer.Ordinal);
+            var requiredConnectionEpochs = events
+                .SelectMany(GetConnectionEpochs)
+                .ToHashSet();
+            foreach (var @event in events)
+            {
+                var unexpectedAssetId = GetAssetIds(@event)
+                    .FirstOrDefault(assetId => !expectedAssetIds.Contains(assetId));
+                if (unexpectedAssetId is not null)
+                {
+                    return UnitResult.Failure(
+                        CollectorOrderBookIntegrityErrors.UnexpectedAsset(
+                            sessionId,
+                            unexpectedAssetId));
+                }
+            }
+
+            var replayByAsset = CollectorOrderBookReplayPlanner.Plan(events, orderedAssetIds);
             var sourceTimestampWatermarks =
                 new Dictionary<(string AssetId, string EventType), OrderBookEventDiagnostic>();
             var previousEvents = new Dictionary<string, OrderBookEventDiagnostic>(StringComparer.Ordinal);
 
-            foreach (var @event in events)
+            foreach (var assetId in orderedAssetIds)
             {
-                foreach (var assetId in GetAssetIds(@event))
+                var state = new OrderBookState(assetId);
+                var initialized = false;
+                long? activeConnectionEpoch = null;
+                var snapshotEpochs = new HashSet<long>();
+                foreach (var replayEvent in replayByAsset[assetId])
                 {
-                    if (!states.TryGetValue(assetId, out var state))
+                    var originalEvent = replayEvent.OriginalEvent;
+                    var projectableEvent = replayEvent.ProjectableEvent;
+                    var connectionEpoch = GetConnectionEpoch(originalEvent);
+                    if (connectionEpoch.HasValue)
                     {
-                        return UnitResult.Failure(
-                            CollectorOrderBookIntegrityErrors.UnexpectedAsset(
-                                sessionId,
-                                assetId));
+                        if (activeConnectionEpoch.HasValue
+                            && activeConnectionEpoch != connectionEpoch)
+                        {
+                            initialized = false;
+                        }
+
+                        activeConnectionEpoch = connectionEpoch;
                     }
 
-                    if (@event is NormalizedOrderBookEvent.BookSnapshot)
+                    if (originalEvent is NormalizedOrderBookEvent.BookSnapshot)
                     {
-                        var snapshotResult = projector.Apply(state, @event);
+                        var snapshotResult = projector.Apply(state, projectableEvent);
                         if (snapshotResult.IntegrityIssue is not null)
                         {
                             LogIntegrityIssue(
                                 sessionId,
                                 projectionVersion,
                                 assetId,
-                                @event,
+                                originalEvent,
                                 state,
                                 snapshotResult.IntegrityIssue,
                                 sourceTimestampWatermarks,
@@ -84,13 +108,15 @@ public sealed class CollectorOrderBookIntegrityCoordinator(
                                     snapshotResult.IntegrityIssue));
                         }
 
-                        initializedAssetIds.Add(assetId);
-                        UpdateSourceTimestampWatermark(assetId, @event, sourceTimestampWatermarks);
-                        previousEvents[assetId] = GetDiagnostic(@event, assetId);
+                        initialized = true;
+                        if (connectionEpoch.HasValue)
+                            snapshotEpochs.Add(connectionEpoch.Value);
+                        UpdateSourceTimestampWatermark(assetId, originalEvent, sourceTimestampWatermarks);
+                        previousEvents[assetId] = GetDiagnostic(originalEvent, assetId);
                         continue;
                     }
 
-                    if (!initializedAssetIds.Contains(assetId))
+                    if (!initialized)
                     {
                         return UnitResult.Failure(
                             CollectorOrderBookIntegrityErrors.MissingSnapshot(
@@ -98,14 +124,14 @@ public sealed class CollectorOrderBookIntegrityCoordinator(
                                 assetId));
                     }
 
-                    var result = projector.Apply(state, @event);
+                    var result = projector.Apply(state, projectableEvent);
                     if (result.IntegrityIssue is not null)
                     {
                         LogIntegrityIssue(
                             sessionId,
                             projectionVersion,
                             assetId,
-                            @event,
+                            originalEvent,
                             state,
                             result.IntegrityIssue,
                             sourceTimestampWatermarks,
@@ -119,19 +145,18 @@ public sealed class CollectorOrderBookIntegrityCoordinator(
                                 result.IntegrityIssue));
                     }
 
-                    UpdateSourceTimestampWatermark(assetId, @event, sourceTimestampWatermarks);
-                    previousEvents[assetId] = GetDiagnostic(@event, assetId);
+                    UpdateSourceTimestampWatermark(assetId, originalEvent, sourceTimestampWatermarks);
+                    previousEvents[assetId] = GetDiagnostic(originalEvent, assetId);
                 }
-            }
 
-            var missingAssetId = expectedAssetIds
-                .FirstOrDefault(assetId => !initializedAssetIds.Contains(assetId));
-            if (missingAssetId is not null)
-            {
-                return UnitResult.Failure(
-                    CollectorOrderBookIntegrityErrors.MissingSnapshot(
-                        sessionId,
-                        missingAssetId));
+                if (!initialized
+                    || requiredConnectionEpochs.Any(epoch => !snapshotEpochs.Contains(epoch)))
+                {
+                    return UnitResult.Failure(
+                        CollectorOrderBookIntegrityErrors.MissingSnapshot(
+                            sessionId,
+                            assetId));
+                }
             }
 
             return UnitResult.Success<Error>();
@@ -159,6 +184,36 @@ public sealed class CollectorOrderBookIntegrityCoordinator(
             NormalizedOrderBookEvent.BestBidAsk quote => [quote.Record.AssetId],
             _ => throw new ArgumentOutOfRangeException(nameof(@event))
         };
+
+    private static long? GetConnectionEpoch(NormalizedOrderBookEvent @event) =>
+        @event switch
+        {
+            NormalizedOrderBookEvent.BookSnapshot snapshot => snapshot.Record.ConnectionEpoch,
+            NormalizedOrderBookEvent.PriceChanges changes => changes.Records[0].ConnectionEpoch,
+            NormalizedOrderBookEvent.TickSizeChange change => change.Record.ConnectionEpoch,
+            NormalizedOrderBookEvent.BestBidAsk quote => quote.Record.ConnectionEpoch,
+            _ => throw new ArgumentOutOfRangeException(nameof(@event))
+        };
+
+    private static IEnumerable<long> GetConnectionEpochs(NormalizedOrderBookEvent @event) =>
+        @event switch
+        {
+            NormalizedOrderBookEvent.BookSnapshot snapshot =>
+                Optional(snapshot.Record.ConnectionEpoch),
+            NormalizedOrderBookEvent.PriceChanges changes => changes.Records
+                .Select(change => change.ConnectionEpoch)
+                .Where(epoch => epoch.HasValue)
+                .Select(epoch => epoch!.Value)
+                .Distinct(),
+            NormalizedOrderBookEvent.TickSizeChange change =>
+                Optional(change.Record.ConnectionEpoch),
+            NormalizedOrderBookEvent.BestBidAsk quote =>
+                Optional(quote.Record.ConnectionEpoch),
+            _ => throw new ArgumentOutOfRangeException(nameof(@event))
+        };
+
+    private static IEnumerable<long> Optional(long? value) =>
+        value.HasValue ? [value.Value] : [];
 
     private void LogIntegrityIssue(
         CollectorSessionId sessionId,

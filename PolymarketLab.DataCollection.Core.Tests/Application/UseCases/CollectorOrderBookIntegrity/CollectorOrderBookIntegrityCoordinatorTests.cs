@@ -138,6 +138,209 @@ public sealed class CollectorOrderBookIntegrityCoordinatorTests
     }
 
     [Fact]
+    public async Task EvaluateAsync_WithSourceTimestampInversionWithinEpoch_ShouldReplayInSourceOrder()
+    {
+        var coordinator = new CollectorOrderBookIntegrityCoordinator(
+            new Reader(
+            [
+                Snapshot(
+                    1,
+                    0,
+                    11,
+                    bestBid: 0.40m,
+                    bestAsk: 0.60m,
+                    sourceTimestamp: 100,
+                    connectionEpoch: 1),
+                PriceChanges(new ProjectionPriceChangeRecord(
+                    2, 0, 12, "asset", 102, TradeSide.Sell, 0.61m, 10m,
+                    "hash-2", 0.50m, 0.60m, 0, connectionEpoch: 1)),
+                PriceChanges(new ProjectionPriceChangeRecord(
+                    3, 0, 13, "asset", 101, TradeSide.Buy, 0.50m, 10m,
+                    "hash-1", 0.50m, 0.60m, 0, connectionEpoch: 1))
+            ]),
+            new OrderBookProjector(),
+            NullLogger<CollectorOrderBookIntegrityCoordinator>.Instance);
+
+        var result = await coordinator.EvaluateAsync(
+            CollectorSessionId.Create(Guid.NewGuid()).Value,
+            3,
+            [TokenId.Create("asset").Value],
+            null,
+            null,
+            CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WithMultiAssetSourceTimestampInversion_ShouldReplayEachAssetIndependently()
+    {
+        var coordinator = new CollectorOrderBookIntegrityCoordinator(
+            new Reader(
+            [
+                Snapshot(
+                    1, 0, 11, 0.40m, 0.60m, 100, 1,
+                    assetId: "asset-a"),
+                Snapshot(
+                    2, 0, 12, 0.30m, 0.70m, 100, 1,
+                    assetId: "asset-b"),
+                PriceChanges(
+                    new ProjectionPriceChangeRecord(
+                        3, 0, 13, "asset-a", 102, TradeSide.Sell, 0.61m, 10m,
+                        "hash-a-2", 0.50m, 0.60m, 0, connectionEpoch: 1),
+                    new ProjectionPriceChangeRecord(
+                        3, 0, 13, "asset-b", 102, TradeSide.Sell, 0.71m, 10m,
+                        "hash-b-2", 0.40m, 0.70m, 1, connectionEpoch: 1)),
+                PriceChanges(
+                    new ProjectionPriceChangeRecord(
+                        4, 0, 14, "asset-a", 101, TradeSide.Buy, 0.45m, 5m,
+                        "hash-a-1", 0.45m, 0.60m, 0, connectionEpoch: 1),
+                    new ProjectionPriceChangeRecord(
+                        4, 0, 14, "asset-b", 101, TradeSide.Buy, 0.40m, 10m,
+                        "hash-b-1", 0.40m, 0.70m, 1, connectionEpoch: 1),
+                    new ProjectionPriceChangeRecord(
+                        4, 0, 14, "asset-a", 101, TradeSide.Buy, 0.50m, 10m,
+                        "hash-a-1", 0.50m, 0.60m, 2, connectionEpoch: 1))
+            ]),
+            new OrderBookProjector(),
+            NullLogger<CollectorOrderBookIntegrityCoordinator>.Instance);
+
+        var result = await coordinator.EvaluateAsync(
+            CollectorSessionId.Create(Guid.NewGuid()).Value,
+            3,
+            [TokenId.Create("asset-a").Value, TokenId.Create("asset-b").Value],
+            null,
+            null,
+            CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WithNullTimestampBarrier_ShouldNotReorderAcrossBarrier()
+    {
+        var coordinator = new CollectorOrderBookIntegrityCoordinator(
+            new Reader(
+            [
+                Snapshot(
+                    1, 0, 11, 0.40m, 0.60m, 100, 1),
+                new NormalizedOrderBookEvent.BestBidAsk(new ProjectionBestBidAskRecord(
+                    2, 0, 12, "asset", 102, 0.40m, 0.60m, 0.20m, 1)),
+                new NormalizedOrderBookEvent.BestBidAsk(new ProjectionBestBidAskRecord(
+                    3, 0, 13, "asset", null, 0.40m, 0.60m, 0.20m, 1)),
+                new NormalizedOrderBookEvent.BestBidAsk(new ProjectionBestBidAskRecord(
+                    4, 0, 14, "asset", 101, 0.40m, 0.60m, 0.20m, 1))
+            ]),
+            new OrderBookProjector(),
+            NullLogger<CollectorOrderBookIntegrityCoordinator>.Instance);
+
+        var result = await coordinator.EvaluateAsync(
+            CollectorSessionId.Create(Guid.NewGuid()).Value,
+            3,
+            [TokenId.Create("asset").Value],
+            null,
+            null,
+            CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be("collector.order_book.integrity.issue");
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WithNewEpochDeltaBeforeSnapshot_ShouldReturnMissingSnapshot()
+    {
+        var coordinator = new CollectorOrderBookIntegrityCoordinator(
+            new Reader(
+            [
+                Snapshot(1, 0, 11, 0.40m, 0.60m, 100, 1),
+                PriceChanges(new ProjectionPriceChangeRecord(
+                    2, 0, 12, "asset", 101, TradeSide.Buy, 0.50m, 10m,
+                    "hash", 0.50m, 0.60m, 0, connectionEpoch: 2)),
+                Snapshot(3, 0, 13, 0.50m, 0.60m, 102, 2)
+            ]),
+            new OrderBookProjector(),
+            NullLogger<CollectorOrderBookIntegrityCoordinator>.Instance);
+
+        var result = await coordinator.EvaluateAsync(
+            CollectorSessionId.Create(Guid.NewGuid()).Value,
+            3,
+            [TokenId.Create("asset").Value],
+            null,
+            null,
+            CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Message.Should().Contain("initial snapshot");
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenAssetHasNoSnapshotForKnownEpoch_ShouldReturnMissingSnapshot()
+    {
+        var coordinator = new CollectorOrderBookIntegrityCoordinator(
+            new Reader(
+            [
+                Snapshot(1, 0, 11, 0.40m, 0.60m, 100, 1, assetId: "asset-a"),
+                Snapshot(2, 0, 12, 0.30m, 0.70m, 100, 1, assetId: "asset-b"),
+                Snapshot(3, 0, 13, 0.35m, 0.65m, 101, 2, assetId: "asset-b")
+            ]),
+            new OrderBookProjector(),
+            NullLogger<CollectorOrderBookIntegrityCoordinator>.Instance);
+
+        var result = await coordinator.EvaluateAsync(
+            CollectorSessionId.Create(Guid.NewGuid()).Value,
+            3,
+            [TokenId.Create("asset-a").Value, TokenId.Create("asset-b").Value],
+            null,
+            null,
+            CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Message.Should().Contain("asset-a");
+        result.Error.Message.Should().Contain("initial snapshot");
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WithIssueAfterSourceReorder_ShouldLogArchiveProvenance()
+    {
+        var logger = new TestLogger();
+        var coordinator = new CollectorOrderBookIntegrityCoordinator(
+            new Reader(
+            [
+                Snapshot(1000, 0, 2000, 0.40m, 0.60m, 100, 1),
+                PriceChanges(new ProjectionPriceChangeRecord(
+                    1001, 0, 2001, "asset", 102, TradeSide.Sell, 0.61m, 10m,
+                    "hash-2", 0.50m, 0.60m, 0, connectionEpoch: 1)),
+                PriceChanges(new ProjectionPriceChangeRecord(
+                    1002, 0, 2002, "asset", 101, TradeSide.Buy, 0.50m, 10m,
+                    "hash-1", 0.50m, 0.60m, 0, connectionEpoch: 1)),
+                PriceChanges(new ProjectionPriceChangeRecord(
+                    3000, 7, 4000, "asset", 103, TradeSide.Buy, 0.45m, 10m,
+                    "hash-3", 0.55m, 0.60m, 0, connectionEpoch: 1))
+            ]),
+            new OrderBookProjector(),
+            logger);
+
+        var result = await coordinator.EvaluateAsync(
+            CollectorSessionId.Create(Guid.NewGuid()).Value,
+            3,
+            [TokenId.Create("asset").Value],
+            null,
+            null,
+            CancellationToken.None);
+
+        result.IsFailure.Should().BeTrue();
+        logger.Entries.Should().ContainSingle();
+        logger.Entries.Single().Should().Contain(new Dictionary<string, object?>
+        {
+            ["NormalizedEventId"] = 4000L,
+            ["RawMessageId"] = 3000L,
+            ["RawItemIndex"] = 7,
+            ["SourceTimestamp"] = 103L,
+            ["ConnectionEpoch"] = 1L
+        });
+    }
+
+    [Fact]
     public async Task EvaluateAsync_WithEventOrderViolation_ShouldLogSafeEventProvenance()
     {
         var sessionId = CollectorSessionId.Create(Guid.NewGuid()).Value;
@@ -167,18 +370,27 @@ public sealed class CollectorOrderBookIntegrityCoordinatorTests
                     0.40m,
                     0.60m,
                     0.20m,
-                    connectionEpoch: 6,
+                    connectionEpoch: 5,
                     receivedAt: previousReceivedAt)),
-                new NormalizedOrderBookEvent.BestBidAsk(new ProjectionBestBidAskRecord(
+                Snapshot(
                     43,
                     4,
                     103,
+                    bestBid: 0.40m,
+                    bestAsk: 0.60m,
+                    sourceTimestamp: 101,
+                    connectionEpoch: 6,
+                    receivedAt: receivedAt.AddMilliseconds(-1)),
+                new NormalizedOrderBookEvent.BestBidAsk(new ProjectionBestBidAskRecord(
+                    44,
+                    5,
+                    104,
                     "asset",
                     99,
                     0.40m,
                     0.60m,
                     0.20m,
-                    connectionEpoch: 7,
+                    connectionEpoch: 6,
                     receivedAt: receivedAt))
             ]),
             new OrderBookProjector(),
@@ -200,9 +412,9 @@ public sealed class CollectorOrderBookIntegrityCoordinatorTests
             ["ProjectionVersion"] = 3,
             ["AssetId"] = "asset",
             ["EventType"] = "best_bid_ask",
-            ["NormalizedEventId"] = 103L,
-            ["RawMessageId"] = 43L,
-            ["RawItemIndex"] = 4,
+            ["NormalizedEventId"] = 104L,
+            ["RawMessageId"] = 44L,
+            ["RawItemIndex"] = 5,
             ["SourceTimestamp"] = 99L,
             ["PreviousEventType"] = "best_bid_ask",
             ["PreviousNormalizedEventId"] = 102L,
@@ -210,8 +422,8 @@ public sealed class CollectorOrderBookIntegrityCoordinatorTests
             ["PreviousRawItemIndex"] = 3,
             ["PreviousSourceTimestamp"] = 100L,
             ["RegressionMilliseconds"] = 1L,
-            ["ConnectionEpoch"] = 7L,
-            ["PreviousConnectionEpoch"] = 6L,
+            ["ConnectionEpoch"] = 6L,
+            ["PreviousConnectionEpoch"] = 5L,
             ["ReceivedAt"] = receivedAt,
             ["PreviousReceivedAt"] = previousReceivedAt,
             ["WindowSegment"] = "TradingWindow"
@@ -329,12 +541,13 @@ public sealed class CollectorOrderBookIntegrityCoordinatorTests
         decimal bestAsk,
         long? sourceTimestamp = 100,
         long? connectionEpoch = null,
-        DateTimeOffset? receivedAt = null) =>
+        DateTimeOffset? receivedAt = null,
+        string assetId = "asset") =>
         new NormalizedOrderBookEvent.BookSnapshot(new ProjectionBookSnapshotRecord(
             rawMessageId,
             rawItemIndex,
             eventId,
-            "asset",
+            assetId,
             "condition",
             sourceTimestamp,
             "hash",
