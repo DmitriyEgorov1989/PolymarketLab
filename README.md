@@ -26,8 +26,8 @@ dotnet user-secrets set "Database:ConnectionString" "Host=localhost;Port=5433;Da
     "Enabled": true,
     "ProjectionVersion": 1,
     "WorkerCount": 3,
-    "BatchSize": 500,
-    "WriteBatchSize": 100,
+    "BatchSize": 1000,
+    "WriteBatchSize": 500,
     "IdleDelay": "00:00:00.250",
     "ClaimTimeout": "00:05:00",
     "ShutdownTimeout": "00:00:30"

@@ -105,6 +105,37 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
     }
 
     [Fact]
+    public async Task WriteProcessed_NewMarketWithoutFeeSchedule_ShouldPersistNullSchedule()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        await SeedRawMessagesAsync(database.ConnectionString, 1);
+        var claim = (await ClaimAsync(database.ConnectionString, 1, 1)).Single();
+        var completion = NormalizationCompletion.Processed(
+        [
+            CreateEvent(
+                claim,
+                "new_market",
+                CreateNewMarketRecord(feeSchedule: null),
+                new NewMarketAssetRecord(0, "asset-yes", "Yes"))
+        ]);
+
+        var status = await WriteAsync(database.ConnectionString, claim, completion);
+
+        status.Should().Be(NormalizationWriteStatus.Written);
+        var nullScheduleCount = await ExecuteScalarAsync<long>(
+            database.ConnectionString,
+            """
+            SELECT count(*)
+            FROM data_collection.new_markets
+            WHERE fee_schedule_exponent IS NULL
+              AND fee_schedule_rate IS NULL
+              AND fee_schedule_rebate_rate IS NULL
+              AND fee_schedule_taker_only IS NULL
+            """);
+        nullScheduleCount.Should().Be(1);
+    }
+
+    [Fact]
     public async Task WriteProcessed_ArrayEventsShouldBeCommittedTogether()
     {
         await using var database = await CreateMigratedDatabaseAsync();
@@ -429,6 +460,9 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
             records);
 
     private static NewMarketRecord CreateNewMarketRecord() =>
+        CreateNewMarketRecord(new NewMarketFeeSchedule(1m, 2m, 3m, false));
+
+    private static NewMarketRecord CreateNewMarketRecord(NewMarketFeeSchedule? feeSchedule) =>
         new(
             "market-1",
             "Question?",
@@ -448,7 +482,7 @@ public sealed class VersionedNormalizedWriterPostgreSqlTests(PostgreSqlFixture f
                 "event-slug",
                 "Event title",
                 "Event description"),
-            new NewMarketFeeSchedule(1m, 2m, 3m, false));
+            feeSchedule);
 
     private static DataCollectionDbContext CreateContext(
         string connectionString,

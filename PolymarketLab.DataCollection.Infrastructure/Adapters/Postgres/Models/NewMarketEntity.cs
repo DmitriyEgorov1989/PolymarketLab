@@ -28,10 +28,10 @@ internal sealed class NewMarketEntity
         EventMessageSlug = record.EventMessage.Slug;
         EventMessageTitle = record.EventMessage.Title;
         EventMessageDescription = record.EventMessage.Description;
-        FeeScheduleExponent = record.FeeSchedule.Exponent;
-        FeeScheduleRate = record.FeeSchedule.Rate;
-        FeeScheduleRebateRate = record.FeeSchedule.RebateRate;
-        FeeScheduleTakerOnly = record.FeeSchedule.TakerOnly;
+        FeeScheduleExponent = record.FeeSchedule?.Exponent;
+        FeeScheduleRate = record.FeeSchedule?.Rate;
+        FeeScheduleRebateRate = record.FeeSchedule?.RebateRate;
+        FeeScheduleTakerOnly = record.FeeSchedule?.TakerOnly;
     }
 
     public long EventId { get; private set; }
@@ -52,8 +52,8 @@ internal sealed class NewMarketEntity
     public string EventMessageSlug { get; private set; } = string.Empty;
     public string EventMessageTitle { get; private set; } = string.Empty;
     public string EventMessageDescription { get; private set; } = string.Empty;
-    public decimal FeeScheduleExponent { get; private set; }
-    public decimal FeeScheduleRate { get; private set; }
-    public decimal FeeScheduleRebateRate { get; private set; }
-    public bool FeeScheduleTakerOnly { get; private set; }
+    public decimal? FeeScheduleExponent { get; private set; }
+    public decimal? FeeScheduleRate { get; private set; }
+    public decimal? FeeScheduleRebateRate { get; private set; }
+    public bool? FeeScheduleTakerOnly { get; private set; }
 }

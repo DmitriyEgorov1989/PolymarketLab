@@ -195,9 +195,11 @@ public sealed class TypedNormalizationModelTests
         AssertNumeric(market, nameof(NewMarketEntity.Line), 29, 18, true);
         AssertNumeric(market, nameof(NewMarketEntity.OrderPriceMinTickSize), 29, 28, false);
         AssertNumeric(market, nameof(NewMarketEntity.TakerBaseFee), 29, 18, false);
-        AssertNumeric(market, nameof(NewMarketEntity.FeeScheduleExponent), 29, 18, false);
-        AssertNumeric(market, nameof(NewMarketEntity.FeeScheduleRate), 29, 18, false);
-        AssertNumeric(market, nameof(NewMarketEntity.FeeScheduleRebateRate), 29, 18, false);
+        AssertNumeric(market, nameof(NewMarketEntity.FeeScheduleExponent), 29, 18, true);
+        AssertNumeric(market, nameof(NewMarketEntity.FeeScheduleRate), 29, 18, true);
+        AssertNumeric(market, nameof(NewMarketEntity.FeeScheduleRebateRate), 29, 18, true);
+        market.FindProperty(nameof(NewMarketEntity.FeeScheduleTakerOnly))!
+            .IsNullable.Should().BeTrue();
         AssertForeignKey<NormalizedEventRecord>(
             market,
             nameof(NewMarketEntity.EventId),

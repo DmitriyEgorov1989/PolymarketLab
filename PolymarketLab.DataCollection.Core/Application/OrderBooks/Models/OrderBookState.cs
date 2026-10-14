@@ -206,6 +206,17 @@ public sealed class OrderBookState
 
         var bids = new SortedDictionary<decimal, OrderBookLevel>(_bids);
         var asks = new SortedDictionary<decimal, OrderBookLevel>(_asks);
+        var finalChange = orderedChanges[^1];
+        var removedEmbeddedBestBid = finalChange.BestBid is > 0m
+            && orderedChanges.Any(change =>
+                change.Side == TradeSide.Buy
+                && change.Size == 0
+                && change.Price == finalChange.BestBid.Value);
+        var removedEmbeddedBestAsk = finalChange.BestAsk is < 1m
+            && orderedChanges.Any(change =>
+                change.Side == TradeSide.Sell
+                && change.Size == 0
+                && change.Price == finalChange.BestAsk.Value);
         foreach (var change in orderedChanges)
         {
             var levels = change.Side switch
@@ -223,8 +234,7 @@ public sealed class OrderBookState
                 levels[change.Price] = new OrderBookLevel(change.Price, change.Size);
         }
 
-        var finalChange = orderedChanges[^1];
-        if (finalChange.BestBid.HasValue)
+        if (finalChange.BestBid.HasValue && !removedEmbeddedBestBid)
         {
             if (finalChange.BestBid.Value == 0)
             {
@@ -240,7 +250,7 @@ public sealed class OrderBookState
                 }
             }
         }
-        if (finalChange.BestAsk.HasValue)
+        if (finalChange.BestAsk.HasValue && !removedEmbeddedBestAsk)
         {
             if (finalChange.BestAsk.Value == 1)
             {
@@ -262,7 +272,10 @@ public sealed class OrderBookState
         CommitEvent(first.Position, first.SourceTimestamp, ref _lastPriceChangeSourceTimestamp);
         RecalculateDerivedState();
 
-        var issue = FindEmbeddedBestBidAskMismatch(finalChange);
+        var issue = FindEmbeddedBestBidAskMismatch(
+            finalChange,
+            validateBestBid: !removedEmbeddedBestBid,
+            validateBestAsk: !removedEmbeddedBestAsk);
         if (issue is null)
             return;
 
@@ -558,17 +571,20 @@ public sealed class OrderBookState
             : OrderBookSyncStatus.Synchronized;
     }
 
-    private OrderBookIntegrityIssue? FindEmbeddedBestBidAskMismatch(PriceChangeRecord change)
+    private OrderBookIntegrityIssue? FindEmbeddedBestBidAskMismatch(
+        PriceChangeRecord change,
+        bool validateBestBid,
+        bool validateBestAsk)
     {
         var eventBestBid = change.BestBid == 0 ? null : change.BestBid;
         var eventBestAsk = change.BestAsk == 1 ? null : change.BestAsk;
-        if (change.BestBid.HasValue && BestBid != eventBestBid)
+        if (validateBestBid && change.BestBid.HasValue && BestBid != eventBestBid)
         {
             return CreateIssue(
                 OrderBookIntegrityIssueType.BestBidMismatch,
                 $"Local best bid '{Format(BestBid)}' does not match event best bid '{Format(change.BestBid)}'.");
         }
-        if (change.BestAsk.HasValue && BestAsk != eventBestAsk)
+        if (validateBestAsk && change.BestAsk.HasValue && BestAsk != eventBestAsk)
         {
             return CreateIssue(
                 OrderBookIntegrityIssueType.BestAskMismatch,

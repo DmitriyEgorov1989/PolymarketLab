@@ -19,8 +19,12 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
                 session.id,
                 session.status,
                 session.phase,
-                session.awaiting_normalization_at
+                session.awaiting_normalization_at,
+                COALESCE(cursor.last_claimed_raw_message_id, 0) AS last_claimed_raw_message_id
             FROM data_collection.collector_sessions AS session
+            LEFT JOIN data_collection.normalization_session_cursors AS cursor
+              ON cursor.session_id = session.id
+             AND cursor.projection_version = @projection_version
             WHERE session.invalidating_at IS NULL
               AND session.status IN (@starting_status, @running_status, @stopping_status)
               AND NOT EXISTS
@@ -34,41 +38,37 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
                     AND active_normalization.status = @processing_status
                     AND active_normalization.claimed_at >= CURRENT_TIMESTAMP - @claim_timeout
               )
-              AND EXISTS
+              AND
               (
-                  SELECT 1
-                  FROM data_collection.raw_market_messages AS eligible_raw
-                  WHERE eligible_raw.session_id = session.id
-                    AND
-                    (
-                        NOT EXISTS
+                  EXISTS
+                  (
+                      SELECT 1
+                      FROM data_collection.raw_message_normalizations AS retry_normalization
+                      INNER JOIN data_collection.raw_market_messages AS retry_raw
+                        ON retry_raw.id = retry_normalization.raw_message_id
+                      WHERE retry_raw.session_id = session.id
+                        AND retry_normalization.projection_version = @projection_version
+                        AND
                         (
-                            SELECT 1
-                            FROM data_collection.raw_message_normalizations AS eligible_normalization
-                            WHERE eligible_normalization.raw_message_id = eligible_raw.id
-                              AND eligible_normalization.projection_version = @projection_version
+                            retry_normalization.status = @pending_status
+                            OR
+                            (
+                                retry_normalization.status = @processing_status
+                                AND
+                                (
+                                    retry_normalization.claimed_at IS NULL
+                                    OR retry_normalization.claimed_at < CURRENT_TIMESTAMP - @claim_timeout
+                                )
+                            )
                         )
-                        OR EXISTS
-                        (
-                            SELECT 1
-                            FROM data_collection.raw_message_normalizations AS eligible_normalization
-                            WHERE eligible_normalization.raw_message_id = eligible_raw.id
-                              AND eligible_normalization.projection_version = @projection_version
-                              AND
-                              (
-                                  eligible_normalization.status = @pending_status
-                                  OR
-                                  (
-                                      eligible_normalization.status = @processing_status
-                                      AND
-                                      (
-                                          eligible_normalization.claimed_at IS NULL
-                                          OR eligible_normalization.claimed_at < CURRENT_TIMESTAMP - @claim_timeout
-                                      )
-                                  )
-                              )
-                        )
-                    )
+                  )
+                  OR EXISTS
+                  (
+                      SELECT 1
+                      FROM data_collection.raw_market_messages AS new_raw
+                      WHERE new_raw.session_id = session.id
+                        AND new_raw.id > COALESCE(cursor.last_claimed_raw_message_id, 0)
+                  )
               )
             ORDER BY
                 CASE
@@ -86,53 +86,50 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
             LIMIT 1
             FOR UPDATE OF session SKIP LOCKED
         ),
+        candidate_ids AS MATERIALIZED (
+            SELECT candidate.id
+            FROM target_session AS session
+            CROSS JOIN LATERAL
+            (
+                SELECT eligible.id
+                FROM
+                (
+                    SELECT retry_raw.id
+                    FROM data_collection.raw_message_normalizations AS retry_normalization
+                    INNER JOIN data_collection.raw_market_messages AS retry_raw
+                      ON retry_raw.id = retry_normalization.raw_message_id
+                    WHERE retry_raw.session_id = session.id
+                      AND retry_normalization.projection_version = @projection_version
+                      AND
+                      (
+                          retry_normalization.status = @pending_status
+                          OR
+                          (
+                              retry_normalization.status = @processing_status
+                              AND
+                              (
+                                  retry_normalization.claimed_at IS NULL
+                                  OR retry_normalization.claimed_at < CURRENT_TIMESTAMP - @claim_timeout
+                              )
+                          )
+                      )
+                    UNION
+                    SELECT new_raw.id
+                    FROM data_collection.raw_market_messages AS new_raw
+                    WHERE new_raw.session_id = session.id
+                      AND new_raw.id > session.last_claimed_raw_message_id
+                ) AS eligible
+                ORDER BY eligible.id
+                LIMIT @batch_size
+            ) AS candidate
+        ),
         candidates AS MATERIALIZED (
             SELECT raw.id
-            FROM data_collection.raw_market_messages AS raw
-            INNER JOIN target_session AS session
-              ON session.id = raw.session_id
-            WHERE NOT EXISTS
-                  (
-                      SELECT 1
-                      FROM data_collection.raw_message_normalizations AS normalization
-                      WHERE normalization.raw_message_id = raw.id
-                        AND normalization.projection_version = @projection_version
-                  )
-               OR EXISTS
-                  (
-                      SELECT 1
-                      FROM data_collection.raw_message_normalizations AS normalization
-                      WHERE normalization.raw_message_id = raw.id
-                        AND normalization.projection_version = @projection_version
-                        AND
-                        (
-                            normalization.status = @pending_status
-                            OR
-                            (
-                                normalization.status = @processing_status
-                                AND
-                                (
-                                    normalization.claimed_at IS NULL
-                                    OR normalization.claimed_at < CURRENT_TIMESTAMP - @claim_timeout
-                                )
-                            )
-                        )
-                  )
-            ORDER BY
-                CASE
-                    WHEN session.status = @stopping_status
-                     AND session.phase = @awaiting_normalization_phase
-                    THEN 0
-                    ELSE 1
-                END,
-                CASE
-                    WHEN session.status = @stopping_status
-                     AND session.phase = @awaiting_normalization_phase
-                    THEN session.awaiting_normalization_at
-                END NULLS LAST,
-                raw.id
-            LIMIT @batch_size
-            FOR UPDATE OF raw SKIP LOCKED
+            FROM candidate_ids AS candidate
+            INNER JOIN data_collection.raw_market_messages AS raw
+              ON raw.id = candidate.id
+            ORDER BY raw.id
+            FOR UPDATE OF raw
         ),
         claimed AS (
             INSERT INTO data_collection.raw_message_normalizations AS normalization
@@ -162,6 +159,23 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
                     )
                )
             RETURNING raw_message_id, attempt_count
+        ),
+        cursor_advanced AS (
+            INSERT INTO data_collection.normalization_session_cursors AS cursor
+                (session_id, projection_version, last_claimed_raw_message_id)
+            SELECT
+                session.id,
+                @projection_version,
+                MAX(claimed.raw_message_id)
+            FROM target_session AS session
+            CROSS JOIN claimed
+            GROUP BY session.id
+            ON CONFLICT (session_id, projection_version)
+            DO UPDATE SET
+                last_claimed_raw_message_id = GREATEST(
+                    cursor.last_claimed_raw_message_id,
+                    EXCLUDED.last_claimed_raw_message_id)
+            RETURNING session_id
         )
         SELECT
             raw.id,
@@ -170,6 +184,7 @@ internal sealed class RawMessageNormalizationClaimRepository(DataCollectionDbCon
             raw.payload,
             claimed.attempt_count
         FROM claimed
+        CROSS JOIN cursor_advanced
         INNER JOIN data_collection.raw_market_messages AS raw
             ON raw.id = claimed.raw_message_id
         INNER JOIN data_collection.collector_sessions AS session

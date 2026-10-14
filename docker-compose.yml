@@ -10,7 +10,7 @@ services:
       Database__ConnectionString: Host=postgres;Port=5432;Database=polymarket_lab;Username=postgres;Password=postgres
       FailedDatasetRetention__Enabled: "true"
       FailedDatasetRetention__RetentionPeriod: "12:00:00"
-      FailedDatasetRetention__MaximumRetainedSessions: "5"
+      FailedDatasetRetention__MaximumRetainedSessions: "15"
     ports:
       - "5285:8080"
     depends_on:

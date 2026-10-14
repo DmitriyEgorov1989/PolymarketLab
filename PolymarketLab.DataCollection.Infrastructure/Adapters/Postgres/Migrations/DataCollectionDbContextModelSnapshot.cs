@@ -568,22 +568,22 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Migratio
                         .HasColumnType("text")
                         .HasColumnName("external_market_id");
 
-                    b.Property<decimal>("FeeScheduleExponent")
+                    b.Property<decimal?>("FeeScheduleExponent")
                         .HasPrecision(29, 18)
                         .HasColumnType("numeric(29,18)")
                         .HasColumnName("fee_schedule_exponent");
 
-                    b.Property<decimal>("FeeScheduleRate")
+                    b.Property<decimal?>("FeeScheduleRate")
                         .HasPrecision(29, 18)
                         .HasColumnType("numeric(29,18)")
                         .HasColumnName("fee_schedule_rate");
 
-                    b.Property<decimal>("FeeScheduleRebateRate")
+                    b.Property<decimal?>("FeeScheduleRebateRate")
                         .HasPrecision(29, 18)
                         .HasColumnType("numeric(29,18)")
                         .HasColumnName("fee_schedule_rebate_rate");
 
-                    b.Property<bool>("FeeScheduleTakerOnly")
+                    b.Property<bool?>("FeeScheduleTakerOnly")
                         .HasColumnType("boolean")
                         .HasColumnName("fee_schedule_taker_only");
 
@@ -634,6 +634,30 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Migratio
                     b.HasKey("EventId");
 
                     b.ToTable("new_markets", "data_collection");
+                });
+
+            modelBuilder.Entity("PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Models.NormalizationSessionCursorRecord", b =>
+                {
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("session_id");
+
+                    b.Property<int>("ProjectionVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("projection_version");
+
+                    b.Property<long>("LastClaimedRawMessageId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("last_claimed_raw_message_id");
+
+                    b.HasKey("SessionId", "ProjectionVersion");
+
+                    b.ToTable("normalization_session_cursors", "data_collection", t =>
+                        {
+                            t.HasCheckConstraint("ck_normalization_session_cursors_projection_version_positive", "projection_version > 0");
+
+                            t.HasCheckConstraint("ck_normalization_session_cursors_raw_message_id_positive", "last_claimed_raw_message_id > 0");
+                        });
                 });
 
             modelBuilder.Entity("PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Models.NormalizedEventRecord", b =>
@@ -1160,6 +1184,15 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Migratio
                     b.HasOne("PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Models.NormalizedEventRecord", null)
                         .WithOne()
                         .HasForeignKey("PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Models.NewMarketEntity", "EventId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Models.NormalizationSessionCursorRecord", b =>
+                {
+                    b.HasOne("PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.CollectorSession", null)
+                        .WithMany()
+                        .HasForeignKey("SessionId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

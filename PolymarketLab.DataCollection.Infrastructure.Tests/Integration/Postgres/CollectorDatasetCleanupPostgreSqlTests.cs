@@ -60,6 +60,14 @@ public sealed class CollectorDatasetCleanupPostgreSqlTests(PostgreSqlFixture fix
             database.ConnectionString,
             "raw_message_normalizations",
             unrelated.Id)).Should().Be(2);
+        (await ReadCountAsync(
+            database.ConnectionString,
+            "normalization_session_cursors",
+            target.Id)).Should().Be(0);
+        (await ReadCountAsync(
+            database.ConnectionString,
+            "normalization_session_cursors",
+            unrelated.Id)).Should().Be(1);
         (await ReadCountAsync(database.ConnectionString, "normalized_events", target.Id))
             .Should().Be(0);
         (await ReadCountAsync(database.ConnectionString, "normalized_events", unrelated.Id))
@@ -115,6 +123,10 @@ public sealed class CollectorDatasetCleanupPostgreSqlTests(PostgreSqlFixture fix
             database.ConnectionString,
             "raw_message_normalizations",
             target.Id)).Should().Be(2);
+        (await ReadCountAsync(
+            database.ConnectionString,
+            "normalization_session_cursors",
+            target.Id)).Should().Be(1);
         (await ReadCountAsync(database.ConnectionString, "normalized_events", target.Id))
             .Should().Be(14);
         (await ReadCountAsync(
@@ -377,6 +389,11 @@ public sealed class CollectorDatasetCleanupPostgreSqlTests(PostgreSqlFixture fix
                     (raw_message_id, projection_version, status, attempt_count)
                 SELECT id, version, 2, 1
                 FROM raw CROSS JOIN (VALUES (1), (2)) AS versions(version)
+            ), cursor AS (
+                INSERT INTO data_collection.normalization_session_cursors
+                    (session_id, projection_version, last_claimed_raw_message_id)
+                SELECT @session_id, 2, id
+                FROM raw
             )
             INSERT INTO data_collection.normalized_events
                 (raw_message_id, raw_item_index, projection_version,

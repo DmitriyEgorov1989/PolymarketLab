@@ -65,6 +65,11 @@ remaining normalizers.
   non-null; optional external string values were represented by empty strings
   for `sports_market_type`, `line`, `game_start_time` and `group_item_title`.
 
+A later live series on 2026-10-13 observed `new_market.fee_schedule` both as an
+object and as explicit `null`. Missing and null schedules mean that fee schedule
+details are unknown; they must not be replaced with zero values. When the object
+is present, its nested fields retain the strict confirmed contract above.
+
 Observed financial ranges are evidence, not validation limits. Prices used up to
 three fractional digits, trade size up to six, and book/change size up to six integer
 digits and two fractional digits. Persistence precision must retain at least these

@@ -28,8 +28,8 @@ public sealed class NormalizerOptionsTests
         options.Enabled.Should().BeTrue();
         options.ProjectionVersion.Should().Be(1);
         options.WorkerCount.Should().Be(3);
-        options.BatchSize.Should().Be(500);
-        options.WriteBatchSize.Should().Be(100);
+        options.BatchSize.Should().Be(1_000);
+        options.WriteBatchSize.Should().Be(500);
         options.IdleDelay.Should().Be(TimeSpan.FromMilliseconds(250));
         options.ClaimTimeout.Should().Be(TimeSpan.FromMinutes(5));
         options.ShutdownTimeout.Should().Be(TimeSpan.FromSeconds(30));
@@ -86,7 +86,6 @@ public sealed class NormalizerOptionsTests
     [InlineData("BatchSize", "-1")]
     [InlineData("BatchSize", "1001")]
     [InlineData("WriteBatchSize", "0")]
-    [InlineData("WriteBatchSize", "501")]
     [InlineData("IdleDelay", "-00:00:00.001")]
     [InlineData("ClaimTimeout", "00:00:00")]
     [InlineData("ClaimTimeout", "-00:00:01")]

@@ -15,12 +15,15 @@ internal sealed class CollectorDatasetCleanup(
     DataCollectionDbContext dbContext,
     TimeProvider timeProvider) : ICollectorDatasetCleanup
 {
+    private static readonly TimeSpan CleanupCommandTimeout = TimeSpan.FromMinutes(5);
+
     public async Task<Result<CollectorDatasetCleanupAudit, Error>> CleanupAsync(
         CollectorSessionAggregate session,
         CancellationToken cancellationToken)
     {
         var sessionId = session.Id;
         CollectorDatasetCleanupAudit? committedAudit = null;
+        dbContext.Database.SetCommandTimeout(CleanupCommandTimeout);
         await using var transaction = await dbContext.Database
             .BeginTransactionAsync(cancellationToken);
         try
@@ -78,6 +81,12 @@ internal sealed class CollectorDatasetCleanup(
                 return CollectorDatasetCleanupErrors.StateTransitionConflict(sessionId);
             }
 
+            await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                DELETE FROM data_collection.normalization_session_cursors
+                WHERE session_id = {sessionId.Value}
+                """,
+                cancellationToken);
             var deletedEvents = await dbContext.Database.ExecuteSqlInterpolatedAsync(
                 $"""
                 DELETE FROM data_collection.normalized_events AS normalized

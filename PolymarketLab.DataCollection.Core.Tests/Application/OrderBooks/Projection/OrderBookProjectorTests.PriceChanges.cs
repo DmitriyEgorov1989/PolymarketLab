@@ -166,6 +166,114 @@ public sealed partial class OrderBookProjectorTests
     }
 
     [Fact]
+    public void Apply_PriceChangeRemovingEmbeddedBestBid_ShouldUseRemainingBestBid()
+    {
+        var state = new OrderBookState("asset");
+        state.Apply(CreateSnapshot(
+            1,
+            bids:
+            [
+                new NormalizationModels.BookLevelRecord(
+                    NormalizationModels.OrderBookSide.Bid, 0, 0.4m, 10m),
+                new NormalizationModels.BookLevelRecord(
+                    NormalizationModels.OrderBookSide.Bid, 1, 0.3m, 20m)
+            ],
+            asks:
+            [
+                new NormalizationModels.BookLevelRecord(
+                    NormalizationModels.OrderBookSide.Ask, 0, 0.6m, 10m)
+            ]));
+        var change = new ProjectionModels.PriceChangeRecord(
+            2,
+            0,
+            2,
+            "asset",
+            101,
+            NormalizationModels.TradeSide.Buy,
+            0.4m,
+            0m,
+            "hash",
+            0.4m,
+            0.6m,
+            0);
+
+        var result = _projector.Apply(
+            state,
+            new ProjectionModels.NormalizedOrderBookEvent.PriceChanges([change]));
+
+        result.IntegrityIssue.Should().BeNull();
+        state.BestBid.Should().Be(0.3m);
+        state.BestAsk.Should().Be(0.6m);
+    }
+
+    [Fact]
+    public void Apply_PriceChangeRemovingEmbeddedBestAsk_ShouldUseRemainingBestAsk()
+    {
+        var state = new OrderBookState("asset");
+        state.Apply(CreateSnapshot(
+            1,
+            bids:
+            [
+                new NormalizationModels.BookLevelRecord(
+                    NormalizationModels.OrderBookSide.Bid, 0, 0.4m, 10m)
+            ],
+            asks:
+            [
+                new NormalizationModels.BookLevelRecord(
+                    NormalizationModels.OrderBookSide.Ask, 0, 0.6m, 10m),
+                new NormalizationModels.BookLevelRecord(
+                    NormalizationModels.OrderBookSide.Ask, 1, 0.7m, 20m)
+            ]));
+        var change = new ProjectionModels.PriceChangeRecord(
+            2,
+            0,
+            2,
+            "asset",
+            101,
+            NormalizationModels.TradeSide.Sell,
+            0.6m,
+            0m,
+            "hash",
+            0.4m,
+            0.6m,
+            0);
+
+        var result = _projector.Apply(
+            state,
+            new ProjectionModels.NormalizedOrderBookEvent.PriceChanges([change]));
+
+        result.IntegrityIssue.Should().BeNull();
+        state.BestBid.Should().Be(0.4m);
+        state.BestAsk.Should().Be(0.7m);
+    }
+
+    [Fact]
+    public void Apply_PriceChangeRemovingDifferentBid_ShouldKeepEmbeddedBestValidation()
+    {
+        var state = CreateSynchronizedState();
+        var change = new ProjectionModels.PriceChangeRecord(
+            2,
+            0,
+            2,
+            "asset",
+            101,
+            NormalizationModels.TradeSide.Buy,
+            0.3m,
+            0m,
+            "hash",
+            0.5m,
+            0.6m,
+            0);
+
+        var result = _projector.Apply(
+            state,
+            new ProjectionModels.NormalizedOrderBookEvent.PriceChanges([change]));
+
+        result.IntegrityIssue.Should().NotBeNull();
+        result.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestBidMismatch);
+    }
+
+    [Fact]
     public void Apply_PriceChangeWithLowerEmbeddedBestBid_ShouldRemoveStaleBetterBid()
     {
         var state = new OrderBookState("asset");

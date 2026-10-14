@@ -17,7 +17,7 @@ public sealed record NewMarketRecord : NormalizedRecord
     /// <param name="takerBaseFee">Базовая комиссия тейкера.</param>
     /// <param name="feesEnabled">Признак включённых комиссий.</param>
     /// <param name="eventMessage">Подтверждённые данные внешнего события.</param>
-    /// <param name="feeSchedule">Подтверждённое расписание комиссий.</param>
+    /// <param name="feeSchedule">Подтверждённое расписание комиссий или <see langword="null" />, если источник его не передал.</param>
     public NewMarketRecord(
         string externalId,
         string question,
@@ -32,7 +32,7 @@ public sealed record NewMarketRecord : NormalizedRecord
         decimal takerBaseFee,
         bool feesEnabled,
         NewMarketEventMessage eventMessage,
-        NewMarketFeeSchedule feeSchedule)
+        NewMarketFeeSchedule? feeSchedule)
     {
         if (string.IsNullOrWhiteSpace(externalId))
             throw new ArgumentException("External id is required.", nameof(externalId));
@@ -56,7 +56,7 @@ public sealed record NewMarketRecord : NormalizedRecord
         TakerBaseFee = takerBaseFee;
         FeesEnabled = feesEnabled;
         EventMessage = eventMessage ?? throw new ArgumentNullException(nameof(eventMessage));
-        FeeSchedule = feeSchedule ?? throw new ArgumentNullException(nameof(feeSchedule));
+        FeeSchedule = feeSchedule;
     }
 
     /// <summary>Внешний идентификатор рынка.</summary>
@@ -98,6 +98,6 @@ public sealed record NewMarketRecord : NormalizedRecord
     /// <summary>Подтверждённые данные внешнего события.</summary>
     public NewMarketEventMessage EventMessage { get; }
 
-    /// <summary>Подтверждённое расписание комиссий.</summary>
-    public NewMarketFeeSchedule FeeSchedule { get; }
+    /// <summary>Подтверждённое расписание комиссий или <see langword="null" />, если источник его не передал.</summary>
+    public NewMarketFeeSchedule? FeeSchedule { get; }
 }

@@ -100,22 +100,18 @@ internal sealed class NewMarketConfiguration
 
         builder.Property(market => market.FeeScheduleExponent)
             .HasColumnName("fee_schedule_exponent")
-            .HasPrecision(29, 18)
-            .IsRequired();
+            .HasPrecision(29, 18);
 
         builder.Property(market => market.FeeScheduleRate)
             .HasColumnName("fee_schedule_rate")
-            .HasPrecision(29, 18)
-            .IsRequired();
+            .HasPrecision(29, 18);
 
         builder.Property(market => market.FeeScheduleRebateRate)
             .HasColumnName("fee_schedule_rebate_rate")
-            .HasPrecision(29, 18)
-            .IsRequired();
+            .HasPrecision(29, 18);
 
         builder.Property(market => market.FeeScheduleTakerOnly)
-            .HasColumnName("fee_schedule_taker_only")
-            .IsRequired();
+            .HasColumnName("fee_schedule_taker_only");
 
         builder.HasOne<NormalizedEventRecord>()
             .WithOne()

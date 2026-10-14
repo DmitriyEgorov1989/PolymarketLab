@@ -23,6 +23,7 @@ public sealed class CollectorScheduler(
 {
     private const int MaximumUpdateAttempts = 3;
     private static readonly TimeSpan PreparationLeadTime = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan BoundaryCheckAttemptTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan CompensationTimeout = TimeSpan.FromSeconds(10);
 
     public async Task<Result<CollectorSessionAggregate, Error>> PrepareAsync(
@@ -185,9 +186,30 @@ public sealed class CollectorScheduler(
         if (now < session.EventStartsAt.Value - PreparationLeadTime)
             return UnitResult.Success<Error>();
 
-        var marketResult = await marketSource.GetByIdAsync(
-            session.MarketId,
-            cancellationToken);
+        var remainingPreparationTime = session.EventStartsAt.Value - now;
+        var attemptTimeout = remainingPreparationTime < BoundaryCheckAttemptTimeout
+            ? remainingPreparationTime
+            : BoundaryCheckAttemptTimeout;
+        using var attemptCancellation = new CancellationTokenSource(
+            attemptTimeout,
+            timeProvider);
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            attemptCancellation.Token);
+
+        Result<CollectionMarket?, Error> marketResult;
+        try
+        {
+            marketResult = await marketSource.GetByIdAsync(
+                session.MarketId,
+                linkedCancellation.Token);
+        }
+        catch (OperationCanceledException)
+            when (!cancellationToken.IsCancellationRequested
+                  && attemptCancellation.IsCancellationRequested)
+        {
+            return UnitResult.Failure(CollectorSchedulingErrors.BoundaryCheckTimeout);
+        }
         if (marketResult.IsFailure)
         {
             if (marketResult.Error.Type != ErrorType.Conflict)

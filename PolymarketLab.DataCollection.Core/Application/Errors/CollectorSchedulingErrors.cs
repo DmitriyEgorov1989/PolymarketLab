@@ -15,6 +15,11 @@ public static class CollectorSchedulingErrors
         "Collector runtime startup failed before the session became ready.",
         ErrorType.Failure);
 
+    public static Error BoundaryCheckTimeout => new(
+        "collector.scheduler.boundary_check.timeout",
+        "Collector market boundary check exceeded its attempt time budget.",
+        ErrorType.Failure);
+
     public static Error StateTransitionConflict(CollectorSessionId sessionId) => new(
         "collector.scheduler.session.state_changed",
         $"Collector session '{sessionId.Value}' changed concurrently during scheduling.",

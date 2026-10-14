@@ -51,7 +51,7 @@ public sealed class NewMarketNormalizerTests
         normalizedEvent.RawMessageId.Should().Be(42);
         normalizedEvent.RawItemIndex.Should().Be(2);
         normalizedEvent.ProjectionVersion.Should().Be(3);
-        normalizedEvent.NormalizerVersion.Should().Be(1);
+        normalizedEvent.NormalizerVersion.Should().Be(2);
         normalizedEvent.EventType.Should().Be("new_market");
         normalizedEvent.SessionId.Should().Be(CreateSessionId());
         normalizedEvent.ReceivedAt.Should().Be(DateTimeOffset.Parse("2026-08-10T10:00:00Z"));
@@ -116,6 +116,27 @@ public sealed class NewMarketNormalizerTests
         ((NewMarketRecord)result.Event!.Records[0]).Line.Should().Be(-1.5m);
     }
 
+    [Theory]
+    [InlineData("null")]
+    [InlineData(null)]
+    public void Normalize_AbsentFeeSchedule_ShouldProcessWithUnknownSchedule(string? feeSchedule)
+    {
+        var json = feeSchedule is null
+            ? ValidJson.Replace(
+                ",\"fee_schedule\":{\"exponent\":\"2\",\"rate\":\"0.02\",\"rebate_rate\":\"0.25\",\"taker_only\":true}",
+                "")
+            : ValidJson.Replace(
+                "{\"exponent\":\"2\",\"rate\":\"0.02\",\"rebate_rate\":\"0.25\",\"taker_only\":true}",
+                feeSchedule);
+
+        var result = _normalizer.Normalize(CreateRawEvent(ParseObject(json)));
+
+        result.Outcome.Should().Be(NormalizationOutcome.Processed);
+        result.Issue.Should().BeNull();
+        var record = result.Event!.Records[0].Should().BeOfType<NewMarketRecord>().Subject;
+        record.FeeSchedule.Should().BeNull();
+    }
+
     [Fact]
     public void Normalize_ArrayLengthMismatch_ShouldReturnStableInvalidWithoutPartialEvent()
     {
@@ -124,7 +145,7 @@ public sealed class NewMarketNormalizerTests
         var result = _normalizer.Normalize(CreateRawEvent(ParseObject(json)));
 
         result.Outcome.Should().Be(NormalizationOutcome.Invalid);
-        result.NormalizerVersion.Should().Be(1);
+        result.NormalizerVersion.Should().Be(2);
         result.Event.Should().BeNull();
         result.Issue.Should().Be(new NormalizationIssue(
             "normalization.field.array.length_mismatch",
@@ -142,7 +163,7 @@ public sealed class NewMarketNormalizerTests
         var result = _normalizer.Normalize(CreateRawEvent(ParseObject(json)));
 
         result.Outcome.Should().Be(NormalizationOutcome.Invalid);
-        result.NormalizerVersion.Should().Be(1);
+        result.NormalizerVersion.Should().Be(2);
         result.Event.Should().BeNull();
         result.Issue!.Field.Should().Be(expectedField);
         result.Issue.Code.Should().Be(expectedCode);
@@ -152,7 +173,7 @@ public sealed class NewMarketNormalizerTests
     public void Contract_ShouldDeclareExpectedEventTypeAndVersion()
     {
         _normalizer.EventType.Should().Be("new_market");
-        _normalizer.Version.Should().Be(1);
+        _normalizer.Version.Should().Be(2);
     }
 
     private static LogicalRawEvent CreateRawEvent(JsonElement json)

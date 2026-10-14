@@ -8,7 +8,7 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Normalization;
 internal sealed class NewMarketNormalizer : IRawMessageNormalizer
 {
     public string EventType => "new_market";
-    public int Version => 1;
+    public int Version => 2;
 
     public NormalizationResult Normalize(LogicalRawEvent rawEvent)
     {
@@ -112,18 +112,28 @@ internal sealed class NewMarketNormalizer : IRawMessageNormalizer
         return new NewMarketEventMessage(id.Value, ticker.Value, slug.Value, title.Value, description.Value);
     }
 
-    private static Result<NewMarketFeeSchedule, NormalizationIssue> ReadFeeSchedule(JsonElement json)
+    private static Result<NewMarketFeeSchedule?, NormalizationIssue> ReadFeeSchedule(JsonElement json)
     {
-        var objectResult = ReadRequiredObject(json, PolymarketJsonFields.FeeSchedule);
-        if (objectResult.IsFailure) return objectResult.Error;
+        if (!json.TryGetProperty(PolymarketJsonFields.FeeSchedule, out var value)
+            || value.ValueKind == JsonValueKind.Null)
+        {
+            return Result.Success<NewMarketFeeSchedule?, NormalizationIssue>(null);
+        }
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            return new NormalizationIssue(
+                "normalization.field.object.invalid",
+                "Field must be a JSON object.",
+                PolymarketJsonFields.FeeSchedule);
+        }
 
-        var exponent = PolymarketJsonReader.ReadRequiredDecimal(objectResult.Value, PolymarketJsonFields.Exponent);
+        var exponent = PolymarketJsonReader.ReadRequiredDecimal(value, PolymarketJsonFields.Exponent);
         if (exponent.IsFailure) return AtObject(PolymarketJsonFields.FeeSchedule, exponent.Error);
-        var rate = PolymarketJsonReader.ReadRequiredDecimal(objectResult.Value, PolymarketJsonFields.Rate);
+        var rate = PolymarketJsonReader.ReadRequiredDecimal(value, PolymarketJsonFields.Rate);
         if (rate.IsFailure) return AtObject(PolymarketJsonFields.FeeSchedule, rate.Error);
-        var rebateRate = PolymarketJsonReader.ReadRequiredDecimal(objectResult.Value, PolymarketJsonFields.RebateRate);
+        var rebateRate = PolymarketJsonReader.ReadRequiredDecimal(value, PolymarketJsonFields.RebateRate);
         if (rebateRate.IsFailure) return AtObject(PolymarketJsonFields.FeeSchedule, rebateRate.Error);
-        var takerOnly = PolymarketJsonReader.ReadRequiredBoolean(objectResult.Value, PolymarketJsonFields.TakerOnly);
+        var takerOnly = PolymarketJsonReader.ReadRequiredBoolean(value, PolymarketJsonFields.TakerOnly);
         if (takerOnly.IsFailure) return AtObject(PolymarketJsonFields.FeeSchedule, takerOnly.Error);
 
         return new NewMarketFeeSchedule(exponent.Value, rate.Value, rebateRate.Value, takerOnly.Value);

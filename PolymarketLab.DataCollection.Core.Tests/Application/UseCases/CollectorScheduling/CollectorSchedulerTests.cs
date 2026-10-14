@@ -10,6 +10,7 @@ using PolymarketLab.DataCollection.Core.Ports.Enums;
 using PolymarketLab.DataCollection.Core.Tests.TestSupport;
 using PolymarketLab.SharedKernel.DomainModels.Ids;
 using PolymarketLab.SharedKernel.Errors;
+using System.Threading.Channels;
 using Xunit;
 using CollectorSessionAggregate = PolymarketLab.DataCollection.Core.Domain.Models.CollectorSession.CollectorSession;
 
@@ -303,6 +304,31 @@ public sealed class CollectorSchedulerTests
     }
 
     [Fact]
+    public async Task TickAsync_WhenGammaCheckExceedsAttemptBudget_ShouldLeaveSessionForRetry()
+    {
+        var clock = new ControlledTimerTimeProvider(CreatedAt.AddMinutes(2));
+        var fixture = new Fixture(CreatedAt.AddMinutes(2), timeProvider: clock);
+        fixture.Source.FreshReadHandler = async cancellationToken =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return fixture.Market;
+        };
+
+        var tick = fixture.Scheduler.TickAsync(CancellationToken.None);
+        var timer = await clock.NextTimerAsync();
+        timer.DueTime.Should().Be(TimeSpan.FromSeconds(5));
+        timer.Fire();
+
+        var result = await tick;
+
+        result.IsFailure.Should().BeTrue();
+        result.Error.Code.Should().Be("collector.scheduler.boundary_check.timeout");
+        fixture.Session.Status.Should().Be(CollectorSessionStatus.Scheduled);
+        fixture.Repository.UpdateCalls.Should().BeEmpty();
+        fixture.Runtime.StartRequests.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task TickAsync_AtMarketOpen_ShouldInvalidateWithoutGammaOrRuntime()
     {
         var fixture = new Fixture(CreatedAt.AddMinutes(3));
@@ -519,8 +545,10 @@ public sealed class CollectorSchedulerTests
             Error? runtimeError = null,
             bool runtimeThrowsCancellation = false,
             Error? cleanupError = null,
-            CollectorFailurePolicy failurePolicy = CollectorFailurePolicy.DeleteOnFailure)
+            CollectorFailurePolicy failurePolicy = CollectorFailurePolicy.DeleteOnFailure,
+            TimeProvider? timeProvider = null)
         {
+            timeProvider ??= new FixedTimeProvider(now);
             Session = CollectorSessionTestFactory.CreateScheduled(
                 createdAt: CreatedAt,
                 failurePolicy: failurePolicy,
@@ -537,9 +565,9 @@ public sealed class CollectorSchedulerTests
                 Repository,
                 Runtime,
                 new CollectorSessionInvalidationCoordinator(Repository, Runtime),
-                new CollectorFailedDatasetFinalizer(Repository, Cleanup, new FixedTimeProvider(now)),
+                new CollectorFailedDatasetFinalizer(Repository, Cleanup, timeProvider),
                 BoundaryChecks,
-                new FixedTimeProvider(now));
+                timeProvider);
         }
 
         public CollectorSessionAggregate Session { get; }
@@ -574,6 +602,8 @@ public sealed class CollectorSchedulerTests
         : IMarketCollectionSource
     {
         public int FreshReadCallCount { get; private set; }
+        public Func<CancellationToken, Task<Result<CollectionMarket?, Error>>>?
+            FreshReadHandler { get; set; }
 
         public Task<CollectionMarketWindow?> GetWindowAsync(
             MarketId marketId,
@@ -588,6 +618,8 @@ public sealed class CollectorSchedulerTests
             CancellationToken cancellationToken)
         {
             FreshReadCallCount++;
+            if (FreshReadHandler is not null)
+                return FreshReadHandler(cancellationToken);
             return error is null
                 ? Task.FromResult<Result<CollectionMarket?, Error>>(
                     market.MarketId == marketId ? market : null)
@@ -688,6 +720,47 @@ public sealed class CollectorSchedulerTests
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private sealed class ControlledTimerTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        private readonly Channel<ControlledTimer> _timers =
+            Channel.CreateUnbounded<ControlledTimer>();
+
+        public override DateTimeOffset GetUtcNow() => now;
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            var timer = new ControlledTimer(callback, state, dueTime);
+            _timers.Writer.TryWrite(timer);
+            return timer;
+        }
+
+        public Task<ControlledTimer> NextTimerAsync() =>
+            _timers.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    private sealed class ControlledTimer(
+        TimerCallback callback,
+        object? state,
+        TimeSpan dueTime) : ITimer
+    {
+        public TimeSpan DueTime { get; } = dueTime;
+
+        public void Fire() => callback(state);
+
+        public bool Change(TimeSpan dueTime, TimeSpan period) =>
+            throw new NotSupportedException();
+
+        public void Dispose()
+        {
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed record UpdateCall(

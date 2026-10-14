@@ -19,6 +19,8 @@ namespace PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres
             Set<CollectorTokenReadinessRecord>();
         internal DbSet<RawMessageNormalizationRecord> RawMessageNormalizations =>
             Set<RawMessageNormalizationRecord>();
+        internal DbSet<NormalizationSessionCursorRecord> NormalizationSessionCursors =>
+            Set<NormalizationSessionCursorRecord>();
         internal DbSet<NormalizedEventRecord> NormalizedEvents =>
             Set<NormalizedEventRecord>();
         internal DbSet<LastTradePriceEntity> LastTradePrices =>

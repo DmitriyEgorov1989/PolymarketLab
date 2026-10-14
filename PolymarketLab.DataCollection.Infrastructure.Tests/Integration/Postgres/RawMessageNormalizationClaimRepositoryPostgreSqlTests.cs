@@ -200,6 +200,61 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
     }
 
     [Fact]
+    public async Task ClaimBatch_ShouldRecoverStaleRowBehindCursorBeforeNewRows()
+    {
+        await using var database = await CreateMigratedDatabaseAsync();
+        var rawMessageIds = await SeedRawMessagesAsync(database.ConnectionString, 3);
+        await using var firstContext = CreateContext(database.ConnectionString);
+        var firstClaims = await new RawMessageNormalizationClaimRepository(firstContext)
+            .ClaimBatchAsync(1, 10, ClaimTimeout, default);
+        firstClaims.Select(claim => claim.Message.RawMessageId).Should().Equal(rawMessageIds);
+        await ExecuteAsync(
+            database.ConnectionString,
+            """
+            UPDATE data_collection.raw_message_normalizations
+            SET status = @processed_status, completed_at = CURRENT_TIMESTAMP;
+            UPDATE data_collection.raw_message_normalizations
+            SET status = @processing_status,
+                claimed_at = CURRENT_TIMESTAMP - INTERVAL '6 minutes',
+                completed_at = NULL
+            WHERE raw_message_id = @stale_raw_id;
+            """,
+            new NpgsqlParameter("processed_status", (int)NormalizationStatus.Processed),
+            new NpgsqlParameter("processing_status", (int)NormalizationStatus.Processing),
+            new NpgsqlParameter("stale_raw_id", rawMessageIds[0]));
+        var sessionId = await ExecuteScalarAsync<Guid>(
+            database.ConnectionString,
+            "SELECT session_id FROM data_collection.raw_market_messages WHERE id = @raw_id",
+            new NpgsqlParameter("raw_id", rawMessageIds[0]));
+        var newRawId = await ExecuteScalarAsync<long>(
+            database.ConnectionString,
+            """
+            INSERT INTO data_collection.raw_market_messages
+                (session_id, connection_epoch, received_at, payload)
+            VALUES (@session_id, 1, CURRENT_TIMESTAMP, @payload)
+            RETURNING id
+            """,
+            new NpgsqlParameter("session_id", sessionId),
+            new NpgsqlParameter("payload", new byte[] { 42 }));
+        await using var secondContext = CreateContext(database.ConnectionString);
+
+        var claims = await new RawMessageNormalizationClaimRepository(secondContext)
+            .ClaimBatchAsync(1, 10, ClaimTimeout, default);
+
+        claims.Select(claim => claim.Message.RawMessageId)
+            .Should().Equal(rawMessageIds[0], newRawId);
+        var cursor = await ExecuteScalarAsync<long>(
+            database.ConnectionString,
+            """
+            SELECT last_claimed_raw_message_id
+            FROM data_collection.normalization_session_cursors
+            WHERE session_id = @session_id AND projection_version = 1
+            """,
+            new NpgsqlParameter("session_id", sessionId));
+        cursor.Should().Be(newRawId);
+    }
+
+    [Fact]
     public async Task ClaimBatch_ConcurrentRepositoriesShouldNotClaimSameSession()
     {
         await using var database = await CreateMigratedDatabaseAsync();
