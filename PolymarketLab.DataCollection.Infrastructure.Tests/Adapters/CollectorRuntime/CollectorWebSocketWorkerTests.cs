@@ -842,6 +842,49 @@ public sealed class CollectorWebSocketWorkerTests
     }
 
     [Fact]
+    public async Task ReceiveAsync_WhenThreeTransportFailuresFollowRequalifiedEpochs_ShouldRemainActive()
+    {
+        var firstConnection = CreateReadyThenFailingConnection(
+            new IOException("Abrupt EOF."));
+        var secondConnection = CreateReadyThenFailingConnection(
+            new IOException("Abrupt EOF."));
+        var thirdConnection = CreateReadyThenFailingConnection(
+            new IOException("Abrupt EOF."));
+        var fourthConnection = new StubWebSocketConnection();
+        fourthConnection.AddFrame(BookMessage("yes-token"));
+        fourthConnection.AddFrame(BookMessage("no-token"));
+        fourthConnection.AddFrame("PONG"u8);
+        var dispatcher = new StubReadinessDispatcher();
+        var telemetry = new RawMarketMessageTelemetry();
+        var factory = new StubWebSocketFactory(
+            firstConnection,
+            secondConnection,
+            thirdConnection,
+            fourthConnection);
+        var now = DateTimeOffset.Parse("2026-08-28T11:59:40Z");
+        var request = CreateRequest(collectionDeadline: now.AddMinutes(5));
+        var worker = CreateWorker(
+            request,
+            firstConnection,
+            options: CreateOptions(reconnectDelay: TimeSpan.Zero),
+            telemetry: telemetry,
+            timeProvider: new StubTimeProvider(now),
+            readinessDispatcher: dispatcher,
+            webSocketFactory: factory);
+
+        await worker.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => fourthConnection.ReceiveCallCount >= 4);
+        worker.Completion.IsCompleted.Should().BeFalse();
+        await worker.StopAsync(CancellationToken.None);
+
+        factory.CreateCallCount.Should().Be(4);
+        telemetry.GetCheckpoint(request.SessionId).CurrentConnectionEpoch.Should().Be(4);
+        telemetry.GetCheckpoint(request.SessionId).ReconnectCount.Should().Be(3);
+        dispatcher.RunningCount.Should().Be(1);
+        dispatcher.InvalidationCount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task ReceiveAsync_WhenRemoteCloseRetriesAreExhausted_ShouldInvalidateAfterTwoAttempts()
     {
         var firstConnection = new StubWebSocketConnection();

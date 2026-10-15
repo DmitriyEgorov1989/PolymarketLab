@@ -27,7 +27,7 @@ internal sealed class CollectorWebSocketWorker(
     ILogger<CollectorWebSocketWorker> logger)
     : ICollectorWorker
 {
-    private const int MaximumPostReadinessReconnectAttempts = 2;
+    private const int MaximumConsecutivePostReadinessReconnectAttempts = 2;
     private readonly object _sync = new();
     private readonly CancellationTokenSource _receiveCts = new();
     private readonly CancellationTokenSource _enqueueCts = new();
@@ -445,7 +445,7 @@ internal sealed class CollectorWebSocketWorker(
         var completionOrigin = CollectorWorkerCompletionOrigin.RequestedStop;
         var pendingConnection = connection;
         var recoveringAfterReadiness = false;
-        var postReadinessReconnectAttempts = 0;
+        var consecutivePostReadinessReconnectAttempts = 0;
 
         while (true)
         {
@@ -500,7 +500,10 @@ internal sealed class CollectorWebSocketWorker(
                 pendingConnection = null;
 
                 if (state.IsReady)
+                {
                     recoveringAfterReadiness = false;
+                    consecutivePostReadinessReconnectAttempts = 0;
+                }
 
                 if (result.IsSuccess
                     && HasCollectionEnded()
@@ -564,7 +567,8 @@ internal sealed class CollectorWebSocketWorker(
             }
 
             if (recoveringAfterReadiness
-                && postReadinessReconnectAttempts >= MaximumPostReadinessReconnectAttempts)
+                && consecutivePostReadinessReconnectAttempts >=
+                MaximumConsecutivePostReadinessReconnectAttempts)
             {
                 completionOrigin = await InvalidateSessionAsync(result.Error);
                 break;
@@ -577,7 +581,7 @@ internal sealed class CollectorWebSocketWorker(
             var configuredDelay = recoveringAfterReadiness
                 ? GetPostReadinessReconnectDelay(
                     options.ReconnectDelay,
-                    postReadinessReconnectAttempts + 1)
+                    consecutivePostReadinessReconnectAttempts + 1)
                 : options.ReconnectDelay;
             if (reconnectDelay > configuredDelay)
                 reconnectDelay = configuredDelay;
@@ -615,7 +619,7 @@ internal sealed class CollectorWebSocketWorker(
             }
 
             if (recoveringAfterReadiness)
-                postReadinessReconnectAttempts++;
+                consecutivePostReadinessReconnectAttempts++;
 
             state = state.NextEpoch();
             var reconnectStartedAt = timeProvider.GetTimestamp();
@@ -630,7 +634,7 @@ internal sealed class CollectorWebSocketWorker(
                 "Collector WebSocket {SessionId} reconnect attempt {ReconnectAttempt} for epoch {ConnectionEpoch} after {RecoveryErrorCode} " +
                 "completed in {ReconnectDuration} with result {ReconnectResult}.",
                 request.SessionId.Value,
-                recoveringAfterReadiness ? postReadinessReconnectAttempts : 0,
+                recoveringAfterReadiness ? consecutivePostReadinessReconnectAttempts : 0,
                 state.Epoch,
                 result.Error.Code,
                 timeProvider.GetElapsedTime(
@@ -658,7 +662,8 @@ internal sealed class CollectorWebSocketWorker(
             if (timeProvider.GetUtcNow() >= reconnectDeadline
                 || !IsRetryableConnectionFailure(reconnect.Error)
                 || recoveringAfterReadiness
-                && postReadinessReconnectAttempts >= MaximumPostReadinessReconnectAttempts)
+                && consecutivePostReadinessReconnectAttempts >=
+                MaximumConsecutivePostReadinessReconnectAttempts)
             {
                 completionOrigin = await InvalidateSessionAsync(reconnect.Error);
                 break;

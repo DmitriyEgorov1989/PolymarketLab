@@ -252,7 +252,8 @@ heartbeat-loop. Ожидание `PONG` регистрируется до отп
 enqueue получает тот же bounded stop budget, после чего исходная heartbeat-причина
 сохраняется вместо вторичной ошибки отмены. После readiness timeout закрывает только
 текущую connection и запускает bounded reconnect; session инвалидируется только при
-исчерпании общего reconnect budget или collection deadline.
+исчерпании последовательного reconnect budget текущего recovery episode или
+collection deadline.
 
 DataCollection Application и Presentation подключены к API host. Публичные endpoints collector session:
 
@@ -993,13 +994,15 @@ stateDiagram-v2
 remote close и heartbeat timeout. Protocol/identity violations, oversized или
 binary message, закрытый ingestion и ошибки durable readiness немедленно запускают
 session invalidation. После readiness remote close, временная transport receive failure
-и heartbeat timeout используют
-общий бюджет максимум из двух reconnect-attempt на worker с паузами
-`ReconnectDelay` и `2 * ReconnectDelay`.
+и heartbeat timeout используют бюджет максимум из двух последовательных
+reconnect-attempt одного recovery episode с паузами `ReconnectDelay` и
+`2 * ReconnectDelay`.
 Новый epoch локально заново требует initial books всех snapshot tokens и matching
-`PONG`; durable phase остаётся `Running`. Исчерпание попыток или другая transport
-ошибка запускает invalidation. Ошибка сохранения invalidation не маскируется как
-`Invalidated`: autonomous fallback повторяет запись, а при невозможности останавливает host.
+`PONG`; durable phase остаётся `Running`. Полная requalification сбрасывает
+последовательный бюджет, а connect/subscription без readiness его не сбрасывают.
+Исчерпание попыток или другая transport ошибка запускает invalidation. Ошибка
+сохранения invalidation не маскируется как `Invalidated`: autonomous fallback
+повторяет запись, а при невозможности останавливает host.
 
 ### Exception semantics
 
@@ -1223,7 +1226,7 @@ Singleton runtime/factory не должны напрямую зависеть о
 12. Payload копируется несколько раз.
 13. JSON не валидируется; сохраняется любой text payload.
 14. Binary message завершает collector.
-15. Remote close после readiness допускает две попытки восстановления; после исчерпания он считается failure.
+15. Remote close после readiness допускает две последовательные попытки одного recovery episode; полная requalification нового epoch сбрасывает этот бюджет.
 16. Runtime uniqueness основана на `CollectorSessionId`, не на `MarketId`.
 17. Ошибка одного persistence batch останавливает всю ingestion subsystem.
 18. Миграции не применяются автоматически при запуске приложения.
