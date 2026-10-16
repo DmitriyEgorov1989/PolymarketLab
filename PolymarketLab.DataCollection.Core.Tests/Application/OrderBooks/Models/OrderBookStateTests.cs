@@ -244,6 +244,321 @@ public sealed class OrderBookStateTests
     }
 
     [Fact]
+    public void Apply_RepeatedPreBatchBestAskAtSameTimestamp_ShouldRemainSynchronized()
+    {
+        const long timestamp = 1792055389015;
+        var state = new OrderBookState("asset");
+        state.Apply(CreateSnapshot(
+            normalizedEventId: 1,
+            sourceTimestamp: timestamp - 1,
+            tickSize: 0.01m,
+            bids: [Level(NormalizationModels.OrderBookSide.Bid, 0, 0.68m, 10m)],
+            asks:
+            [
+                Level(NormalizationModels.OrderBookSide.Ask, 0, 0.69m, 10m),
+                Level(NormalizationModels.OrderBookSide.Ask, 1, 0.70m, 10m)
+            ],
+            connectionEpoch: 1));
+
+        state.Apply([
+            Change(2, NormalizationModels.TradeSide.Sell, 0.71m, 960.33m, 0,
+                sourceTimestamp: timestamp, bestBid: 0.68m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+        state.Apply([
+            Change(3, NormalizationModels.TradeSide.Sell, 0.69m, 0m, 0,
+                sourceTimestamp: timestamp, bestBid: 0.68m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+        state.Apply([
+            Change(4, NormalizationModels.TradeSide.Sell, 0.70m, 0m, 0,
+                sourceTimestamp: timestamp, bestBid: 0.68m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Status.Should().Be(OrderBookSyncStatus.Synchronized);
+        state.IntegrityIssue.Should().BeNull();
+        state.BestBid.Should().Be(0.68m);
+        state.BestAsk.Should().Be(0.71m);
+        state.Asks.Should().ContainSingle()
+            .Which.Value.Should().Be(new OrderBookLevel(0.71m, 960.33m));
+    }
+
+    [Fact]
+    public void Apply_RepeatedRemovedBestAskAtNewTimestamp_ShouldMarkStateSuspect()
+    {
+        var state = CreateStateWithRemovedBestAskEvidence();
+
+        state.Apply([
+            Change(3, NormalizationModels.TradeSide.Sell, 0.71m, 10m, 0,
+                sourceTimestamp: 2001, bestBid: 0.68m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
+        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestAskMismatch);
+    }
+
+    [Fact]
+    public void Apply_RepeatedRemovedBestAskAtNewConnectionEpoch_ShouldMarkStateSuspect()
+    {
+        var state = CreateStateWithRemovedBestAskEvidence();
+
+        state.Apply([
+            Change(3, NormalizationModels.TradeSide.Sell, 0.71m, 10m, 0,
+                sourceTimestamp: 2000, bestBid: 0.68m, bestAsk: 0.69m,
+                connectionEpoch: 2)
+        ]);
+
+        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
+        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestAskMismatch);
+    }
+
+    [Fact]
+    public void Apply_RepeatedRemovedBestAskWithoutConnectionEpoch_ShouldMarkStateSuspect()
+    {
+        var state = CreateStateWithRemovedBestAskEvidence();
+
+        state.Apply([
+            Change(3, NormalizationModels.TradeSide.Sell, 0.71m, 10m, 0,
+                sourceTimestamp: 2000, bestBid: 0.68m, bestAsk: 0.69m)
+        ]);
+
+        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
+        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestAskMismatch);
+    }
+
+    [Fact]
+    public void Apply_DifferentEmbeddedBestAskAtSameTimestamp_ShouldMarkStateSuspect()
+    {
+        var state = CreateStateWithRemovedBestAskEvidence();
+
+        state.Apply([
+            Change(3, NormalizationModels.TradeSide.Sell, 0.71m, 10m, 0,
+                sourceTimestamp: 2000, bestBid: 0.68m, bestAsk: 0.68m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
+        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestAskMismatch);
+    }
+
+    [Fact]
+    public void Apply_RemovalOfMissingEmbeddedBest_ShouldNotCreateEvidence()
+    {
+        var state = new OrderBookState("asset");
+        state.Apply(CreateSnapshot(
+            1,
+            1999,
+            0.01m,
+            [Level(NormalizationModels.OrderBookSide.Bid, 0, 0.68m, 10m)],
+            [Level(NormalizationModels.OrderBookSide.Ask, 0, 0.70m, 10m)],
+            connectionEpoch: 1));
+        state.Apply([
+            Change(2, NormalizationModels.TradeSide.Sell, 0.69m, 0m, 0,
+                sourceTimestamp: 2000, bestBid: 0.68m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Apply([
+            Change(3, NormalizationModels.TradeSide.Sell, 0.71m, 10m, 0,
+                sourceTimestamp: 2000, bestBid: 0.68m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
+        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestAskMismatch);
+    }
+
+    [Fact]
+    public void Apply_RemovedAndRestoredEmbeddedBest_ShouldNotCreateEvidence()
+    {
+        var state = new OrderBookState("asset");
+        state.Apply(CreateSnapshot(
+            1,
+            1999,
+            0.01m,
+            [Level(NormalizationModels.OrderBookSide.Bid, 0, 0.67m, 10m)],
+            [
+                Level(NormalizationModels.OrderBookSide.Ask, 0, 0.68m, 10m),
+                Level(NormalizationModels.OrderBookSide.Ask, 1, 0.69m, 10m),
+                Level(NormalizationModels.OrderBookSide.Ask, 2, 0.70m, 10m)
+            ],
+            connectionEpoch: 1));
+        state.Apply([
+            Change(2, NormalizationModels.TradeSide.Sell, 0.69m, 0m, 0,
+                sourceTimestamp: 2000, bestBid: 0.67m, bestAsk: 0.69m,
+                connectionEpoch: 1),
+            Change(2, NormalizationModels.TradeSide.Sell, 0.69m, 10m, 1,
+                sourceTimestamp: 2000, bestBid: 0.67m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Apply([
+            Change(3, NormalizationModels.TradeSide.Sell, 0.71m, 10m, 0,
+                sourceTimestamp: 2000, bestBid: 0.67m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Status.Should().Be(OrderBookSyncStatus.Synchronized);
+        state.IntegrityIssue.Should().BeNull();
+        state.Asks.Should().NotContainKey(0.68m);
+        state.BestAsk.Should().Be(0.69m);
+    }
+
+    [Fact]
+    public void Apply_RepeatedRemovedBestAskWithoutSourceTimestamp_ShouldMarkStateSuspect()
+    {
+        var state = CreateStateWithRemovedBestAskEvidence();
+
+        state.Apply([
+            Change(3, NormalizationModels.TradeSide.Sell, 0.71m, 10m, 0,
+                sourceTimestamp: null, bestBid: 0.68m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
+        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestAskMismatch);
+    }
+
+    [Fact]
+    public void Apply_EventOrderViolationAfterRemovedBestAsk_ShouldClearEvidence()
+    {
+        var state = CreateStateWithRemovedBestAskEvidence();
+        state.Apply([
+            Change(3, NormalizationModels.TradeSide.Sell, 0.71m, 10m, 0,
+                sourceTimestamp: 1999, bestBid: 0.68m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Apply([
+            Change(4, NormalizationModels.TradeSide.Sell, 0.71m, 10m, 0,
+                sourceTimestamp: 2000, bestBid: 0.68m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
+        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestAskMismatch);
+    }
+
+    [Fact]
+    public void MarkStale_AfterRemovedBestAsk_ShouldClearEvidence()
+    {
+        var state = CreateStateWithRemovedBestAskEvidence();
+        state.MarkStale(new OrderBookIntegrityIssue(
+            OrderBookIntegrityIssueType.GapDetected,
+            "Gap detected.",
+            2,
+            DetectedAt));
+
+        state.Apply([
+            Change(3, NormalizationModels.TradeSide.Sell, 0.71m, 10m, 0,
+                sourceTimestamp: 2000, bestBid: 0.68m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Status.Should().Be(OrderBookSyncStatus.Stale);
+        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestAskMismatch);
+    }
+
+    [Fact]
+    public void Apply_SnapshotAfterRemovedBestAsk_ShouldClearEvidence()
+    {
+        var state = CreateStateWithRemovedBestAskEvidence();
+        state.Apply(CreateSnapshot(
+            3,
+            2000,
+            0.01m,
+            [Level(NormalizationModels.OrderBookSide.Bid, 0, 0.68m, 10m)],
+            [Level(NormalizationModels.OrderBookSide.Ask, 0, 0.70m, 10m)],
+            connectionEpoch: 1));
+
+        state.Apply([
+            Change(4, NormalizationModels.TradeSide.Sell, 0.71m, 10m, 0,
+                sourceTimestamp: 2000, bestBid: 0.68m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
+        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestAskMismatch);
+    }
+
+    [Fact]
+    public void Apply_TickSizeChangeAfterRemovedBestAsk_ShouldClearEvidence()
+    {
+        var state = CreateStateWithRemovedBestAskEvidence();
+        state.Apply(TickSizeChange(
+            3,
+            oldTickSize: 0.01m,
+            newTickSize: 0.01m,
+            sourceTimestamp: 2000,
+            connectionEpoch: 1));
+
+        state.Apply([
+            Change(4, NormalizationModels.TradeSide.Sell, 0.71m, 10m, 0,
+                sourceTimestamp: 2000, bestBid: 0.68m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
+        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestAskMismatch);
+    }
+
+    [Fact]
+    public void Apply_RemovedBestAskEvidence_ShouldNotSuppressBestBidMismatch()
+    {
+        var state = CreateStateWithRemovedBestAskEvidence();
+
+        state.Apply([
+            Change(3, NormalizationModels.TradeSide.Sell, 0.71m, 10m, 0,
+                sourceTimestamp: 2000, bestBid: 0.67m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Status.Should().Be(OrderBookSyncStatus.Suspect);
+        state.IntegrityIssue!.Type.Should().Be(OrderBookIntegrityIssueType.BestBidMismatch);
+    }
+
+    [Fact]
+    public void Apply_RepeatedPreBatchBestBidAtSameTimestamp_ShouldRemainSynchronized()
+    {
+        var state = new OrderBookState("asset");
+        state.Apply(CreateSnapshot(
+            1,
+            1999,
+            0.01m,
+            [
+                Level(NormalizationModels.OrderBookSide.Bid, 0, 0.68m, 10m),
+                Level(NormalizationModels.OrderBookSide.Bid, 1, 0.67m, 10m)
+            ],
+            [Level(NormalizationModels.OrderBookSide.Ask, 0, 0.70m, 10m)],
+            connectionEpoch: 1));
+
+        state.Apply([
+            Change(2, NormalizationModels.TradeSide.Buy, 0.66m, 10m, 0,
+                sourceTimestamp: 2000, bestBid: 0.68m, bestAsk: 0.70m,
+                connectionEpoch: 1)
+        ]);
+        state.Apply([
+            Change(3, NormalizationModels.TradeSide.Buy, 0.68m, 0m, 0,
+                sourceTimestamp: 2000, bestBid: 0.68m, bestAsk: 0.70m,
+                connectionEpoch: 1)
+        ]);
+        state.Apply([
+            Change(4, NormalizationModels.TradeSide.Buy, 0.67m, 0m, 0,
+                sourceTimestamp: 2000, bestBid: 0.68m, bestAsk: 0.70m,
+                connectionEpoch: 1)
+        ]);
+
+        state.Status.Should().Be(OrderBookSyncStatus.Synchronized);
+        state.IntegrityIssue.Should().BeNull();
+        state.BestBid.Should().Be(0.66m);
+        state.BestAsk.Should().Be(0.70m);
+        state.Bids.Should().ContainSingle()
+            .Which.Value.Should().Be(new OrderBookLevel(0.66m, 10m));
+    }
+
+    [Fact]
     public void Apply_PriceChanges_ShouldUseItemIndexOrder()
     {
         var state = CreateSynchronizedState();
@@ -919,6 +1234,28 @@ public sealed class OrderBookStateTests
         return state;
     }
 
+    private static OrderBookState CreateStateWithRemovedBestAskEvidence()
+    {
+        var state = new OrderBookState("asset");
+        state.Apply(CreateSnapshot(
+            1,
+            1999,
+            0.01m,
+            [Level(NormalizationModels.OrderBookSide.Bid, 0, 0.68m, 10m)],
+            [
+                Level(NormalizationModels.OrderBookSide.Ask, 0, 0.69m, 10m),
+                Level(NormalizationModels.OrderBookSide.Ask, 1, 0.70m, 10m)
+            ],
+            connectionEpoch: 1));
+        state.Apply([
+            Change(2, NormalizationModels.TradeSide.Sell, 0.69m, 0m, 0,
+                sourceTimestamp: 2000, bestBid: 0.68m, bestAsk: 0.69m,
+                connectionEpoch: 1)
+        ]);
+
+        return state;
+    }
+
     private static void AssertInitialSynchronizedState(
         OrderBookState state,
         long normalizedEventId = 1,
@@ -983,7 +1320,8 @@ public sealed class OrderBookStateTests
         long? rawMessageId = null,
         int rawItemIndex = 0,
         decimal? bestBid = null,
-        decimal? bestAsk = null)
+        decimal? bestAsk = null,
+        long? connectionEpoch = null)
     {
         return new ProjectionModels.PriceChangeRecord(
             rawMessageId ?? normalizedEventId,
@@ -997,7 +1335,8 @@ public sealed class OrderBookStateTests
             hash: null,
             bestBid,
             bestAsk,
-            itemIndex);
+            itemIndex,
+            connectionEpoch);
     }
 
     private static ProjectionModels.TickSizeChangeRecord TickSizeChange(

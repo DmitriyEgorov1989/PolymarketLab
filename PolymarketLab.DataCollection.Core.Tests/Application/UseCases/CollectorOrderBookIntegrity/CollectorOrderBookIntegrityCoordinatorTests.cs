@@ -45,6 +45,54 @@ public sealed class CollectorOrderBookIntegrityCoordinatorTests
     }
 
     [Fact]
+    public async Task EvaluateAsync_WithRepeatedPreBatchBestAtSameTimestamp_ShouldSucceed()
+    {
+        const long timestamp = 1792055389015;
+        var coordinator = new CollectorOrderBookIntegrityCoordinator(
+            new Reader(
+            [
+                SnapshotWithLevels(
+                    100,
+                    200,
+                    timestamp - 1,
+                    1,
+                    [new BookLevelRecord(OrderBookSide.Bid, 0, 0.68m, 10m)],
+                    [
+                        new BookLevelRecord(OrderBookSide.Ask, 0, 0.69m, 10m),
+                        new BookLevelRecord(OrderBookSide.Ask, 1, 0.70m, 10m)
+                    ]),
+                PriceChanges(new ProjectionPriceChangeRecord(
+                    101, 0, 201, "asset", timestamp, TradeSide.Sell, 0.71m, 960.33m,
+                    "hash", 0.68m, 0.69m, 0, connectionEpoch: 1)),
+                PriceChanges(new ProjectionPriceChangeRecord(
+                    102, 0, 202, "asset", timestamp, TradeSide.Sell, 0.69m, 0m,
+                    "hash", 0.68m, 0.69m, 0, connectionEpoch: 1)),
+                PriceChanges(new ProjectionPriceChangeRecord(
+                    103, 0, 203, "asset", timestamp, TradeSide.Sell, 0.70m, 0m,
+                    "hash", 0.68m, 0.69m, 0, connectionEpoch: 1)),
+                SnapshotWithLevels(
+                    104,
+                    204,
+                    timestamp,
+                    1,
+                    [new BookLevelRecord(OrderBookSide.Bid, 0, 0.68m, 10m)],
+                    [new BookLevelRecord(OrderBookSide.Ask, 0, 0.71m, 960.33m)])
+            ]),
+            new OrderBookProjector(),
+            NullLogger<CollectorOrderBookIntegrityCoordinator>.Instance);
+
+        var result = await coordinator.EvaluateAsync(
+            CollectorSessionId.Create(Guid.NewGuid()).Value,
+            1,
+            [TokenId.Create("asset").Value],
+            null,
+            null,
+            CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task EvaluateAsync_WithFirstIntegrityIssue_ShouldReturnSafeFailure()
     {
         var reader = new Reader(
@@ -556,6 +604,26 @@ public sealed class CollectorOrderBookIntegrityCoordinatorTests
             [new BookLevelRecord(OrderBookSide.Ask, 0, bestAsk, 10)],
             connectionEpoch,
             receivedAt));
+
+    private static NormalizedOrderBookEvent SnapshotWithLevels(
+        long rawMessageId,
+        long eventId,
+        long sourceTimestamp,
+        long connectionEpoch,
+        IReadOnlyCollection<BookLevelRecord> bids,
+        IReadOnlyCollection<BookLevelRecord> asks) =>
+        new NormalizedOrderBookEvent.BookSnapshot(new ProjectionBookSnapshotRecord(
+            rawMessageId,
+            0,
+            eventId,
+            "asset",
+            "condition",
+            sourceTimestamp,
+            "hash",
+            0.01m,
+            bids,
+            asks,
+            connectionEpoch));
 
     private static NormalizedOrderBookEvent PriceChanges(
         params ProjectionPriceChangeRecord[] records) =>

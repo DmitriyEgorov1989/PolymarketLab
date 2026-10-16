@@ -29,6 +29,8 @@ public sealed class OrderBookState
     private long? _activeResynchronizationId;
     private long? _connectionEpoch;
     private bool _hasFullSnapshot;
+    private EmbeddedBestRemovalEvidence? _staleEmbeddedBestBidEvidence;
+    private EmbeddedBestRemovalEvidence? _staleEmbeddedBestAskEvidence;
 
     /// <summary>Создаёт состояние, для которого полный снимок ещё не получен.</summary>
     /// <param name="assetId">Идентификатор актива, которому принадлежит состояние.</param>
@@ -116,6 +118,7 @@ public sealed class OrderBookState
                 book.NormalizedEventId))
             return;
 
+        ClearEmbeddedBestRemovalEvidence();
         ReplaceLevels(bids, asks);
 
         MarketConditionId = book.MarketConditionId;
@@ -203,6 +206,9 @@ public sealed class OrderBookState
             return;
 
         ObserveConnectionEpoch(first.ConnectionEpoch);
+        RestrictEmbeddedBestRemovalEvidenceScope(
+            first.SourceTimestamp,
+            first.ConnectionEpoch);
 
         var bids = new SortedDictionary<decimal, OrderBookLevel>(_bids);
         var asks = new SortedDictionary<decimal, OrderBookLevel>(_asks);
@@ -217,6 +223,22 @@ public sealed class OrderBookState
                 change.Side == TradeSide.Sell
                 && change.Size == 0
                 && change.Price == finalChange.BestAsk.Value);
+        var repeatedStaleEmbeddedBestBid = MatchesEmbeddedBestRemovalEvidence(
+            _staleEmbeddedBestBidEvidence,
+            first.SourceTimestamp,
+            first.ConnectionEpoch,
+            finalChange.BestBid);
+        var repeatedStaleEmbeddedBestAsk = MatchesEmbeddedBestRemovalEvidence(
+            _staleEmbeddedBestAskEvidence,
+            first.SourceTimestamp,
+            first.ConnectionEpoch,
+            finalChange.BestAsk);
+        var suppressBestBidValidation = removedEmbeddedBestBid
+            || repeatedStaleEmbeddedBestBid;
+        var suppressBestAskValidation = removedEmbeddedBestAsk
+            || repeatedStaleEmbeddedBestAsk;
+        var removedExistingEmbeddedBestBid = false;
+        var removedExistingEmbeddedBestAsk = false;
         foreach (var change in orderedChanges)
         {
             var levels = change.Side switch
@@ -229,12 +251,24 @@ public sealed class OrderBookState
             };
 
             if (change.Size == 0)
-                levels.Remove(change.Price);
+            {
+                var removedExistingLevel = levels.Remove(change.Price);
+                removedExistingEmbeddedBestBid |= removedExistingLevel
+                    && change.Side == TradeSide.Buy
+                    && change.Price == finalChange.BestBid;
+                removedExistingEmbeddedBestAsk |= removedExistingLevel
+                    && change.Side == TradeSide.Sell
+                    && change.Price == finalChange.BestAsk;
+            }
             else
                 levels[change.Price] = new OrderBookLevel(change.Price, change.Size);
         }
+        removedExistingEmbeddedBestBid &= finalChange.BestBid.HasValue
+            && !bids.ContainsKey(finalChange.BestBid.Value);
+        removedExistingEmbeddedBestAsk &= finalChange.BestAsk.HasValue
+            && !asks.ContainsKey(finalChange.BestAsk.Value);
 
-        if (finalChange.BestBid.HasValue && !removedEmbeddedBestBid)
+        if (finalChange.BestBid.HasValue && !suppressBestBidValidation)
         {
             if (finalChange.BestBid.Value == 0)
             {
@@ -250,7 +284,7 @@ public sealed class OrderBookState
                 }
             }
         }
-        if (finalChange.BestAsk.HasValue && !removedEmbeddedBestAsk)
+        if (finalChange.BestAsk.HasValue && !suppressBestAskValidation)
         {
             if (finalChange.BestAsk.Value == 1)
             {
@@ -274,13 +308,37 @@ public sealed class OrderBookState
 
         var issue = FindEmbeddedBestBidAskMismatch(
             finalChange,
-            validateBestBid: !removedEmbeddedBestBid,
-            validateBestAsk: !removedEmbeddedBestAsk);
-        if (issue is null)
+            validateBestBid: !suppressBestBidValidation,
+            validateBestAsk: !suppressBestAskValidation);
+        if (issue is not null)
+        {
+            ClearEmbeddedBestRemovalEvidence();
+            IntegrityIssue = issue;
+            SetSuspectOrResynchronizingStatus();
             return;
+        }
 
-        IntegrityIssue = issue;
-        SetSuspectOrResynchronizingStatus();
+        if (IntegrityIssue is null)
+        {
+            _staleEmbeddedBestBidEvidence = CreateNextEmbeddedBestRemovalEvidence(
+                _staleEmbeddedBestBidEvidence,
+                first.SourceTimestamp,
+                first.ConnectionEpoch,
+                finalChange.BestBid,
+                removedExistingEmbeddedBestBid,
+                repeatedStaleEmbeddedBestBid);
+            _staleEmbeddedBestAskEvidence = CreateNextEmbeddedBestRemovalEvidence(
+                _staleEmbeddedBestAskEvidence,
+                first.SourceTimestamp,
+                first.ConnectionEpoch,
+                finalChange.BestAsk,
+                removedExistingEmbeddedBestAsk,
+                repeatedStaleEmbeddedBestAsk);
+        }
+        else
+        {
+            ClearEmbeddedBestRemovalEvidence();
+        }
     }
 
     /// <summary>Применяет изменение шага цены, не изменяя существующие уровни.</summary>
@@ -307,6 +365,7 @@ public sealed class OrderBookState
                  change.NormalizedEventId))
             return;
 
+        ClearEmbeddedBestRemovalEvidence();
         ObserveConnectionEpoch(change.ConnectionEpoch);
 
         if (!_hasFullSnapshot || !TickSize.HasValue)
@@ -371,6 +430,7 @@ public sealed class OrderBookState
                  quote.NormalizedEventId))
             return;
 
+        ClearEmbeddedBestRemovalEvidence();
         ObserveConnectionEpoch(quote.ConnectionEpoch);
 
         CommitEvent(quote.Position, quote.SourceTimestamp, ref _lastBestBidAskSourceTimestamp);
@@ -428,6 +488,7 @@ public sealed class OrderBookState
 
         lock (_syncRoot)
         {
+            ClearEmbeddedBestRemovalEvidence();
             IntegrityIssue = issue;
             Status = _activeResynchronizationId.HasValue
                 ? OrderBookSyncStatus.Resynchronizing
@@ -498,6 +559,7 @@ public sealed class OrderBookState
             }
 
             ReplaceLevels(bids, asks);
+            ClearEmbeddedBestRemovalEvidence();
             MarketConditionId = snapshot.MarketConditionId;
             Hash = snapshot.Hash;
             TickSize = snapshot.TickSize;
@@ -628,6 +690,7 @@ public sealed class OrderBookState
             && eventTypeTimestampWatermark.HasValue
             && sourceTimestamp.Value < eventTypeTimestampWatermark.Value)
         {
+            ClearEmbeddedBestRemovalEvidence();
             IntegrityIssue = CreateIssue(
                 OrderBookIntegrityIssueType.EventOrderViolation,
                 $"Event source timestamp '{sourceTimestamp.Value}' is less than the last known timestamp '{eventTypeTimestampWatermark.Value}' for its event type.",
@@ -649,9 +712,74 @@ public sealed class OrderBookState
         {
             TickSize = null;
             _lastAppliedTickSizeChange = null;
+            ClearEmbeddedBestRemovalEvidence();
         }
 
         _connectionEpoch = connectionEpoch;
+    }
+
+    private void RestrictEmbeddedBestRemovalEvidenceScope(
+        long? sourceTimestamp,
+        long? connectionEpoch)
+    {
+        if (!sourceTimestamp.HasValue || !connectionEpoch.HasValue)
+        {
+            ClearEmbeddedBestRemovalEvidence();
+            return;
+        }
+
+        if (_staleEmbeddedBestBidEvidence is { } bid
+            && (bid.SourceTimestamp != sourceTimestamp.Value
+                || bid.ConnectionEpoch != connectionEpoch.Value))
+        {
+            _staleEmbeddedBestBidEvidence = null;
+        }
+        if (_staleEmbeddedBestAskEvidence is { } ask
+            && (ask.SourceTimestamp != sourceTimestamp.Value
+                || ask.ConnectionEpoch != connectionEpoch.Value))
+        {
+            _staleEmbeddedBestAskEvidence = null;
+        }
+    }
+
+    private void ClearEmbeddedBestRemovalEvidence()
+    {
+        _staleEmbeddedBestBidEvidence = null;
+        _staleEmbeddedBestAskEvidence = null;
+    }
+
+    private static bool MatchesEmbeddedBestRemovalEvidence(
+        EmbeddedBestRemovalEvidence? evidence,
+        long? sourceTimestamp,
+        long? connectionEpoch,
+        decimal? embeddedBest)
+    {
+        return evidence is { } value
+            && sourceTimestamp == value.SourceTimestamp
+            && connectionEpoch == value.ConnectionEpoch
+            && embeddedBest == value.Price;
+    }
+
+    private static EmbeddedBestRemovalEvidence? CreateNextEmbeddedBestRemovalEvidence(
+        EmbeddedBestRemovalEvidence? current,
+        long? sourceTimestamp,
+        long? connectionEpoch,
+        decimal? embeddedBest,
+        bool removedEmbeddedBest,
+        bool repeatedStaleEmbeddedBest)
+    {
+        if (removedEmbeddedBest
+            && sourceTimestamp.HasValue
+            && connectionEpoch.HasValue
+            && embeddedBest.HasValue)
+        {
+            return new EmbeddedBestRemovalEvidence(
+                sourceTimestamp.Value,
+                connectionEpoch.Value,
+                embeddedBest.Value);
+        }
+
+        return repeatedStaleEmbeddedBest ? current : null;
     }
 
     private bool IsRepeatOfLastTickSizeChange(TickSizeChangeRecord change)
@@ -713,6 +841,15 @@ public sealed class OrderBookState
     {
         return value?.ToString(CultureInfo.InvariantCulture) ?? "null";
     }
+
+    /// <summary>Фиксирует фактическое удаление embedded best в пределах одного source batch.</summary>
+    /// <param name="SourceTimestamp">Timestamp исходного batch в миллисекундах Unix epoch.</param>
+    /// <param name="ConnectionEpoch">Идентификатор эпохи WebSocket-соединения.</param>
+    /// <param name="Price">Удалённая цена embedded best.</param>
+    private readonly record struct EmbeddedBestRemovalEvidence(
+        long SourceTimestamp,
+        long ConnectionEpoch,
+        decimal Price);
 
     private static SortedDictionary<decimal, OrderBookLevel> BuildLevels(
         IEnumerable<NormalizedBookLevelRecord> source,
