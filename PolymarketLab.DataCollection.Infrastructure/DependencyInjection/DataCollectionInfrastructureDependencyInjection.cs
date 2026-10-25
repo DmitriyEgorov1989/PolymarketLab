@@ -18,6 +18,7 @@ using PolymarketLab.DataCollection.Infrastructure.Adapters.OrderBookRest;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.CollectorSession;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.Normalization;
+using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.Simulation;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Postgres.Repositories.RawMarketMessage;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.RawMessageIngestion;
 using PolymarketLab.DataCollection.Infrastructure.Adapters.Resolution;
@@ -170,6 +171,7 @@ public static class DataCollectionInfrastructureDependencyInjection
         });
 
         services.AddScoped<ICollectorSessionRepository, CollectorSessionRepository>();
+        services.AddScoped<IExperimentDatasetReader, ExperimentDatasetReader>();
         services.AddScoped<ICollectorDatasetCleanup, CollectorDatasetCleanup>();
         services.AddScoped<
             ICollectorDatasetCleanupAuditReader,

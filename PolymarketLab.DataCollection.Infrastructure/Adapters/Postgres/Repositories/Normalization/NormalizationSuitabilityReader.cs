@@ -1,5 +1,6 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using PolymarketLab.DataCollection.Core.Application.Normalization.Models;
 using PolymarketLab.DataCollection.Core.Ports;
 using PolymarketLab.DataCollection.Core.Ports.Dtos;
@@ -29,6 +30,7 @@ public sealed class NormalizationSuitabilityReader(DataCollectionDbContext dbCon
         try
         {
             await using var command = connection.CreateCommand();
+            command.Transaction = dbContext.Database.CurrentTransaction?.GetDbTransaction();
             command.CommandText =
                 """
                 WITH target_session AS

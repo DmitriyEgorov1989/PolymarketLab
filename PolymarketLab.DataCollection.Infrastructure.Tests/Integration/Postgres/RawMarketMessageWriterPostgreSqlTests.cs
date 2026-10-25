@@ -63,39 +63,49 @@ public sealed class RawMarketMessageWriterPostgreSqlTests(PostgreSqlFixture fixt
     {
         await using var database = await CreateMigratedDatabaseAsync();
         var session = await InsertSessionAsync(database.ConnectionString);
-        var writeBarrier = new SessionFenceLockBarrierInterceptor();
-        var invalidationStarted = new CommandStartedInterceptor(
-            "UPDATE data_collection.collector_sessions");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var cancellationToken = timeout.Token;
+        var writeBarrier = new ProgressWriteBarrierInterceptor();
+        await using var invalidationContext = CreateContext(database.ConnectionString);
+        await invalidationContext.Database.OpenConnectionAsync(cancellationToken);
+        var invalidationPid = ((NpgsqlConnection)invalidationContext.Database.GetDbConnection()).ProcessID;
 
         var inFlightWrite = WriteAsync(
             database.ConnectionString,
             CreateMessages(session.Id, 1, 1, "before-fence"),
             CreateCheckpoint(session.Id, 1, 1),
-            writeBarrier);
-        await writeBarrier.LockAcquired;
+            writeBarrier,
+            cancellationToken);
+        Task? invalidation = null;
+        try
+        {
+            var writerPid = await writeBarrier.WritePaused.WaitAsync(cancellationToken);
+            invalidation = invalidationContext.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE data_collection.collector_sessions SET status = {(int)CollectorSessionStatus.Invalidating}, invalidating_at = CURRENT_TIMESTAMP WHERE id = {session.Id.Value}",
+                cancellationToken);
 
-        await using var invalidationContext = CreateContext(
-            database.ConnectionString,
-            invalidationStarted);
-        var invalidation = invalidationContext.Database.ExecuteSqlInterpolatedAsync(
-            $"UPDATE data_collection.collector_sessions SET status = {(int)CollectorSessionStatus.Invalidating}, invalidating_at = CURRENT_TIMESTAMP WHERE id = {session.Id.Value}");
-        await invalidationStarted.Started;
-        invalidation.IsCompleted.Should().BeFalse();
-
-        writeBarrier.Release();
-        await inFlightWrite;
-        await invalidation;
+            // Проверяем реальное ожидание блокировки в PostgreSQL, а не только старт UPDATE.
+            await WaitForBlockingAsync(
+                database.ConnectionString, writerPid, invalidationPid, cancellationToken);
+            invalidation.IsCompleted.Should().BeFalse();
+        }
+        finally
+        {
+            writeBarrier.Release();
+            // Обе операции используют общий конечный бюджет и завершаются до disposal контекстов.
+            await Task.WhenAll(inFlightWrite, invalidation ?? Task.CompletedTask);
+        }
 
         await using var staleWriterContext = CreateContext(database.ConnectionString);
         var staleWrite = await new RawMarketMessageWriter(staleWriterContext).WriteBatchAsync(
             CreateMessages(session.Id, 2, 1, "after-fence"),
             [CreateCheckpoint(session.Id, 2, 2)],
-            CancellationToken.None);
+            cancellationToken);
 
         staleWrite.FencedSessionIds.Should().Equal(session.Id);
         await using var verificationContext = CreateContext(database.ConnectionString);
         var progress = await new CollectorSessionProgressRepository(verificationContext)
-            .GetAsync(session.Id, CancellationToken.None);
+            .GetAsync(session.Id, cancellationToken);
         progress.MessagesPersisted.Should().Be(1);
         progress.RawMessageCount.Should().Be(1);
     }
@@ -451,13 +461,30 @@ public sealed class RawMarketMessageWriterPostgreSqlTests(PostgreSqlFixture fixt
         string connectionString,
         IReadOnlyCollection<RawMarketMessage> messages,
         CollectorSessionProgressCheckpoint checkpoint,
-        DbCommandInterceptor? interceptor = null)
+        DbCommandInterceptor? interceptor = null,
+        CancellationToken cancellationToken = default)
     {
         await using var context = CreateContext(connectionString, interceptor);
         await new RawMarketMessageWriter(context).WriteBatchAsync(
             messages,
             [checkpoint],
-            CancellationToken.None);
+            cancellationToken);
+    }
+
+    private static async Task WaitForBlockingAsync(
+        string connectionString,
+        int writerPid,
+        int invalidationPid,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT @writer_pid = ANY(pg_blocking_pids(@invalidation_pid))";
+        command.Parameters.AddWithValue("writer_pid", writerPid);
+        command.Parameters.AddWithValue("invalidation_pid", invalidationPid);
+        while (!(bool)(await command.ExecuteScalarAsync(cancellationToken))!)
+            await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
     }
 
     private static async Task CheckpointAsync(
@@ -557,54 +584,34 @@ public sealed class RawMarketMessageWriterPostgreSqlTests(PostgreSqlFixture fixt
         }
     }
 
-    private sealed class SessionFenceLockBarrierInterceptor : DbCommandInterceptor
+    private sealed class ProgressWriteBarrierInterceptor : DbCommandInterceptor
     {
-        private readonly TaskCompletionSource _lockAcquired = new(
+        private readonly TaskCompletionSource<int> _writePaused = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _release = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task LockAcquired => _lockAcquired.Task;
+        public Task<int> WritePaused => _writePaused.Task;
 
         public void Release() => _release.TrySetResult();
 
-        public override async ValueTask<DbDataReader> ReaderExecutedAsync(
-            DbCommand command,
-            CommandExecutedEventData eventData,
-            DbDataReader result,
-            CancellationToken cancellationToken = default)
-        {
-            if (command.CommandText.Contains(
-                    "FROM data_collection.collector_sessions",
-                    StringComparison.Ordinal)
-                && command.CommandText.Contains("FOR SHARE", StringComparison.Ordinal))
-            {
-                _lockAcquired.TrySetResult();
-                await _release.Task.WaitAsync(cancellationToken);
-            }
-
-            return result;
-        }
-    }
-
-    private sealed class CommandStartedInterceptor(string commandFragment)
-        : DbCommandInterceptor
-    {
-        private readonly TaskCompletionSource _started = new(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public Task Started => _started.Task;
-
-        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+        public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
             DbCommand command,
             CommandEventData eventData,
             InterceptionResult<int> result,
             CancellationToken cancellationToken = default)
         {
-            if (command.CommandText.Contains(commandFragment, StringComparison.Ordinal))
-                _started.TrySetResult();
+            if (command.CommandText.Contains(
+                    "INSERT INTO data_collection.collector_session_progress",
+                    StringComparison.Ordinal))
+            {
+                // Upsert выполняется через EF после raw INSERT и захвата FOR SHARE
+                // той же транзакцией. Прямой ADO.NET-запрос fence EF не перехватывает.
+                _writePaused.TrySetResult(((NpgsqlConnection)command.Connection!).ProcessID);
+                await _release.Task.WaitAsync(cancellationToken);
+            }
 
-            return ValueTask.FromResult(result);
+            return result;
         }
     }
 

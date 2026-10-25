@@ -54,6 +54,7 @@
 - До изменения normalizer прочитай `docs/normalizer-input-contract.md` и root `README.md`. Raw payload не логируй и не включай в agent context без необходимости.
 - Continuous claim и метрики pending/lag ограничены sessions `Starting`, `Running`, `Stopping` без `InvalidatingAt`; terminal archive обрабатывается явным replay. Смена projection version не возвращает terminal sessions в continuous backlog. После пустого batch каждый worker удваивает `IdleDelay` до `max(IdleDelay, 2s)`, после непустого сбрасывает паузу; параллельная обработка разных sessions сохраняется.
 - Fixtures в `PolymarketLab.DataCollection.Infrastructure.Tests/Fixtures/Polymarket` имеют зафиксированные SHA-256 и помечены `-text`; не форматируй их и не меняй line endings.
+- `IExperimentDatasetReader` материализует одну точную успешную архивную session/version в `RepeatableRead READ ONLY`, включая preparation, манифест и независимые признаки пригодности. Контракт, канонизация отпечатков и ограничения описаны в `docs/simulation-dataset-contract.md`. `IsArchiveUsable` не разрешает причинную торговлю; внешняя ссылка означает только `Declared`, а отсутствие исхода/комиссии/минимума/BTC не заменяется нулём.
 
 ## Локальное Окружение
 

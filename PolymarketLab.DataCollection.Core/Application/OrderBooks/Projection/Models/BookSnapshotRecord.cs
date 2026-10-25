@@ -52,8 +52,8 @@ public sealed record BookSnapshotRecord
         SourceTimestamp = sourceTimestamp;
         Hash = hash;
         TickSize = tickSize;
-        Bids = bids.ToArray();
-        Asks = asks.ToArray();
+        Bids = Array.AsReadOnly(bids.ToArray());
+        Asks = Array.AsReadOnly(asks.ToArray());
         ConnectionEpoch = connectionEpoch;
         ReceivedAt = receivedAt;
     }

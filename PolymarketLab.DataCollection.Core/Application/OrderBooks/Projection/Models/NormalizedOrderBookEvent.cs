@@ -35,7 +35,7 @@ public abstract record NormalizedOrderBookEvent
             if (records.Any(record => record is null))
                 throw new ArgumentException("Price change event cannot contain null records.", nameof(records));
 
-            Records = records.ToArray();
+            Records = Array.AsReadOnly(records.ToArray());
         }
 
         /// <summary>Изменения уровней в порядке исходного события.</summary>
