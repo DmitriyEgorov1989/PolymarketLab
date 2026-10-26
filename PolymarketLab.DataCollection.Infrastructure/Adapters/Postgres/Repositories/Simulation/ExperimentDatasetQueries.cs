@@ -37,6 +37,16 @@ internal static class ExperimentDatasetQueries
         """;
 
     internal static readonly string Projection = """
+        WITH candidate_headers AS MATERIALIZED (
+            SELECT normalized.id
+            FROM data_collection.raw_market_messages AS raw
+            JOIN data_collection.normalized_events AS normalized ON normalized.raw_message_id = raw.id
+            WHERE raw.session_id = @session_id AND normalized.projection_version = @projection_version
+            UNION
+            SELECT normalized.id
+            FROM data_collection.normalized_events AS normalized
+            WHERE normalized.session_id = @session_id AND normalized.projection_version = @projection_version
+        )
         SELECT normalized.raw_message_id, normalized.raw_item_index, normalized.event_type,
             normalized.normalizer_version,
             normalized.session_id = raw.session_id
@@ -51,12 +61,11 @@ internal static class ExperimentDatasetQueries
             ), '[]'::jsonb)
             """)) + """
             )::text
-        FROM data_collection.normalized_events AS normalized
+        FROM candidate_headers AS candidate
+        JOIN data_collection.normalized_events AS normalized ON normalized.id = candidate.id
         JOIN data_collection.raw_market_messages AS raw ON raw.id = normalized.raw_message_id
         LEFT JOIN data_collection.raw_message_normalizations AS ledger
             ON ledger.raw_message_id = raw.id AND ledger.projection_version = @projection_version
-        WHERE normalized.projection_version = @projection_version
-          AND (raw.session_id = @session_id OR normalized.session_id = @session_id)
         ORDER BY normalized.raw_message_id, normalized.raw_item_index
         """;
 
