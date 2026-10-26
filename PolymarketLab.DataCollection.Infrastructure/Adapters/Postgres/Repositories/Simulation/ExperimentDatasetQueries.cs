@@ -49,10 +49,24 @@ internal static class ExperimentDatasetQueries
         )
         SELECT normalized.raw_message_id, normalized.raw_item_index, normalized.event_type,
             normalized.normalizer_version,
-            normalized.session_id = raw.session_id
-                AND normalized.received_at = raw.received_at AS provenance_matches,
-            ledger.status = 3 AND ledger.completed_at IS NOT NULL AS parent_processed,
-            jsonb_build_object('header', to_jsonb(normalized),
+            normalized.provenance_matches, normalized.parent_processed, typed.canonical_content
+        FROM (
+            SELECT normalized.id, normalized.raw_message_id, normalized.raw_item_index,
+                normalized.event_type, normalized.normalizer_version,
+                normalized.session_id = raw.session_id
+                    AND normalized.received_at = raw.received_at AS provenance_matches,
+                ledger.status = 3 AND ledger.completed_at IS NOT NULL AS parent_processed,
+                to_jsonb(normalized) AS header_json
+            FROM candidate_headers AS candidate
+            JOIN data_collection.normalized_events AS normalized ON normalized.id = candidate.id
+            JOIN data_collection.raw_market_messages AS raw ON raw.id = normalized.raw_message_id
+            LEFT JOIN data_collection.raw_message_normalizations AS ledger
+                ON ledger.raw_message_id = raw.id AND ledger.projection_version = @projection_version
+            ORDER BY normalized.raw_message_id, normalized.raw_item_index
+            OFFSET 0
+        ) AS normalized
+        CROSS JOIN LATERAL (
+            SELECT jsonb_build_object('header', normalized.header_json,
         """ + string.Join(",\n", TypedTables.Select(table => $"""
             '{table.Table}', COALESCE((
                 SELECT jsonb_agg(to_jsonb(item) ORDER BY {table.Order})
@@ -60,12 +74,9 @@ internal static class ExperimentDatasetQueries
                 WHERE item.event_id = normalized.id
             ), '[]'::jsonb)
             """)) + """
-            )::text
-        FROM candidate_headers AS candidate
-        JOIN data_collection.normalized_events AS normalized ON normalized.id = candidate.id
-        JOIN data_collection.raw_market_messages AS raw ON raw.id = normalized.raw_message_id
-        LEFT JOIN data_collection.raw_message_normalizations AS ledger
-            ON ledger.raw_message_id = raw.id AND ledger.projection_version = @projection_version
+            )::text AS canonical_content
+            OFFSET 0
+        ) AS typed
         ORDER BY normalized.raw_message_id, normalized.raw_item_index
         """;
 
