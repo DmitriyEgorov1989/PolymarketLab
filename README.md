@@ -424,7 +424,7 @@ Live run является отдельной ручной операцией. О
 2. Запусти PostgreSQL, примени migrations обоих DbContexts и настрой `Database:ConnectionString` через user secrets или переменную окружения. Не помещай строку подключения в журнал evidence.
 3. Запусти один экземпляр API: `dotnet run --project .\PolymarketLab.Api\PolymarketLab.Api.csproj --launch-profile http`.
 4. Зарегистрируй выбранный market через `POST /api/Market` или dashboard. Регистрация автоматически создаёт долговечный collector job; ручной Start не требуется.
-5. Дождись terminal DTO от `GET /api/Collector/{sessionId}`. Успешное доказательство имеет `status=Stopped`, `phase=null`, `stopReason=MarketClosed`, подтверждённого winner и `cleanup=null`.
+5. Дождись terminal DTO от `GET /api/Collector/{sessionId}`. Успешное завершение сбора имеет `status=Stopped`, `phase=null`, `stopReason=MarketClosed` и `cleanup=null`. Подтверждение winner проверяется отдельно и не является обязательным условием завершения сбора.
 6. Проверь в PostgreSQL, что `messages_received = messages_enqueued = messages_persisted = raw rows = Processed rows` для snapshot `projection_version`, и каждое значение больше `0` сообщений.
 
 В комментарии issue сохраняются commit SHA, UTC-время, обезличенные event/market
@@ -441,3 +441,132 @@ reconciliation переводит её через invalidation, атомарно
 raw/normalization/projection dataset, сохраняет cleanup audit и завершает как
 `Failed` с `stopReason=ProcessTerminated`. Успешный `Stopped/MarketClosed`
 dataset остаётся нетронутым.
+
+## Детерминированный эксперимент на архиве
+
+Существующий API поддерживает отдельный локальный режим. Он не запускает HTTP,
+collector, reconciliation, normalizer и cleanup, не обращается к текущим внешним
+ценам и читает PostgreSQL в `REPEATABLE READ / READ ONLY`.
+
+```powershell
+dotnet run --project .\PolymarketLab.Api\PolymarketLab.Api.csproj --launch-profile http -- --simulation .\experiment.json
+```
+
+Используется обычная настройка `Database:ConnectionString` из окружения или User
+Secrets. Строка подключения не входит в файл сценария и отчёт. Миграции этим
+режимом не применяются.
+
+Приложение пишет JSON-результат в stdout, а служебные сообщения и краткую сводку
+в stderr. Сам `dotnet run` может предварить stdout своей строкой о launch profile;
+эта строка не входит в канонический отчёт и его отпечаток.
+
+Минимальный `experiment.json` для получения манифеста выбранной сессии:
+
+```json
+{
+  "version": 1,
+  "sessionId": "33a17de5-2b29-4de2-929c-2d1c0ee46588",
+  "projectionVersion": 1,
+  "expectedManifest": null,
+  "initialCash": "100.00",
+  "episodeEndsAt": "2026-10-16T09:25:00Z",
+  "orders": [],
+  "rules": [],
+  "btc": [],
+  "maximumBtcAge": null,
+  "requireFreshBtc": false,
+  "settlement": [],
+  "settlementPolicy": null
+}
+```
+
+Без `expectedManifest` выводятся `Session`, её `Tokens`, манифест #57 и отчёт
+пригодности; сделок нет. До закрепления задайте все настройки, заявки и внешние
+входы. Для запуска скопируйте весь `ExpectedManifest` из ответа в файл. Изменение
+сценария или профиля после закрепления требует повторного получения манифеста.
+`RawFingerprint` использует исходный SQL-алгоритм эпика #56; полный контракт
+находится в `docs/simulation-dataset-contract.md`. При изменении архива или
+настроек команда вернёт `experiment.dataset.raw_fingerprint_mismatch` либо
+`experiment.dataset.manifest_fingerprint_mismatch`.
+
+Чтобы задать сделку, добавьте в `orders` элемент, подставив фактический `assetId`
+из `Session.Tokens` ответа первого запуска:
+
+```json
+{
+  "sequence": 1,
+  "at": "2026-10-16T09:20:01Z",
+  "assetId": "TOKEN_ID_FROM_MANIFEST",
+  "side": "Buy",
+  "quantity": "10",
+  "limitPrice": "0.49",
+  "latency": "00:00:00.200"
+}
+```
+
+Правила обязательны для сделки. Следующий элемент массива `rules` — **пример
+экспериментального допущения**, а не историческая комиссия Polymarket:
+
+```json
+{
+  "id": "experiment-only-v1",
+  "source": "Explicit hypothetical profile, not historical exchange rules",
+  "availableAt": "2026-10-16T09:19:00Z",
+  "effectiveAt": "2026-10-16T09:19:00Z",
+  "minimumQuantity": "1",
+  "quantityQuantum": "1",
+  "moneyQuantum": "0.000001",
+  "feeBps": "100"
+}
+```
+
+Здесь `100` базисных пунктов означают комиссию `1%` от денежной стоимости.
+Неизвестная комиссия не равна нулевой. Поддерживается только экспериментальная
+денежная комиссия; историческое удержание комиссии токенами этим профилем не
+моделируется. Минимум применяется к запрошенному размеру, частичный fill может
+оказаться меньше. Стоимость и комиссия округляются накопительно по заявке:
+списания вверх, выручка вниз, комиссия вверх к `moneyQuantum`.
+
+`btc` — отдельный импортированный ряд. Каждая точка содержит `sequence`, `source`,
+`pair` (например `BTC/USD`), `sourceAt`, обязательный `availableAt`, `price` и
+`isGap`. Для разрыва `isGap=true`, `price=null`. Отсутствующее `availableAt` не
+восстанавливается из времени свечи. При непустом ряде нужен явный
+`maximumBtcAge`, например `00:00:02`. Значение примера не является рекомендуемым
+порогом. Состояния Missing, Stale, Gap, UnknownSourceTime и ClockSkew отличимы
+от Fresh; `requireFreshBtc=true` запрещает отправку и прибытие заявки без Fresh.
+Ряд в репозитории не подразумевается существующим, источник и provenance задаются оператором.
+
+`settlement` импортируется независимо: `source`, `reference`, `sessionId`,
+`conditionId`, `winningAssetId`, `confirmedAt`, `availableAt`. Политика
+`settlementPolicy` задаёт `requiredSources` и `winnerPayout`. Все выбранные
+источники должны согласиться; конфликт запрещает выплату. В этой бумажной модели
+расчётные деньги начисляются в `episodeEndsAt`, а причинное время достаточного
+подтверждения записывается отдельно. Это не реальное погашение токенов.
+
+Порядок версии `1`: доступные market-данные, BTC и правила предшествуют прибывшим
+заявкам того же времени; затем выполняется фиксированный сценарий. Нулевая
+задержка исполняется непосредственно после своей отправки. Торговое окно
+полуоткрытое: `[EventStartsAt, EventEndsAt)`. Все raw-заголовки участвуют в
+монотонной доступности `max(ReceivedAt, previousAvailableAt)`; коррекции часов
+явно журналируются. Исходный `SourceTimestamp` не переставляет торговые события.
+Смена epoch требует новых baseline обоих исходов.
+
+Заявки имеют семантику FAK/IOC: исполнить доступную часть по глубине в пределах
+лимита, остаток отменить. Деньги/токены резервируются на задержку. Продажа без
+свободных токенов запрещена. Долг потреблённой ликвидности сохраняется по token,
+стороне и цене на весь эпизод, включая повторные book, delta и reconnect.
+Исторический рынок не реагирует на наши действия; модель не доказывает реальное
+контрфактическое исполнение, влияние на рынок или положение в очереди.
+
+Отчёт содержит input/journal hashes, исполнения, комиссии, свободные и
+зарезервированные деньги/токены, реализованный результат, неполноту данных и
+ликвидационную оценку на конце окна. Оценка не создаёт сделку. Если bids покрывают
+только часть позиции, остаток остаётся неоценённым. Без подтверждения исхода
+позиция сохраняется; конец 300-секундного окна не означает выплату.
+
+Проверки без реальных внешних запросов:
+
+```powershell
+dotnet test .\PolymarketLab.DataCollection.Core.Tests\PolymarketLab.DataCollection.Core.Tests.csproj --filter "FullyQualifiedName~Simulation"
+dotnet test .\PolymarketLab.DataCollection.Infrastructure.Tests\PolymarketLab.DataCollection.Infrastructure.Tests.csproj --filter "FullyQualifiedName~Simulation"
+```

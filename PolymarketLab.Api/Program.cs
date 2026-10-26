@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging.Console;
 using OpenTelemetry.Metrics;
 using PolymarketLab.Core.Options;
 using PolymarketLab.DataCollection.Core.Application.DependencyInjection;
@@ -13,6 +14,14 @@ using PolymarketLab.Markets.Presentation.Controllers;
 
 const string FrontendCorsPolicy = "Frontend";
 
+var simulationIndex = Array.IndexOf(args, "--simulation");
+if (simulationIndex >= 0 && (simulationIndex + 1 == args.Length || args[simulationIndex + 1].StartsWith("--", StringComparison.Ordinal)))
+{
+    Console.Error.WriteLine("simulation.file.required: --simulation requires an input JSON file.");
+    Environment.ExitCode = 1;
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Logging.ClearProviders();
@@ -22,6 +31,8 @@ builder.Logging.AddJsonConsole(options =>
     options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
     options.UseUtcTimestamp = true;
 });
+if (simulationIndex >= 0)
+    builder.Services.Configure<ConsoleLoggerOptions>(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
 
 // Add services to the container.
 
@@ -85,6 +96,19 @@ builder.Services.AddOptions<HostOptions>()
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
+
+if (simulationIndex >= 0)
+{
+    try
+    {
+        Environment.ExitCode = await SimulationConsole.RunAsync(app.Services, args[simulationIndex + 1], CancellationToken.None);
+    }
+    finally
+    {
+        await app.DisposeAsync();
+    }
+    return;
+}
 
 app.UseExceptionHandler(exceptionHandler =>
 {

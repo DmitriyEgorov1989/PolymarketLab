@@ -197,7 +197,7 @@ public sealed class ExperimentDatasetReader(
             return new ExperimentDatasetSnapshot(manifest,
                 new(metadataComplete, normalizationComplete, projectionConsistent, integrity,
                     resolution, fees, minimum, btc, diagnostics.ToImmutable()),
-                normalization, events, projection.ToImmutable(), evidence);
+                normalization, events, projection.ToImmutable(), evidence, raw.Headers);
 
             void Add(string code, string message) => diagnostics.Add(new($"experiment.dataset.{code}", message, true));
             void NoteKnowledge(string name, DatasetKnowledge knowledge)
@@ -216,7 +216,7 @@ public sealed class ExperimentDatasetReader(
         }
     }
 
-    private async Task<(long Count, long? First, long? Last, string Hash)> ReadRawAsync(
+    private async Task<(long Count, long? First, long? Last, string Hash, ImmutableArray<ExperimentRawMessageHeader> Headers)> ReadRawAsync(
         ExperimentDatasetRequest request, CancellationToken cancellationToken)
     {
         await using var command = Command(ExperimentDatasetQueries.Raw, request);
@@ -224,14 +224,16 @@ public sealed class ExperimentDatasetReader(
         using var hash = new Fingerprints.Lines();
         long count = 0;
         long? first = null, last = null;
+        var headers = ImmutableArray.CreateBuilder<ExperimentRawMessageHeader>();
         while (await reader.ReadAsync(cancellationToken))
         {
             first ??= reader.GetInt64(0);
             last = reader.GetInt64(0);
             count++;
             hash.Append(reader.GetString(1));
+            headers.Add(new(reader.GetInt64(0), reader.GetInt64(2), reader.GetFieldValue<DateTimeOffset>(3), reader.GetString(4)));
         }
-        return (count, first, last, hash.Finish());
+        return (count, first, last, hash.Finish(), headers.ToImmutable());
     }
 
     private DbCommand Command(string sql, ExperimentDatasetRequest request)

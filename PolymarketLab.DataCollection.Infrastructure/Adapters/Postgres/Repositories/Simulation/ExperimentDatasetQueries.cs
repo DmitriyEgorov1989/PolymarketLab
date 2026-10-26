@@ -21,7 +21,8 @@ internal static class ExperimentDatasetQueries
         SELECT raw.id,
             raw.id::text || ':' || raw.connection_epoch::text || ':' ||
             to_char(raw.received_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') || ':' ||
-            encode(sha256(raw.payload), 'hex')
+            encode(sha256(raw.payload), 'hex'),
+            raw.connection_epoch, raw.received_at, encode(sha256(raw.payload), 'hex')
         FROM data_collection.raw_market_messages AS raw
         WHERE raw.session_id = @session_id
         ORDER BY raw.id

@@ -11,13 +11,23 @@ namespace PolymarketLab.DataCollection.Core.Application.Simulation.Datasets;
 /// <param name="OrderBookEvents">События стакана в архивном порядке, без ретроспективной сортировки.</param>
 /// <param name="ProjectionItems">Все типизированные события, включая финансовые метаданные.</param>
 /// <param name="ResolutionEvidence">Канонический JSON сохранённых свидетельств без исходных сообщений.</param>
+/// <param name="RawMessages">Все raw-заголовки того же снимка, включая сообщения без book-событий; default только для старых конструкторов.</param>
 public sealed record ExperimentDatasetSnapshot(
     ExperimentDatasetManifest Manifest,
     ExperimentDatasetSuitability Suitability,
     NormalizationSuitability Normalization,
     ImmutableArray<NormalizedOrderBookEvent> OrderBookEvents,
     ImmutableArray<ExperimentProjectionItem> ProjectionItems,
-    string ResolutionEvidence);
+    string ResolutionEvidence,
+    ImmutableArray<ExperimentRawMessageHeader> RawMessages = default);
+
+/// <summary>Причинный provenance сообщения без его исходного содержимого.</summary>
+/// <param name="RawMessageId">Архивная позиция.</param>
+/// <param name="ConnectionEpoch">Эпоха подключения.</param>
+/// <param name="ReceivedAt">Локальное время полного получения.</param>
+/// <param name="PayloadSha256">SHA-256 исходных bytes.</param>
+public sealed record ExperimentRawMessageHeader(long RawMessageId, long ConnectionEpoch,
+    DateTimeOffset ReceivedAt, string PayloadSha256);
 
 /// <summary>Неизменяемая архивная позиция с полным типизированным содержимым.</summary>
 /// <param name="RawMessageId">Идентификатор исходного сообщения.</param>

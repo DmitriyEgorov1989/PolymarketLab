@@ -280,8 +280,8 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
     public async Task ClaimBatch_ConcurrentRepositoriesShouldClaimDifferentSessions()
     {
         await using var database = await CreateMigratedDatabaseAsync();
-        await SeedRawMessagesAsync(database.ConnectionString, 10);
-        await SeedRawMessagesAsync(database.ConnectionString, 10);
+        var firstIds = await SeedRawMessagesAsync(database.ConnectionString, 10);
+        var secondIds = await SeedRawMessagesAsync(database.ConnectionString, 10);
         await using var firstContext = CreateContext(database.ConnectionString);
         await using var secondContext = CreateContext(database.ConnectionString);
         var firstRepository = new RawMessageNormalizationClaimRepository(firstContext);
@@ -291,10 +291,24 @@ public sealed class RawMessageNormalizationClaimRepositoryPostgreSqlTests(
             firstRepository.ClaimBatchAsync(1, 10, ClaimTimeout, default),
             secondRepository.ClaimBatchAsync(1, 10, ClaimTimeout, default));
 
+        batches.Should().OnlyContain(batch => batch.Count == 0 || batch.Count == 10);
+        batches.Should().Contain(batch => batch.Count == 10);
+        // Snapshot второго statement может предшествовать commit первого, а захват
+        // session-lock — следовать ему. ON CONFLICT в таком случае не перехватывает
+        // свежий Processing и возвращает пустой batch. Следующий statement обязан
+        // увидеть committed claim и выбрать другую session, без паузы и busy loop.
+        if (batches[0].Count == 0)
+            batches[0] = await firstRepository.ClaimBatchAsync(1, 10, ClaimTimeout, default);
+        if (batches[1].Count == 0)
+            batches[1] = await secondRepository.ClaimBatchAsync(1, 10, ClaimTimeout, default);
+
         batches.Should().OnlyContain(batch => batch.Count == 10);
         batches.Should().OnlyContain(batch =>
             batch.Select(claim => claim.Message.SessionId).Distinct().Count() == 1);
         batches.Select(batch => batch[0].Message.SessionId).Distinct().Should().HaveCount(2);
+        var claimedIds = batches.SelectMany(batch => batch).Select(claim => claim.Message.RawMessageId).ToArray();
+        claimedIds.Distinct().Should().HaveCount(20);
+        claimedIds.Should().BeEquivalentTo(firstIds.Concat(secondIds));
     }
 
     private async Task<PostgreSqlTestDatabase> CreateMigratedDatabaseAsync()

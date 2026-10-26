@@ -56,6 +56,14 @@
 - Fixtures в `PolymarketLab.DataCollection.Infrastructure.Tests/Fixtures/Polymarket` имеют зафиксированные SHA-256 и помечены `-text`; не форматируй их и не меняй line endings.
 - `IExperimentDatasetReader` материализует одну точную успешную архивную session/version в `RepeatableRead READ ONLY`, включая preparation, манифест и независимые признаки пригодности. Контракт, канонизация отпечатков и ограничения описаны в `docs/simulation-dataset-contract.md`. `IsArchiveUsable` не разрешает причинную торговлю; внешняя ссылка означает только `Declared`, а отсутствие исхода/комиссии/минимума/BTC не заменяется нулём.
 
+## Симуляция
+
+- `RunExperimentCommand` использует единственный reader #57 и требует его закреплённый манифест. `ExperimentRequestBuilder` включает hash всего сценария и ссылки на BTC/профили в `Inputs`; изменение настроек требует нового закрепления. `ExperimentDataset.FromSnapshot` адаптирует уже материализованный снимок без повторного I/O. Сведения о winner из паспорта не передаются причинному сценарию.
+- Снимок #57 дополнен всеми raw-заголовками (ID, epoch, ReceivedAt, SHA-256 payload), включая сообщения без book-событий. `CausalReplayEngine` назначает `max(ReceivedAt, previousAvailableAt)` в archive order и не использует terminal source-order planner. Новая epoch создаёт новые состояния обоих исходов. `ReplayTimeProvider` исключает системное время.
+- Режим существующего API `--simulation <file.json>` не запускает HTTP и hosted services. Без `expectedManifest` печатает паспорт #57 и пригодность, с ним выполняет фиксированный сценарий и печатает канонический отчёт. Формат описан в README.
+- Версия исполнения 1 использует FAK/IOC, цены доступной глубины на момент прибытия, отдельные резервы денег/токенов и явно экспериментальную денежную комиссию. Историческая формула Polymarket не выдумывается. Потреблённая ликвидность не восстанавливается snapshots или reconnect. Данные одного времени предшествуют прибытиям и отправкам, нулевая задержка исполняется после своей отправки.
+- BTC доступен только после `AvailableAt`; Fresh/Missing/Stale/Gap/UnknownSourceTime/ClockSkew различаются. `RequireFreshBtc` применяется и к отправке, и к прибытию заявки. BTC не определяет исход. Отдельные `SettlementEvidence` и `SettlementPolicy` задают подтверждение; бумажная выплата применяется в конце эпизода. Без подтверждения позиция сохраняется. Оценка по bids на конце окна не создаёт fill, неоценённый остаток остаётся неизвестным.
+
 ## Локальное Окружение
 
 - Connection string задаётся через API User Secrets или `Database__ConnectionString`; значения нет в `appsettings`.

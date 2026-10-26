@@ -340,13 +340,16 @@ public sealed class CollectorWebSocketWorkerTests
         await dispatcher.WaitForRunningAsync();
         await WaitUntilAsync(() => factory.CreateCallCount == 2);
 
+        // Создание connection предшествует записи epoch в telemetry. Получение
+        // initial books доказывает, что reconnect уже дошёл до receive-loop.
+        for (var index = 0; index < 4; index++)
+            await sink.WaitForMessageAsync();
+
         worker.Completion.IsCompleted.Should().BeFalse();
         dispatcher.InvalidationCount.Should().Be(0);
         telemetry.GetCheckpoint(request.SessionId).CurrentConnectionEpoch.Should().Be(2);
         telemetry.GetCheckpoint(request.SessionId).ReconnectCount.Should().Be(1);
 
-        for (var index = 0; index < 4; index++)
-            await sink.WaitForMessageAsync();
         await Task.Delay(100);
         var afterRecovery = Encoding.UTF8.GetBytes(
             "{\"event_type\":\"last_trade_price\"}");
